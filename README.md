@@ -1,9 +1,23 @@
+<div align="center">
+
 # dwi2cond-xp
 
+Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
+
+[![Release](https://img.shields.io/github/v/release/ayakacxy/dwi2cond-xp?display_name=tag&sort=semver)](https://github.com/ayakacxy/dwi2cond-xp/releases/latest)
 [![CI](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](pyproject.toml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ayakacxy/dwi2cond-xp/badge)](https://scorecard.dev/viewer/?uri=github.com/ayakacxy/dwi2cond-xp)
+[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#-validation-at-a-glance)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
+[![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/SIMNIBS_INTEGRATION.md)
+[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
+
+[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Validation](docs/VALIDATION.md) · [Benchmarks](docs/BENCHMARKS.md) · [Release notes](docs/CHANGELOG.md)
+
+🧠 **DTI fitting** · ⚡ **FSL-free runtime** · 🧭 **Tensor reorientation** · ⚡ **Anisotropic FEM** · 🧪 **100% statement coverage**
+
+</div>
 
 `dwi2cond-xp` is a cross-platform Python pipeline that converts preprocessed
 diffusion MRI into conductivity tensors for SimNIBS 4.6 and runs validated
@@ -12,7 +26,21 @@ anisotropic finite-element simulations without requiring FSL at runtime.
 This is an independent community project. It is not an official SimNIBS or FSL
 distribution.
 
-## Scope
+## ⚡ Validation at a glance
+
+| Contract | Result | Evidence boundary |
+| --- | ---: | --- |
+| Python test suite | **144 passed · 100.00%** | 1,644/1,644 executable statements; includes the local FSL reference test |
+| DTI tensor parity | **relative L2 4.18e-6** | Same HCP input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
+| DTI fitting wall time | **9.76 s vs 108.23 s · 11.09x** | Same server, input, worker/output boundary; not an end-to-end FEM claim |
+| Conductivity parity | **max abs 0 to 2.22e-16** | Synthetic mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
+| Fixed-montage FEM | **4/4 modes completed** | Real `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
+
+No anatomical image, subject identifier, voxel derivative, or machine-readable
+subject artifact is distributed. Full methods and evidence boundaries are in
+[Validation](docs/VALIDATION.md) and [Benchmarks](docs/BENCHMARKS.md).
+
+## 🧭 Scope
 
 The supported post-preprocessing path is:
 
@@ -36,7 +64,7 @@ and tqdm. Mesh conductivity, FEM, and lead-field workflows require exactly
 SimNIBS 4.6.0. Platform support for those workflows is limited to platforms on
 which SimNIBS 4.6.0 itself can be installed and validated.
 
-## Conductivity modes
+## 🧩 Conductivity modes
 
 | Mode | Meaning |
 | --- | --- |
@@ -45,7 +73,7 @@ which SimNIBS 4.6.0 itself can be installed and validated.
 | `dir` | Preserves direction, anisotropy ratio, and spatial intensity variation, followed by global intensity calibration. |
 | `mc` | DTI-driven spatially varying mean conductivity made locally isotropic; a control for intensity variation, not directional anisotropy. |
 
-## Installation
+## 🐍 Installation
 
 The complete validated contract is Python 3.11 with SimNIBS 4.6.0. Installing
 into an existing SimNIBS 4.6 environment is the primary path. If that environment
@@ -87,11 +115,11 @@ Developer installation in a non-frozen environment:
 
 ```bash
 python -m pip install -e '.[test]'
-pytest -q
+pytest -q --cov=dwi2cond_xp --cov-report=term-missing --cov-fail-under=100
 ruff check src tests tools scripts
 ```
 
-## Input contract
+## 📥 Input contract
 
 A DWI input must be a preprocessed 4-D NIfTI with matching b-values,
 b-vectors, and a diffusion brain mask. Use a single nonzero shell plus b=0
@@ -112,7 +140,7 @@ The final SimNIBS tensor is stored at
 See [Input contract](docs/INPUT_CONTRACT.md) for coordinate, mask, and failure
 semantics.
 
-## Minimal workflow
+## 🚀 Minimal workflow
 
 Fit a preprocessed single-shell DWI:
 
@@ -157,7 +185,7 @@ Each formal simulation exports one T1-grid vector E-field NIfTI with final axis
 outputs are strictly masked to WM, GM, and CSF labels `1,2,3`; skull, scalp,
 electrodes, and extracranial tissues are excluded.
 
-## Voxel-level comparison
+## 🎨 Voxel-level comparison
 
 ```bash
 dwi2cond-xp compare-fields \
@@ -177,7 +205,7 @@ The magnitude view uses the same four vector NIfTIs and a shared positive scale:
 
 ![Four-mode electric-field magnitude](docs/images/electric_field_magnitude_2x2.png)
 
-## Lead-field support
+## ⚡ Lead-field support
 
 `simulate-leadfield` builds SimNIBS 4.6 `TDCSLEADFIELD` configurations for all
 four conductivity modes. It keeps the original HDF5 provenance and can export a
@@ -189,7 +217,7 @@ This interface and its HDF5/NPY contracts are unit tested, but the current
 release evidence does not include a full-subject, all-electrode lead-field run.
 See [SimNIBS integration](docs/SIMNIBS_INTEGRATION.md).
 
-## Validation evidence
+## 🧪 Validation evidence
 
 One private HCP subject was used for release-candidate validation. No source
 image, volumetric derivative, subject identifier, or machine-readable
@@ -211,12 +239,15 @@ retain the HCP acknowledgment and are not a substitute for accepting the
 - Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso;
   all vector E-field NIfTIs were finite and strictly excluded tissues outside
   WM/GM/CSF.
+- The local release test suite completed with `144 passed` and strict
+  `100.00%` statement coverage. Cross-platform CI enforces the same 100%
+  threshold; the FSL comparison is skipped only where `dtifit` is unavailable.
 
 Exact methods, timing boundaries, and limitations are in
 [Validation](docs/VALIDATION.md), [Benchmarks](docs/BENCHMARKS.md), and
 [Reproducibility](docs/REPRODUCIBILITY.md).
 
-## Documentation and community
+## 🗂️ Documentation and community
 
 - [Documentation index](docs/README.md)
 - [Methods](docs/METHODS.md)
@@ -227,7 +258,7 @@ Exact methods, timing boundaries, and limitations are in
 - [Changelog](docs/CHANGELOG.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-## Citation and license
+## 🙏 Citation and license
 
 Please cite this software using [CITATION.cff](CITATION.cff), and cite SimNIBS
 and the diffusion-processing software used upstream. This project is released

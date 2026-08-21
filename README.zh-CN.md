@@ -1,4 +1,22 @@
+<div align="center">
+
 # dwi2cond-xp
+
+面向 SimNIBS 4.6 的跨平台、运行时无 FSL 的 DTI→电导率流程。
+
+[![Release](https://img.shields.io/github/v/release/ayakacxy/dwi2cond-xp?display_name=tag&sort=semver)](https://github.com/ayakacxy/dwi2cond-xp/releases/latest)
+[![CI](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml)
+[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#-验证概览)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
+[![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/SIMNIBS_INTEGRATION.md)
+[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
+
+[English](README.md) · [文档](docs/README.md) · [验证](docs/VALIDATION.md) · [基准](docs/BENCHMARKS.md) · [更新记录](docs/CHANGELOG.md)
+
+🧠 **DTI 拟合** · ⚡ **运行时无 FSL** · 🧭 **张量重定向** · ⚡ **各向异性 FEM** · 🧪 **100% 语句覆盖**
+
+</div>
 
 `dwi2cond-xp` 是一个跨平台 Python 流程：从已预处理的 diffusion MRI 或六分量
 diffusion tensor 出发，生成 SimNIBS 4.6 电导率张量并运行经过验证的各向异性有限元
@@ -7,7 +25,20 @@ diffusion tensor 出发，生成 SimNIBS 4.6 电导率张量并运行经过验�
 这是独立社区项目，不是 SimNIBS 或 FSL 官方发行物。英文 [README](README.md) 是默认
 发布入口，本文件同步最重要的安装、输入和科学边界。
 
-## 支持范围
+## ⚡ 验证概览
+
+| 合同 | 结果 | 证据边界 |
+| --- | ---: | --- |
+| Python 测试 | **144 passed · 100.00%** | 覆盖 1,644/1,644 条可执行语句，包含本机 FSL reference |
+| DTI tensor 一致性 | **relative L2 4.18e-6** | 同一 HCP 输入、WLS 与 gradient-nonlinearity 合同，对照 FSL 6.0.4 |
+| DTI 拟合时间 | **9.76 s vs 108.23 s · 11.09x** | 同服务器、输入与输出边界，不代表完整 FEM 加速 |
+| 电导率一致性 | **max abs 0 至 2.22e-16** | synthetic mesh 对照 SimNIBS 4.6 的 `vn/dir/mc` |
+| 特定 montage FEM | **4/4 模式完成** | Pardiso 完成真实 `scalar/vn/dir/mc` C3→C4 仿真 |
+
+仓库不分发任何解剖影像、被试标识、体数据派生物或机器可读被试产物。完整方法与证据
+边界见 [验证](docs/VALIDATION.md) 和 [基准](docs/BENCHMARKS.md)。
+
+## 🧭 支持范围
 
 ```text
 已预处理单壳 DWI 或六分量 diffusion tensor
@@ -26,7 +57,7 @@ rotation 必须由外部预处理完成。当前未实现 nonlinear PPD tensor r
 电导率、FEM 与 lead field 固定要求 `SimNIBS 4.6.0 + Python 3.11`；完整流程的平台
 范围受 SimNIBS 4.6.0 可安装和已验证平台限制。
 
-## 电导率模式
+## 🧩 电导率模式
 
 | 模式 | 含义 |
 | --- | --- |
@@ -35,7 +66,7 @@ rotation 必须由外部预处理完成。当前未实现 nonlinear PPD tensor r
 | `dir` | 保留方向、比例及局部强度变化，再进行总体强度校准。 |
 | `mc` | 保留 DTI 驱动的空间平均电导率变化，但局部各向同性；它是强度变化对照。 |
 
-## 安装
+## 🐍 安装
 
 首选方式就是直接基于已有 SimNIBS 4.6 环境安装。若该环境需要保持冻结，可用
 `--no-deps` 安装 wheel，避免 pip 改动其依赖：
@@ -69,7 +100,7 @@ python -m pip install --upgrade pip
 python -m pip install .
 ```
 
-## 输入合同
+## 📥 输入合同
 
 DWI 必须是已预处理的四维 NIfTI，bvals、bvecs、brain mask 必须与其体积顺序一致。
 DTI 模型显式使用 b=0 加一个非零壳层，不会静默拟合全部多壳数据。可选 `grad_dev`
@@ -79,7 +110,7 @@ Tensor NIfTI 的末维固定为 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`。映射到 T1 前，�
 二选一：提供外部估计的 input-world→reference-world 4×4 affine，或在已有外部对齐
 证据时显式使用 `--assume-aligned`。同一被试并不自动意味着 DWI 与 T1 已经对齐。
 
-## 最小流程
+## 🚀 最小流程
 
 ```bash
 dwi2cond-xp fit-dti \
@@ -104,7 +135,7 @@ dwi2cond-xp simulate-tdcs m2m_subject simulation_outputs \
 排除颅骨、头皮、电极和颅外组织。每种模式只保存一个末维为 `Ex/Ey/Ez` 的向量
 E-field NIfTI，模长现场计算。
 
-## 四模式图
+## 🎨 四模式图
 
 分量主图是三行 `Ex/Ey/Ez` × 四列 `scalar/vn/dir/mc` 的 3×4 axial 布局，12 个
 panel 共用对称色标；切片只由 brain mask 最大面积决定，不根据场强挑选。
@@ -113,7 +144,7 @@ panel 共用对称色标；切片只由 brain mask 最大面积决定，不根�
 
 ![四模式电场模长](docs/images/electric_field_magnitude_2x2.png)
 
-## 证据边界
+## 🧪 证据边界
 
 私有 HCP 数据已用于 DTI、CHARM 和真实四模式 FEM 验收。原始影像、体数据派生物、
 被试标识和机器可读的被试级产物都不进入仓库或 Release；README 只保留两张无被试
@@ -121,6 +152,9 @@ panel 共用对称色标；切片只由 brain mask 最大面积决定，不根�
 边界下相对 FSL 6.0.4 实测为 `11.09x`；这只是单机 DTI fitting 结果，不能外推到
 预处理、配准、建模或 FEM。全电极 lead-field 接口和数据合同已支持并测试，但当前
 发布证据不包含真实被试的全电极完整运行。
+
+本机 release 测试为 `144 passed`、严格 `100.00%` 语句覆盖；跨平台 CI 同样强制
+100% 门槛。没有 `dtifit` 的平台只跳过 FSL 对照测试，不降低其余覆盖要求。
 
 详细方法、数值误差、复现步骤、贡献和安全规范见 [文档目录](docs/README.md)。项目采用
 [GPL-3.0-only](LICENSE)，第三方来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

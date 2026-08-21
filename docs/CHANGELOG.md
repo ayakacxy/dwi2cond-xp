@@ -3,6 +3,21 @@
 All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and
 versions follow semantic versioning.
 
+## [Unreleased]
+
+### Changed
+
+- Raised CI, SimNIBS integration, and release coverage gates from 75% to 100%.
+- Reworked the English and Simplified Chinese README entry pages with release,
+  security, validation, performance, and scientific-boundary summaries.
+
+### Added
+
+- Full statement-level tests for all 1,644 executable package statements,
+  including DTI/NIfTI fitting, multiprocessing, tensor conversion and
+  registration, SimNIBS adapters, simulations, lead fields, CLI dispatch,
+  visualizations, error handling, and local FSL reference parity.
+
 ## [0.1.0] - 2026-08-21
 
 ### Added

@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import runpy
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from dwi2cond_xp import cli
 
@@ -155,3 +157,25 @@ def test_module_entrypoint_delegates_to_cli(monkeypatch) -> None:
     monkeypatch.setattr(cli, "main", lambda: 0)
     with np.testing.assert_raises_regex(SystemExit, "0"):
         runpy.run_module("dwi2cond_xp.__main__", run_name="__main__")
+
+
+def test_unimplemented_command_is_rejected(monkeypatch) -> None:
+    parser = SimpleNamespace(parse_args=lambda argv: SimpleNamespace(command="future-command"))
+    monkeypatch.setattr(cli, "_build_parser", lambda: parser)
+    with pytest.raises(RuntimeError, match="not implemented"):
+        cli.main([])
+
+
+def test_fit_route_can_disable_progress(monkeypatch) -> None:
+    calls = []
+
+    def fake_fit(*args, progress, **kwargs):
+        del args, kwargs
+        progress(1, 1, 1)
+        calls.append("fit")
+
+    monkeypatch.setattr(cli, "fit_dti_nifti", fake_fit)
+    assert cli.main(
+        ["fit-dti", "dwi", "bval", "bvec", "mask", "tensor", "--progress", "off"]
+    ) == 0
+    assert calls == ["fit"]

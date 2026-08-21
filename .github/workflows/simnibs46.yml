@@ -20,7 +20,7 @@ jobs:
         run: python -m pip install --no-deps -e .
       - name: Run contracts and CLI smoke tests
         run: |
-          pytest -q --cov=dwi2cond_xp --cov-report=term --cov-fail-under=75
+          pytest -q --cov=dwi2cond_xp --cov-report=term --cov-fail-under=100
           dwi2cond-xp --help
           dwi2cond-xp simulate-tdcs --help
           dwi2cond-xp simulate-leadfield --help

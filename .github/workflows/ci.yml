@@ -28,7 +28,7 @@ jobs:
       - name: Lint
         run: ruff check src tests tools scripts
       - name: Run pure-Python contracts
-        run: pytest -q --cov=dwi2cond_xp --cov-report=term --cov-fail-under=75
+        run: pytest -q --cov=dwi2cond_xp --cov-report=term --cov-fail-under=100
       - name: Verify documentation and version metadata
         run: |
           python scripts/verify_version.py

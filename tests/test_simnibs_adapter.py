@@ -110,3 +110,32 @@ def test_tensor_to_mesh_rejects_non_six_component_image(monkeypatch, tmp_path: P
     monkeypatch.setattr(simnibs_adapter.nib, "load", lambda path: image)
     with pytest.raises(ValueError, match="six components"):
         simnibs_adapter.tensor_to_mesh_conductivity("tensor", "mesh", tmp_path / "out.msh")
+
+
+def test_tensor_to_mesh_requires_simnibs(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setitem(sys.modules, "simnibs", None)
+    monkeypatch.delitem(sys.modules, "simnibs.mesh_tools", raising=False)
+    monkeypatch.delitem(sys.modules, "simnibs.mesh_tools.mesh_io", raising=False)
+    with pytest.raises(RuntimeError, match="requires SimNIBS"):
+        simnibs_adapter.tensor_to_mesh_conductivity("tensor", "mesh", tmp_path / "out.msh")
+
+
+def test_tensor_to_mesh_uses_standard_conductivities(monkeypatch, tmp_path: Path) -> None:
+    _install_fake_simnibs(monkeypatch, tmp_path)
+    cond_utils = sys.modules["simnibs.utils.cond_utils"]
+    cond_utils.standard_cond = lambda: [SimpleNamespace(value=0.1), SimpleNamespace(value=0.2)]
+    image = SimpleNamespace(
+        shape=(2, 2, 2, 6), dataobj=np.zeros((2, 2, 2, 6)), affine=np.eye(4)
+    )
+    monkeypatch.setattr(simnibs_adapter.nib, "load", lambda path: image)
+
+    def fake_conversion(matrices, tags, scalar, **kwargs):
+        assert scalar == {1: 0.1, 2: 0.2}
+        return np.repeat(np.eye(3)[None], 2, axis=0), {"mode": kwargs["mode"]}
+
+    monkeypatch.setattr(simnibs_adapter, "tensors_to_conductivity", fake_conversion)
+    output = tmp_path / "standard.msh"
+    assert simnibs_adapter.tensor_to_mesh_conductivity(
+        "tensor", "mesh", output, correct_fsl=False
+    ) == output
+    assert output.with_suffix(".conductivity.json").is_file()
