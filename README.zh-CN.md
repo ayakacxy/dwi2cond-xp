@@ -72,7 +72,7 @@ rotation 必须由外部预处理完成。当前未实现 nonlinear PPD tensor r
 中的单元或体素 $i$，把修复后的扩散张量写成
 
 $$
-\mathbf D_i = \mathbf V_i\,\operatorname{diag}
+\mathbf D_i = \mathbf V_i\,\mathrm{diag}
 (d_{i1},d_{i2},d_{i3})\,\mathbf V_i^{\mathsf T},
 \qquad d_{i1}\ge d_{i2}\ge d_{i3}>0,
 $$
@@ -87,7 +87,7 @@ $$
 $$
 \boldsymbol\Sigma_i^{\mathrm{vn}}
 =\sigma_t\,\mathbf V_i\,
-\operatorname{diag}\!\left(
+\mathrm{diag}\!\left(
 \frac{d_{i1}}{g_i},\frac{d_{i2}}{g_i},\frac{d_{i3}}{g_i}
 \right)\mathbf V_i^{\mathsf T},
 \qquad
@@ -112,7 +112,7 @@ $$
 然后在全部各向异性组织之间联合拟合一个全局缩放因子：
 
 $$
-s=\underset{a}{\operatorname{argmin}}
+s=\underset{a}{\mathrm{arg\,min}}
 \sum_t(am_t-\sigma_t)^2
 =\frac{\sum_t\sigma_t m_t}{\sum_t m_t^2},
 \qquad
