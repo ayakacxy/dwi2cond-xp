@@ -80,7 +80,7 @@ against SimNIBS 4.6. For element or voxel $i$ in anisotropic tissue $t$, write
 the repaired diffusion tensor as
 
 $$
-\mathbf D_i = \mathbf V_i\,\operatorname{diag}
+\mathbf D_i = \mathbf V_i\,\mathrm{diag}
 (d_{i1},d_{i2},d_{i3})\,\mathbf V_i^{\mathsf T},
 \qquad d_{i1}\ge d_{i2}\ge d_{i3}>0,
 $$
@@ -97,7 +97,7 @@ mapping is
 $$
 \boldsymbol\Sigma_i^{\mathrm{vn}}
 =\sigma_t\,\mathbf V_i\,
-\operatorname{diag}\!\left(
+\mathrm{diag}\!\left(
 \frac{d_{i1}}{g_i},\frac{d_{i2}}{g_i},\frac{d_{i3}}{g_i}
 \right)\mathbf V_i^{\mathsf T},
 \qquad
@@ -124,7 +124,7 @@ $$
 One global factor is then fitted jointly across the anisotropic tissues:
 
 $$
-s=\underset{a}{\operatorname{argmin}}
+s=\underset{a}{\mathrm{arg\,min}}
 \sum_t(am_t-\sigma_t)^2
 =\frac{\sum_t\sigma_t m_t}{\sum_t m_t^2},
 \qquad
