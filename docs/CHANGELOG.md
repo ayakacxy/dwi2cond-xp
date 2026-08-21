@@ -5,19 +5,6 @@ versions follow semantic versioning.
 
 ## [Unreleased]
 
-### Changed
-
-- Raised CI, SimNIBS integration, and release coverage gates from 75% to 100%.
-- Reworked the English and Simplified Chinese README entry pages with release,
-  security, validation, performance, and scientific-boundary summaries.
-
-### Added
-
-- Full statement-level tests for all 1,644 executable package statements,
-  including DTI/NIfTI fitting, multiprocessing, tensor conversion and
-  registration, SimNIBS adapters, simulations, lead fields, CLI dispatch,
-  visualizations, error handling, and local FSL reference parity.
-
 ## [0.1.0] - 2026-08-21
 
 ### Added
@@ -30,6 +17,16 @@ versions follow semantic versioning.
 - SimNIBS 4.6 fixed-montage FEM orchestration with Pardiso default.
 - Strict WM/GM/CSF subject-volume E-field output and four-mode NIfTI figures.
 - Lead-field configuration and HDF5-to-NPY/JSON validation/export contracts.
+- Full statement-level tests for all 1,644 executable package statements,
+  including DTI/NIfTI fitting, multiprocessing, tensor conversion and
+  registration, SimNIBS adapters, simulations, lead fields, CLI dispatch,
+  visualizations, error handling, and local FSL reference parity.
+
+### Changed
+
+- Raised CI, SimNIBS integration, and release coverage gates from 75% to 100%.
+- Reworked the English and Simplified Chinese README entry pages with release,
+  security, validation, performance, and scientific-boundary summaries.
 
 ### Limitations
 
