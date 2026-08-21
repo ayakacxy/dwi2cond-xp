@@ -28,7 +28,7 @@ jobs:
       - name: Verify source and tests
         run: |
           ruff check src tests tools scripts
-          pytest -q --cov=dwi2cond_xp --cov-report=term --cov-fail-under=75
+          pytest -q --cov=dwi2cond_xp --cov-report=term --cov-fail-under=100
           python scripts/verify_version.py --tag "${GITHUB_REF_NAME}"
           python scripts/check_markdown_links.py
           check-manifest --verbose

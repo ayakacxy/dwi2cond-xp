@@ -1,6 +1,7 @@
 import numpy as np
+import pytest
 
-from dwi2cond_xp.tensor_fit import fit_tensor_wls, form_design_matrix
+from dwi2cond_xp.tensor_fit import _normal_equations, fit_tensor_wls, form_design_matrix
 
 
 def _gradient_fixture():
@@ -54,3 +55,43 @@ def test_grad_dev_matches_explicit_transformed_gradients():
         ]
     )
     assert np.allclose(actual, expected, rtol=0, atol=1e-12)
+
+
+def test_metrics_and_sse_paths_are_consistent():
+    bvals, bvecs = _gradient_fixture()
+    expected = np.array([1.5e-3, 1.0e-4, -5.0e-5, 7.0e-4, 8.0e-5, 4.0e-4])
+    design = form_design_matrix(bvals, bvecs)
+    signal = np.exp(-(design[:, :6] @ expected + design[:, 6] * -np.log(900.0)))
+    tensor, sse = fit_tensor_wls(signal[None], bvals, bvecs, return_sse=True)
+    tensor2, s0, sse2 = fit_tensor_wls(
+        signal[None], bvals, bvecs, np.zeros((1, 9)), return_metrics=True
+    )
+    assert np.allclose(tensor, tensor2)
+    assert s0[0] == pytest.approx(900.0)
+    assert np.allclose(sse, sse2)
+
+
+@pytest.mark.parametrize(
+    ("signals", "bvals", "bvecs", "grad", "message"),
+    [
+        (np.ones(3), np.ones(3), np.ones((3, 3)), None, "signals must be"),
+        (np.ones((1, 3)), np.ones(3), np.ones((2, 3)), None, "bvecs must be"),
+        (np.ones((1, 2)), np.ones(3), np.ones((3, 3)), None, "signal-volume"),
+        (np.ones((1, 3)), np.ones(3), np.ones((3, 3)), np.zeros((2, 9)), "same number"),
+        (np.array([[1.0, np.nan, 1.0]]), np.ones(3), np.ones((3, 3)), None, "NaN or Inf"),
+        (np.zeros((1, 3)), np.ones(3), np.ones((3, 3)), None, "no positive"),
+    ],
+)
+def test_fit_rejects_invalid_contracts(signals, bvals, bvecs, grad, message):
+    with pytest.raises(ValueError, match=message):
+        fit_tensor_wls(signals, bvals, bvecs, grad)
+
+
+def test_design_and_solver_reject_invalid_shapes():
+    bvals, bvecs = _gradient_fixture()
+    with pytest.raises(ValueError, match="Vx9"):
+        form_design_matrix(bvals, bvecs, np.zeros((1, 8)))
+    with pytest.raises(ValueError, match="singular"):
+        fit_tensor_wls(np.ones((1, 7)), np.zeros(7), np.zeros((7, 3)))
+    with pytest.raises(ValueError, match="Nx7"):
+        _normal_equations(np.zeros((1, 2, 3, 7)), np.ones((1, 2)), np.ones((1, 2)))

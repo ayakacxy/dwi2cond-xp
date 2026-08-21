@@ -8,6 +8,11 @@ construction, strict tissue masking, lead-field axes, plotting, and manifests.
 FSL comparisons are optional reference tests and must skip visibly when FSL is
 not configured.
 
+The current local release suite reports `144 passed` and covers all
+`1,644/1,644` executable package statements (`100.00%`) with FSL `dtifit`
+configured. Linux, macOS, and Windows CI enforce the same 100% coverage gate;
+the FSL reference case skips explicitly on runners without `dtifit`.
+
 ## Numerical references
 
 A synthetic DTI fixture was compared with FSL 6.0.4 `dtifit --wls
