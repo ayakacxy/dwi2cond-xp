@@ -5,6 +5,13 @@ versions follow semantic versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Documented the exact `vn`, `dir`, and `mc` conductivity equations, SimNIBS
+  safety projection, and primary literature references in both READMEs.
+- Clarified that `mc` uses the geometric mean of the directly scaled local
+  conductivity eigenvalues rather than an arithmetic mean.
+
 ## [0.1.0] - 2026-08-21
 
 ### Added

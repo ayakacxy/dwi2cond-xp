@@ -30,7 +30,8 @@ follow the SimNIBS 4.6 compatibility contract.
 
 - `vn` normalizes each tensor determinant to the scalar tissue conductivity.
 - `dir` preserves local tensor magnitude and calibrates its tissue-level scale.
-- `mc` replaces local directional eigenvalues by their mean while preserving
-  the DTI-driven spatial conductivity variation.
+- `mc` replaces each directly scaled tensor by an isotropic tensor whose
+  eigenvalue is the geometric mean of the three local conductivity
+  eigenvalues, preserving the determinant and DTI-driven spatial variation.
 
 The same SimNIBS FEM assembly is used for scalar and tensor conductivity.
