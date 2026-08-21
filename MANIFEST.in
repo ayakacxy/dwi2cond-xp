@@ -1,0 +1,18 @@
+include LICENSE
+include THIRD_PARTY_NOTICES.md
+include CITATION.cff
+include .editorconfig
+include README.md
+include README.zh-CN.md
+include environment.yml
+recursive-include docs *.md
+recursive-include scripts *.py
+recursive-include tools *.py
+exclude docs/OPEN_SOURCE_PLAN.md
+include docs/images/electric_field_xyz_3x4.png
+include docs/images/electric_field_magnitude_2x2.png
+prune runs
+prune data
+prune .codex
+global-exclude *.py[cod]
+global-exclude __pycache__

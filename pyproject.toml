@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=83", "wheel>=0.43"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dwi2cond-xp"
+version = "0.1.0"
+description = "FSL-free post-preprocessing DTI-to-conductivity workflows for SimNIBS 4.6"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [
+  { name = "ayakacxy" },
+]
+keywords = [
+  "diffusion-MRI",
+  "DTI",
+  "conductivity",
+  "SimNIBS",
+  "tDCS",
+  "finite-element-method",
+  "neuroimaging",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+dependencies = [
+  "h5py>=3.10,<4",
+  "matplotlib>=3.8,<4",
+  "nibabel>=5,<6",
+  "numpy>=2,<3",
+  "scipy>=1.11,<2",
+  "tqdm>=4.64,<5",
+]
+
+[project.optional-dependencies]
+simnibs46 = ["simnibs==4.6.0"]
+viz = ["mne==1.12.1"]
+test = ["pytest>=8,<10", "pytest-cov>=7,<8", "ruff>=0.12,<1"]
+release = [
+  "build>=1.3,<2",
+  "check-manifest>=0.50,<1",
+  "check-wheel-contents>=0.6,<1",
+  "pip-audit>=2.9,<3",
+  "twine>=6,<8",
+  "validate-pyproject>=0.24,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/ayakacxy/dwi2cond-xp"
+Repository = "https://github.com/ayakacxy/dwi2cond-xp"
+Issues = "https://github.com/ayakacxy/dwi2cond-xp/issues"
+Changelog = "https://github.com/ayakacxy/dwi2cond-xp/blob/main/docs/CHANGELOG.md"
+Documentation = "https://github.com/ayakacxy/dwi2cond-xp#readme"
+
+[project.scripts]
+dwi2cond-xp = "dwi2cond_xp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

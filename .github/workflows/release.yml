@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install release environment
+        run: python -m pip install --upgrade pip && python -m pip install ".[test,release]"
+      - name: Verify source and tests
+        run: |
+          ruff check src tests tools scripts
+          pytest -q --cov=dwi2cond_xp --cov-report=term --cov-fail-under=75
+          python scripts/verify_version.py --tag "${GITHUB_REF_NAME}"
+          python scripts/check_markdown_links.py
+          check-manifest --verbose
+          python -m pip_audit . --skip-editable --progress-spinner=off
+      - name: Build and audit distributions
+        run: |
+          python -m build
+          python -m twine check dist/*
+          check-wheel-contents dist/*.whl
+          python scripts/build_release_metadata.py --dist dist
+          python scripts/verify_release.py --dist dist
+      - name: Attest distribution provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+      - name: Attest distribution SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+          sbom-path: dist/dwi2cond_xp.cdx.json
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --generate-notes

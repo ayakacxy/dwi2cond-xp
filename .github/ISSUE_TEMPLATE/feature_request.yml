@@ -1,0 +1,33 @@
+name: Feature request
+description: Propose a scoped capability with a validation plan.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not upload human MRI or controlled-access data. Explain the scientific contract and use shareable synthetic examples."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and intended users
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Proposed input, output, coordinates, and failure behavior
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Reference and validation plan
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This request does not include private medical data or credentials.
+          required: true

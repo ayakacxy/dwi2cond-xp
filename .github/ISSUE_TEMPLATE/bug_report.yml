@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible software or numerical defect without medical data.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not upload human MRI, subject identifiers, credentials, or private absolute paths. Use a synthetic reproducer whenever possible."
+  - type: input
+    id: version
+    attributes:
+      label: dwi2cond-xp version
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python, SimNIBS, NumPy, and SciPy versions.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or minimal code
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and traceback
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed human data, subject identifiers, credentials, and private paths.
+          required: true

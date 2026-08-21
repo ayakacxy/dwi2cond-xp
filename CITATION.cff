@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use dwi2cond-xp, please cite this software, SimNIBS, and the diffusion preprocessing tools used in your workflow."
+title: "dwi2cond-xp"
+type: software
+version: 0.1.0
+date-released: 2026-08-21
+authors:
+  - name: ayakacxy
+repository-code: "https://github.com/ayakacxy/dwi2cond-xp"
+url: "https://github.com/ayakacxy/dwi2cond-xp"
+license: GPL-3.0-only
+keywords:
+  - diffusion MRI
+  - DTI
+  - electrical conductivity
+  - SimNIBS
+  - tDCS
+  - finite element method
+references:
+  - type: software
+    title: SimNIBS
+    repository-code: "https://github.com/simnibs/simnibs"
