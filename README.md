@@ -80,8 +80,8 @@ against SimNIBS 4.6. For element or voxel $i$ in anisotropic tissue $t$, write
 the repaired diffusion tensor as
 
 $$
-\mathbf D_i = \mathbf V_i\,\mathrm{diag}
-(d_{i1},d_{i2},d_{i3})\,\mathbf V_i^{\mathsf T},
+\mathbf D_i = \mathbf V_i\mathrm{diag}
+(d_{i1},d_{i2},d_{i3})\mathbf V_i^{\mathsf T},
 \qquad d_{i1}\ge d_{i2}\ge d_{i3}>0,
 $$
 
@@ -96,12 +96,12 @@ mapping is
 
 $$
 \boldsymbol\Sigma_i^{\mathrm{vn}}
-=\sigma_t\,\mathbf V_i\,
-\mathrm{diag}\!\left(
+=\sigma_t\mathbf V_i
+\mathrm{diag}\left(
 \frac{d_{i1}}{g_i},\frac{d_{i2}}{g_i},\frac{d_{i3}}{g_i}
 \right)\mathbf V_i^{\mathsf T},
 \qquad
-\det\!\left(\boldsymbol\Sigma_i^{\mathrm{vn}}\right)^{1/3}=\sigma_t.
+\det\left(\boldsymbol\Sigma_i^{\mathrm{vn}}\right)^{1/3}=\sigma_t.
 $$
 
 Thus `vn` preserves eigenvectors and relative anisotropy while setting the
@@ -124,7 +124,7 @@ $$
 One global factor is then fitted jointly across the anisotropic tissues:
 
 $$
-s=\underset{a}{\mathrm{arg\,min}}
+s=\underset{a}{\mathrm{argmin}}
 \sum_t(am_t-\sigma_t)^2
 =\frac{\sum_t\sigma_t m_t}{\sum_t m_t^2},
 \qquad
@@ -142,7 +142,7 @@ by an isotropic tensor with the same determinant:
 
 $$
 \boldsymbol\Sigma_i^{\mathrm{mc}}
-=\det\!\left(\boldsymbol\Sigma_i^{\mathrm{dir}}\right)^{1/3}\mathbf I
+=\det\left(\boldsymbol\Sigma_i^{\mathrm{dir}}\right)^{1/3}\mathbf I
 =s\det(\mathbf D_i)^{1/3}\mathbf I.
 $$
 
