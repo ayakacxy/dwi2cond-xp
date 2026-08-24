@@ -65,7 +65,7 @@ def _coverage_run(
         environment=environment,
     )
     if not data_file.is_file():
-        raise RuntimeError(f"覆盖率批次没有生成数据文件: {label}")
+        raise RuntimeError(f"Coverage batch did not produce a data file: {label}")
     return data_file
 
 
@@ -210,12 +210,12 @@ def main() -> int:
         "--data-file",
         type=Path,
         default=ROOT / ".coverage",
-        help="合并后 coverage 数据文件，默认写入仓库根目录 .coverage",
+        help="Combined coverage data file; defaults to .coverage in the repository root",
     )
     parser.add_argument(
         "--keep-workspace",
         type=Path,
-        help="保留中间 fixture、缓存和分批覆盖文件，便于审计",
+        help="Keep intermediate fixtures, caches, and per-batch coverage files for audit",
     )
     args = parser.parse_args()
     base_environment = os.environ.copy()

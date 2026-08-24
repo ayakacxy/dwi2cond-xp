@@ -13,7 +13,7 @@ Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 [![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
-[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Validation](docs/VALIDATION.md) · [Benchmarks](docs/BENCHMARKS.md) · [Release notes](docs/CHANGELOG.md)
+[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Validation](docs/VALIDATION.md) · [Roadmap](docs/ROADMAP.md) · [Release notes](docs/CHANGELOG.md)
 
 🧠 **DTI fitting** · ⚡ **FSL-free runtime** · 🧭 **Tensor reorientation** · ⚡ **Anisotropic FEM** · 🧪 **100% statement coverage**
 
@@ -226,10 +226,16 @@ dwi2cond-xp --help
 Developer installation in a non-frozen environment:
 
 ```bash
-python -m pip install -e '.[test]'
-pytest -q --cov=dwi2cond_xp --cov-report=term-missing --cov-fail-under=100
+python -m pip install -e '.[test,viz]'
 ruff check src tests tools scripts
+pytest -q tests/test_cli.py
+python scripts/check_markdown_links.py
 ```
+
+Use focused tests during development. The complete release gate is
+`python scripts/run_coverage.py`; it runs the unit suite and real synthetic
+TOPUP/EDDY/FNIRT E2E paths in isolated Numba caches and requires 100% statement
+coverage.
 
 ## 📥 Input contract
 
@@ -415,7 +421,7 @@ See [SimNIBS integration](docs/SIMNIBS_INTEGRATION.md).
 
 ## 🧪 Validation evidence
 
-One private HCP subject was used for release-candidate validation. No source
+One private HCP subject was used for release validation. No source
 image, volumetric derivative, subject identifier, or machine-readable
 subject-level artifact is distributed. The two rendered field-comparison PNGs
 are included as result illustrations without a subject identifier. They must
@@ -435,13 +441,39 @@ retain the HCP acknowledgment and are not a substitute for accepting the
 - Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso;
   all vector E-field NIfTIs were finite and strictly excluded tissues outside
   WM/GM/CSF.
-- The local release test suite completed with `144 passed` and strict
-  `100.00%` statement coverage. Cross-platform CI enforces the same 100%
-  threshold; the FSL comparison is skipped only where `dtifit` is unavailable.
+- The Linux release gate completed with `535 passed, 7 skipped` and strict
+  `100.00%` statement coverage over all `12,443/12,443` executable statements.
+  Cross-platform CI enforces the same threshold; optional reference and
+  integration tests are skipped only when their external prerequisites are
+  unavailable.
 
 Exact methods, timing boundaries, and limitations are in
 [Validation](docs/VALIDATION.md), [Benchmarks](docs/BENCHMARKS.md), and
 [Reproducibility](docs/REPRODUCIBILITY.md).
+
+## 🛣️ Roadmap
+
+Version `0.2.0` is the completed FSL-free preprocessing milestone. The current
+`main` branch remains the development branch, while released versions stay
+available through immutable tags and GitHub Releases.
+
+Planned priorities for `v0.3.0` are:
+
+- freeze same-input, same-output, eight-worker end-to-end benchmarks for the
+  supported affine and nonlinear preprocessing branches;
+- profile and optimize the largest remaining FNIRT, nonlinear PPD, affine,
+  compression, and I/O costs;
+- reduce peak memory through equivalent chunked or fused data flow, especially
+  for whole-head nonlinear tensor reorientation;
+- expand whole-workflow regression and packaging evidence while keeping
+  platform-specific behavior explicit.
+
+These are priorities rather than promised performance results. Optimizations
+must preserve the SimNIBS 4.6/FSL 6.0.4 algorithm, resolution, iteration and
+stopping rules, output contracts, and numerical A/B gates. The project does not
+currently claim that every complete preprocessing branch is 10x faster than
+FSL. See the maintained [project roadmap](docs/ROADMAP.md) and the detailed
+[performance feasibility report](docs/DWI2COND_10X_PERFORMANCE_FEASIBILITY_REPORT.md).
 
 ## 🗂️ Documentation and community
 

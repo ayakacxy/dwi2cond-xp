@@ -5,7 +5,14 @@ versions follow semantic versioning.
 
 ## [Unreleased]
 
-No changes yet.
+### Documentation
+
+- Added a post-`v0.2.0` roadmap with explicit scientific non-goals and linked it
+  from both README entry pages.
+- Refreshed validation counts, release status, documentation navigation, and
+  contributor/reproducibility guidance after the `v0.2.0` release audit.
+- Changed future tag releases to use the matching version section of this
+  changelog instead of incomplete pull-request-only generated notes.
 
 ## [0.2.0] - 2026-08-24
 

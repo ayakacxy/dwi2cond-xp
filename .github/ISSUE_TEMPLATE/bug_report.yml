@@ -16,7 +16,14 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Operating system, Python, SimNIBS, NumPy, and SciPy versions.
+      description: Operating system, Python, SimNIBS, NumPy, SciPy, Numba backend, and worker count.
+    validations:
+      required: true
+  - type: input
+    id: workflow
+    attributes:
+      label: Workflow branch
+      description: Preprocessing, susceptibility, and registration modes, or the exact subcommand.
     validations:
       required: true
   - type: textarea

@@ -15,6 +15,11 @@
 > GitHub Actions run `32683104733` 全绿，Linux 为 `535 passed, 7 skipped`，合并
 > coverage `12443/12443 statements`、100%。这些证据取代下文历史候选状态。
 
+> 正式发布更新（2026-08-24）：最终 tag 提交 `20f4092` 的 CI run `32683953049`、
+> CodeQL `32683953062` 和 OpenSSF `32683953047` 全绿；Release workflow
+> `32684625609` 完成测试、构建、provenance、SBOM 和 GitHub Release。公开资产回下载
+> 后的 SHA-256、archive 隐私、隔离安装/CLI 与 provenance 复核均通过。
+
 ## 技术结论：核心 FSL 子集与 v0.2.0 发布门禁已经完成
 
 `dwi2cond-xp` 已经完成 P0–P11，共 12/12 个阶段；SimNIBS 4.6
@@ -41,8 +46,8 @@ nonlinear 的精确 Python/FSL 加速比。
 
 - **算法完成度：** P0–P11 complete，核心子集实现及同输入 A/B 已完成；
 - **工程完成度：** DAG、QA、cache、进度、wheel overlay 和 100% coverage 已完成；
-- **发布完成度：** Linux/macOS/Windows/package、CodeQL 和 OpenSSF 已对冻结提交通过，
-  `v0.2.0` 正在执行 tag/Release 资产发布；
+- **发布完成度：** `v0.2.0` 已正式发布；Linux/macOS/Windows/package、CodeQL、
+  OpenSSF、Release workflow 与公开资产回下载审计均通过；
 - **SimNIBS 集成：** 未修改 SimNIBS 4.6.0 环境、真实 HCP subject 和隔离 wheel overlay
   已通过；仓库没有注册 self-hosted runner，因此不把不会启动的远端队列伪装成门禁；
 - **性能声明仍需：** 只有要发布 HCP nonlinear Python/FSL 加速比时，才必须补一份成功
@@ -254,7 +259,7 @@ tensor decomposition 仅约 `8.69 s`，因此下一轮不应优先“手搓 eige
 `-ffast-math`、隐式 autocast 和 silent fallback。性能结果因此可以解释为同算法工程
 优化，而不是降低计算要求。
 
-## 当前 v0.2.0 候选已通过本地与远端发布门禁
+## v0.2.0 已通过本地、远端和发布资产门禁
 
 2026-08-24 在最终生产代码树上完成的本地证据为：
 
@@ -278,11 +283,15 @@ Windows Server 2022 与 package job 全绿；CodeQL `32683104727` 和 OpenSSF
 affine bitwise 相等仍属于此前
 已记录的候选快照，用于证明安装形式不改变数值；它没有被包装为本轮重新计时结果。
 
-## 当前是已封板的 v0.2.0 候选，进入 tag/Release 流程
+最终文档提交 `20f4092` 的 CI run `32683953049` 再次在三平台与 package job 全绿，
+CodeQL `32683953062` 和 OpenSSF `32683953047` 同提交通过。annotated tag `v0.2.0`
+解引用到 `20f4092`；Release workflow `32684625609` 在 9 分 39 秒内完成完整测试、
+构建审计、provenance、SBOM 和发布。
 
-公开仓库已有 `v0.1.0`。当前 FSL 子集实现已整理为 `v0.2.0` staged candidate，
-最终提交与远端 CI 已完成；在 tag Release workflow 和资产回下载审计完成前仍称为
-“已封板候选”。版本策略固定为：
+## v0.2.0 已正式发布并完成公开资产回下载审计
+
+公开仓库同时保留 `v0.1.0` 和 `v0.2.0`。`v0.1.0` 仍解引用到原提交
+`29f98a4`，`v0.2.0` 解引用到最终提交 `20f4092`。版本策略固定为：
 `main` 保持最新代码，稳定版本由不可变 tag/Release 保留；只有需要维护旧版补丁时才
 创建临时 backport 分支，不为 `0.1`、`0.2` 长期各维护一条开发分支。
 
@@ -294,14 +303,15 @@ affine bitwise 相等仍属于此前
 | 最终工作树 full suite + 100% coverage | 通过 | 本地低核 `530 passed, 7 skipped`；远端 Linux `535 passed, 7 skipped`，`12443/12443`。 |
 | 修复后固定 8-worker 完整真实 subject 与 SimNIBS 合同 | 通过 | 完整四级 nonlinear、逐阶段 FSL A/B、最终 tensor/QA、四模式 FEM 与隔离 wheel overlay 均已验证。 |
 | HCP FSL nonlinear 成功 manifest | 性能声明门禁 | 仅在发布 HCP nonlinear 加速比前，提高 timeout 后正式重跑并登记 outputs 与完整计时。 |
-| 最终冻结并提交后的 Linux/macOS/Windows green | 通过 | GitHub Actions run `32683104733` 四个 job 全绿。 |
-| `v0.2.0` 版本、Changelog、README 与依赖声明 | 本地通过 | 已统一版本、能力、测试、FSL reference 与性能边界。 |
-| 最终 wheel/sdist/SBOM/SHA256 与隔离安装 | 本地通过 | 最终 commit 后由 Release workflow 再生成正式资产。 |
-| staged/tracked 文件隐私与 provenance 审计 | 本地通过 | 未分发私有 MRI、FSL 源码/二进制或 subject derivative。 |
+| 最终冻结并提交后的 Linux/macOS/Windows green | 通过 | 最终 CI `32683953049` 四个 job 全绿。 |
+| `v0.2.0` 版本、Changelog、README 与依赖声明 | 通过 | 已统一版本、能力、测试、FSL reference 与性能边界。 |
+| 最终 wheel/sdist/SBOM/SHA256 与隔离安装 | 通过 | Release workflow `32684625609` 生成，公开回下载后复核通过。 |
+| staged/tracked 文件隐私与 provenance 审计 | 通过 | 未分发私有 MRI、FSL 源码/二进制或 subject derivative；GitHub provenance 验证通过。 |
 
-当前适合称为“算法、科学 A/B、跨平台和发布产物门禁已完成，正在创建 GitHub Release
-的 `v0.2.0` 封板候选”。现有 workflow 只创建 GitHub Release，没有 PyPI publish；
-若计划发布到 PyPI，还需另行增加并验证发布步骤。
+当前适合称为“算法、科学 A/B、跨平台和发布产物门禁均已完成并正式发布的
+`v0.2.0`”。正式 Release 为
+`https://github.com/ayakacxy/dwi2cond-xp/releases/tag/v0.2.0`。现有 workflow 只创建
+GitHub Release，没有 PyPI publish；若计划发布到 PyPI，还需另行增加并验证发布步骤。
 
 ## 已知限制决定了公开声明的边界
 
@@ -322,14 +332,14 @@ affine bitwise 相等仍属于此前
 - FEM 与 lead field 仍依赖 SimNIBS 4.6；被替代的是 dwi2cond 的 FSL 运行依赖。
 - 发布仓库不能包含私有 MRI、FSL 源码/二进制、subject derivative 或绝对本地路径。
 
-## v0.2.0 只剩 tag 资产复核，性能工作进入 v0.3.0
+## v0.2.0 已完成，性能工作进入 v0.3.0
 
-建议按以下顺序推进：
+发布收尾已经完成：
 
-1. **创建 `v0.2.0` tag。** P11、跨平台与安全门禁已关闭。
-2. **复核 Release 资产。** 等 tag Release workflow 成功后重新下载 wheel、
-   sdist、SBOM 和校验和，复核 tag、资产哈希、provenance 与 latest 状态。
-3. **在 `v0.3.0` 再继续性能优化。** 优先 profile PPD warp resampling、FNIRT完整
+1. **`v0.2.0` tag 与 GitHub Release 已创建。** P11、跨平台与安全门禁已关闭。
+2. **Release 资产已复核。** wheel、sdist、SBOM 和校验和已回下载，并完成 tag、
+   资产哈希、隔离安装、CLI、provenance 与 latest 状态检查。
+3. **`v0.3.0` 再继续性能优化。** 优先 profile PPD warp resampling、FNIRT完整
    estimation 和 26.1 GiB临时数组；每次只改一个热点，并用固定 warp、轨迹和最终
    tensor A/B 验收。
 
@@ -349,5 +359,5 @@ HCP nonlinear 的正式 FSL 成功计时只约束是否发布该阶段加速比�
   误差分布？
 - Windows/macOS 上的线程后端是否与 Linux 多进程路径保持相同输出和可接受性能？
 
-在这些问题中，前两个直接决定下一轮性能工作；其余问题决定 `v0.2.0` 发布声明可以
-覆盖多广。
+在这些问题中，前两个直接决定下一轮性能工作；其余问题决定未来版本的性能与验证
+声明可以覆盖多广，不回改已经冻结的 `v0.2.0` 证据边界。

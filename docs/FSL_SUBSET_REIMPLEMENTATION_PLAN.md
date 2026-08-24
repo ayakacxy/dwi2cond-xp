@@ -3,7 +3,7 @@
 ## 阶段进度总览
 
 > **总体进度：12 / 12 个阶段已完成（100%）**
-> **当前状态：P0–P11 / M0–M11 全部完成；`v0.2.0` 已进入 tag 发布流程**
+> **当前状态：P0–P11 / M0–M11 全部完成；`v0.2.0` 已正式发布并完成资产复核**
 > **下一版本：`v0.3.0` 只继续等价性能优化，不回改 `v0.2.0` 算法合同**
 > 最后更新：2026-08-24
 
@@ -812,7 +812,7 @@ slice outlier replacement和rotated bvecs。不实现未被SimNIBS调用的完�
 
 当前阶段证据（2026-08-24，已完成）：
 
-- 2026-08-24 已完成 `v0.2.0` 发布候选收口：精确 SimNIBS 4.6 环境的低核本地复核
+- 2026-08-24 已完成 `v0.2.0` 发布门禁收口：精确 SimNIBS 4.6 环境的低核本地复核
   为 `530 passed, 7 skipped`，TOPUP、EDDY、FNIRT/nonlinear 三个真实合成 E2E 均
   完成；最终远端 Linux 门禁为 `535 passed, 7 skipped`，合并 coverage 为
   `12443/12443 statements`、100%。请求 8 workers 会在低核设备安全收敛到 Numba
@@ -825,6 +825,12 @@ slice outlier replacement和rotated bvecs。不实现未被SimNIBS调用的完�
   `32683104727` 与 OpenSSF Scorecard run `32683104735` 同属该提交。仓库 API 确认
   self-hosted runner 数量为 0，因此取消了不会启动的排队任务；SimNIBS 4.6 集成由
   未修改的本地精确环境、真实 HCP subject 和隔离 wheel overlay 证据承担；
+- 最终 tag 提交 `20f4092` 的 CI run `32683953049`、CodeQL `32683953062` 和
+  OpenSSF `32683953047` 全绿；Release workflow `32684625609` 完成并发布
+  wheel、sdist、CycloneDX SBOM 与 `SHA256SUMS`。公开回下载后的 wheel/sdist
+  SHA-256 分别为 `cbd9ab7647c82398b8b9209331cc569cd1c239894bc12eb2eb074fa6aca3e411`
+  和 `9df2d284942d8274b1f7d95ddd8d2ce0656ed6d60f178b3a5d25db81f8594bde`，
+  隔离安装、CLI、archive 隐私与 GitHub provenance 均通过；
 
 - 已实现完整 workflow DAG、强输入 SHA-256 fingerprint、原子 stage manifest、结构
   cache 校验、最终数值复核、wall/CPU/RSS 和阶段进度；nomoco、legacy、eddy、affine、
@@ -833,14 +839,16 @@ slice outlier replacement和rotated bvecs。不实现未被SimNIBS调用的完�
   新增 `scripts/run_coverage.py` 将普通测试、TOPUP/EDDY/FNIRT 真实合成 E2E 放入互相
   独立的冷 Numba cache 后再合并 coverage，正式运行的持久缓存不受影响；该统一命令在
   精确 SimNIBS 4.6 overlay 中为 `507 passed, 6 skipped`，三个真实 E2E 均完成；
-- 当前源码全包为 `11645/11645 statements`、100%，未降低阈值，未使用 omit/pragma；
+- 此前 P11 覆盖率建设快照的源码全包为 `11645/11645 statements`、100%，未降低
+  阈值，未使用 omit/pragma；
   TOPUP 为 `1802/1802`、EDDY 为 `1764/1764`、FNIRT+nonlinear 为 `1205/1205`。
   Linux/macOS/Windows CI 和 tag release 已统一改用该 Numba-aware coverage 入口；
-- 最终 wheel SHA-256 为
+- 此前 P11 安装形式 A/B 使用的候选 wheel SHA-256 为
   `bb40cb4bd5cad83cdbfe070ba0cc83c64b52f1a619ecca9e5ad1af341ce78dd6`，已在新建的
   `--system-site-packages` overlay 中 `--no-deps` 安装；Python `3.11.15`、SimNIBS
   `4.6.0` 及十个关键依赖逐项匹配，`pip check` 无破损依赖；
-- 最终 wheel 的公开 nomoco+nonlinear 完整 DAG：冷启动 `58.37 s`、跨输出热启动
+  该候选哈希不是随后正式发布的 `v0.2.0` wheel 哈希；
+- 该候选 wheel 的公开 nomoco+nonlinear 完整 DAG：冷启动 `58.37 s`、跨输出热启动
   `20.58 s`、结构 cache 命中 `0.77 s`，
   峰值 RSS 分别约 `540/310/141 MiB`；同一 SimNIBS 环境的源树冷启动 `58.55 s`，
   wheel 与源树 40 个 NIfTI 数组及 affine 全部 bitwise 相等，wheel 冷/热输出也全部

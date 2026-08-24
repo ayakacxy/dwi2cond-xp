@@ -59,7 +59,8 @@ Homepage = "https://github.com/ayakacxy/dwi2cond-xp"
 Repository = "https://github.com/ayakacxy/dwi2cond-xp"
 Issues = "https://github.com/ayakacxy/dwi2cond-xp/issues"
 Changelog = "https://github.com/ayakacxy/dwi2cond-xp/blob/main/docs/CHANGELOG.md"
-Documentation = "https://github.com/ayakacxy/dwi2cond-xp#readme"
+Documentation = "https://github.com/ayakacxy/dwi2cond-xp/blob/main/docs/README.md"
+Roadmap = "https://github.com/ayakacxy/dwi2cond-xp/blob/main/docs/ROADMAP.md"
 
 [project.scripts]
 dwi2cond-xp = "dwi2cond_xp.cli:main"

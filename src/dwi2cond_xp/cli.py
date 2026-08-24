@@ -794,10 +794,10 @@ def main(argv: list[str] | None = None) -> int:
         detail_level: list[int | None] = [None]
         detail_iteration = [0]
         finalize_phases = {
-            "finalize_write": "写出 warp / field / Jacobian / registered FA",
-            "finalize_tensor": "tensor PPD 重采样、重定向与写盘",
-            "finalize_qa": "生成派生量与 QA",
-            "finalize_complete": "后处理完成",
+            "finalize_write": "write warp / field / Jacobian / registered FA",
+            "finalize_tensor": "resample, reorient, and write PPD tensor",
+            "finalize_qa": "generate derivatives and QA",
+            "finalize_complete": "post-processing complete",
         }
 
         def report_fnirt(
@@ -815,7 +815,7 @@ def main(argv: list[str] | None = None) -> int:
                     detail_bar[0] = tqdm(
                         total=3,
                         initial=min(done, 3),
-                        desc="FNIRT 后处理",
+                        desc="FNIRT post-processing",
                         unit="stage",
                         dynamic_ncols=True,
                         mininterval=0.5,
@@ -985,10 +985,10 @@ def main(argv: list[str] | None = None) -> int:
         detail_stage: list[str | None] = [None]
         detail_iteration = [0]
         finalize_phases = {
-            "finalize_write": "写出 warp / field / Jacobian / registered FA",
-            "finalize_tensor": "tensor PPD 重采样、重定向与写盘",
-            "finalize_qa": "生成派生量与 QA",
-            "finalize_complete": "后处理完成",
+            "finalize_write": "write warp / field / Jacobian / registered FA",
+            "finalize_tensor": "resample, reorient, and write PPD tensor",
+            "finalize_qa": "generate derivatives and QA",
+            "finalize_complete": "post-processing complete",
         }
 
         def report_pipeline(stage: str, done: int, total: int, status: str) -> None:
@@ -1006,7 +1006,7 @@ def main(argv: list[str] | None = None) -> int:
                         detail_bar[0] = tqdm(
                             total=3,
                             initial=min(done, 3),
-                            desc="FNIRT 后处理",
+                            desc="FNIRT post-processing",
                             unit="stage",
                             dynamic_ncols=True,
                             mininterval=0.5,
@@ -1087,7 +1087,7 @@ def main(argv: list[str] | None = None) -> int:
                 bar.set_postfix_str(f"{stage}: {status}", refresh=False)
                 stage_started[stage] = time.perf_counter()
                 bar.write(
-                    f"▶ [{len(completed_stages) + 1}/{expected_stages}] {stage} 开始"
+                    f"▶ [{len(completed_stages) + 1}/{expected_stages}] {stage} started"
                 )
             if (
                 ":" not in stage
@@ -1104,10 +1104,10 @@ def main(argv: list[str] | None = None) -> int:
                 elapsed = time.perf_counter() - stage_started.get(
                     stage, time.perf_counter()
                 )
-                suffix = "缓存命中" if status == "cached" else f"{elapsed:.2f} 秒"
+                suffix = "cache hit" if status == "cached" else f"{elapsed:.2f} s"
                 bar.write(
                     f"✓ [{len(completed_stages)}/{expected_stages}] "
-                    f"{stage} 完成，{suffix}"
+                    f"{stage} completed, {suffix}"
                 )
 
         try:

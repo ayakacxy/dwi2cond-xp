@@ -12,7 +12,7 @@
 [![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
-[English](README.md) · [文档](docs/README.md) · [总报告](docs/DWI2COND_COMPLETION_AND_PERFORMANCE_REPORT.md) · [10×性能评估](docs/DWI2COND_10X_PERFORMANCE_FEASIBILITY_REPORT.md) · [验证](docs/VALIDATION.md) · [基准](docs/BENCHMARKS.md) · [更新记录](docs/CHANGELOG.md)
+[English](README.md) · [文档](docs/README.md) · [验证](docs/VALIDATION.md) · [路线图](docs/ROADMAP.md) · [总报告](docs/DWI2COND_COMPLETION_AND_PERFORMANCE_REPORT.md) · [更新记录](docs/CHANGELOG.md)
 
 🧠 **DTI 拟合** · ⚡ **运行时无 FSL** · 🧭 **张量重定向** · ⚡ **各向异性 FEM** · 🧪 **100% 语句覆盖**
 
@@ -202,6 +202,11 @@ python -m pip install --upgrade pip
 python -m pip install .
 ```
 
+非冻结开发环境可安装 `python -m pip install -e '.[test,viz]'`。日常只运行与修改相关的
+focused tests、Ruff 和 Markdown 链接检查；发布前再运行
+`python scripts/run_coverage.py`。该完整门禁会在隔离 Numba cache 中执行单元测试及
+真实合成 TOPUP/EDDY/FNIRT E2E，并强制 100% 语句覆盖率。
+
 ## 📥 输入合同
 
 `fit-dti` 接受已预处理的四维 NIfTI，bvals、bvecs、brain mask 必须与其体积顺序一致。
@@ -310,8 +315,42 @@ panel 共用对称色标；切片只由 brain mask 最大面积决定，不根�
 预处理、配准、建模或 FEM。全电极 lead-field 接口和数据合同已支持并测试，但当前
 发布证据不包含真实被试的全电极完整运行。
 
-本机 release 测试为 `144 passed`、严格 `100.00%` 语句覆盖；跨平台 CI 同样强制
-100% 门槛。没有 `dtifit` 的平台只跳过 FSL 对照测试，不降低其余覆盖要求。
+Linux release 门禁为 `535 passed, 7 skipped`，全部 `12,443/12,443` 个可执行语句
+严格达到 `100.00%` 覆盖率；跨平台 CI 同样强制该门槛。只有外部 reference 或集成
+前置条件不可用时才跳过对应可选测试。
 
-详细方法、数值误差、复现步骤、贡献和安全规范见 [文档目录](docs/README.md)。项目采用
-[GPL-3.0-only](LICENSE)，第三方来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+## 🛣️ 后续路线图
+
+`v0.2.0` 已完成运行时不依赖 FSL 的预处理里程碑。当前 `main` 分支继续承载最新开发，
+已发布版本则由不可变 tag 和 GitHub Release 长期保留。
+
+`v0.3.0` 的计划重点是：
+
+- 冻结仿射和非线性预处理分支在相同输入、相同输出、8 workers 下的端到端基准；
+- profile 并优化剩余的 FNIRT、非线性 PPD、仿射、压缩和 I/O 热点；
+- 通过等价的分块或融合数据流降低峰值内存，重点处理完整头部非线性张量重定向；
+- 扩充全流程回归和发布证据，并继续显式记录不同平台的行为边界。
+
+这些是研发优先级，不是预先承诺的性能结果。所有优化必须保持 SimNIBS 4.6/FSL 6.0.4
+算法、分辨率、迭代与停止规则、输出合同和逐阶段数值 A/B 门禁不变。项目目前不宣称
+每条完整预处理分支都比 FSL 快 10 倍。维护中的任务边界见
+[项目路线图](docs/ROADMAP.md)，定量分析见
+[性能可行性报告](docs/DWI2COND_10X_PERFORMANCE_FEASIBILITY_REPORT.md)。
+
+## 🗂️ 文档与社区
+
+- [文档目录](docs/README.md)
+- [输入合同](docs/INPUT_CONTRACT.md)
+- [方法](docs/METHODS.md)
+- [验证](docs/VALIDATION.md)
+- [复现](docs/REPRODUCIBILITY.md)
+- [贡献指南](docs/CONTRIBUTING.md)
+- [支持](docs/SUPPORT.md)
+- [安全与医学数据报告](docs/SECURITY.md)
+- [更新记录](docs/CHANGELOG.md)
+
+## 🙏 引用与许可证
+
+请使用 [CITATION.cff](CITATION.cff) 引用本项目，并同时引用工作流实际使用的 SimNIBS
+和 diffusion preprocessing 软件。项目采用 [GPL-3.0-only](LICENSE)，第三方来源及
+许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
