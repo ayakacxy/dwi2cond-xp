@@ -7,6 +7,7 @@ versions follow semantic versioning.
 
 ### Documentation
 
+- Added clickable contents near the top of both README entry pages.
 - Added a post-`v0.2.0` roadmap with explicit scientific non-goals and linked it
   from both README entry pages.
 - Refreshed validation counts, release status, documentation navigation, and

@@ -19,6 +19,21 @@ Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 
 </div>
 
+## 📚 Contents
+
+- [Validation at a glance](#-validation-at-a-glance)
+- [Scope](#-scope)
+- [Conductivity modes](#-conductivity-modes)
+- [Installation](#-installation)
+- [Input contract](#-input-contract)
+- [Minimal workflow](#-minimal-workflow)
+- [Voxel-level comparison](#-voxel-level-comparison)
+- [Lead-field support](#-lead-field-support)
+- [Validation evidence](#-validation-evidence)
+- [Roadmap](#-roadmap)
+- [Documentation and community](#-documentation-and-community)
+- [Citation and license](#-citation-and-license)
+
 `dwi2cond-xp` is a cross-platform Python pipeline that preprocesses supported
 raw or already-preprocessed single-shell diffusion MRI, generates conductivity
 tensors for SimNIBS 4.6, and runs validated anisotropic finite-element
