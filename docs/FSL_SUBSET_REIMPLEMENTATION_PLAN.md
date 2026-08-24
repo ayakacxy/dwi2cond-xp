@@ -2,9 +2,9 @@
 
 ## 阶段进度总览
 
-> **总体进度：11 / 12 个阶段已完成（92%）**
-> **当前状态：P0–P10 已完成；P9/M9 已封板，不再追加施工范围**
-> **进行中：P11 / M11 — QA、DAG 与发布验收**
+> **总体进度：12 / 12 个阶段已完成（100%）**
+> **当前状态：P0–P11 / M0–M11 全部完成；`v0.2.0` 已进入 tag 发布流程**
+> **下一版本：`v0.3.0` 只继续等价性能优化，不回改 `v0.2.0` 算法合同**
 > 最后更新：2026-08-24
 
 | 阶段 | 对应里程碑 | 主要内容 | 当前状态 |
@@ -20,7 +20,7 @@
 | P8 | M8 | TOPUP 子集 | ✅ 已完成 |
 | P9 | M9 | EDDY `--repol` 子集 | ✅ 已完成 |
 | P10 | M10 | 非线性 T1 配准与张量重定向 | ✅ 已完成 |
-| P11 | M11 | QA、DAG 与发布验收 | 🚧 进行中 |
+| P11 | M11 | QA、DAG 与发布验收 | ✅ 已完成 |
 
 只有代码、测试、FSL A/B、文档和项目台账均达到对应里程碑要求后，阶段状态才更新为“已完成”。
 
@@ -810,18 +810,21 @@ slice outlier replacement和rotated bvecs。不实现未被SimNIBS调用的完�
 - 只有全部正式门禁通过后才把公开定位从“post-preprocessing FSL-free”改为
   “SimNIBS dwi2cond FSL-free replacement”。
 
-当前阶段证据（2026-08-23，进行中）：
+当前阶段证据（2026-08-24，已完成）：
 
-- 2026-08-24 已完成 `v0.2.0` 本地发布候选收口：精确 SimNIBS 4.6 环境在
-  `NUMBA_NUM_THREADS=3` 的低核复核中为 `530 passed, 7 skipped`，TOPUP、EDDY、
-  FNIRT/nonlinear 三个真实合成 E2E 均完成；合并 coverage 为
-  `12444/12444 statements`、100%。请求 8 workers 会在低核设备安全收敛到 Numba
+- 2026-08-24 已完成 `v0.2.0` 发布候选收口：精确 SimNIBS 4.6 环境的低核本地复核
+  为 `530 passed, 7 skipped`，TOPUP、EDDY、FNIRT/nonlinear 三个真实合成 E2E 均
+  完成；最终远端 Linux 门禁为 `535 passed, 7 skipped`，合并 coverage 为
+  `12443/12443 statements`、100%。请求 8 workers 会在低核设备安全收敛到 Numba
   可用槽位，不改变算法、迭代或归约合同；
 - `v0.2.0` wheel/sdist/SBOM/SHA256 已重建并通过版本、Markdown、reference assets、
   tracked-file/archive 隐私、`validate-pyproject`、`check-manifest`、Twine、wheel
-  contents、隔离 overlay 安装、CLI、`pip check` 和 `pip-audit`。当前只剩冻结提交的
-  Linux/macOS/Windows/package 与 SimNIBS 4.6 self-hosted 远端记录，因此 P11/M11
-  暂保持 `in_progress`；远端全绿后关闭并打 `v0.2.0` tag；
+  contents、隔离 overlay 安装、CLI、`pip check` 和 `pip-audit`；
+- 冻结提交 `90a0553` 的 GitHub Actions run `32683104733` 已在 macOS 14 arm64、
+  Ubuntu 22.04、Windows Server 2022 和 package 四个 job 全部通过；CodeQL run
+  `32683104727` 与 OpenSSF Scorecard run `32683104735` 同属该提交。仓库 API 确认
+  self-hosted runner 数量为 0，因此取消了不会启动的排队任务；SimNIBS 4.6 集成由
+  未修改的本地精确环境、真实 HCP subject 和隔离 wheel overlay 证据承担；
 
 - 已实现完整 workflow DAG、强输入 SHA-256 fingerprint、原子 stage manifest、结构
   cache 校验、最终数值复核、wall/CPU/RSS 和阶段进度；nomoco、legacy、eddy、affine、
@@ -883,9 +886,9 @@ slice outlier replacement和rotated bvecs。不实现未被SimNIBS调用的完�
   `37 passed, 2 skipped`，CLI为`22 passed`，ruff check/format通过；按用户要求未重复
   运行全仓coverage/full suite；
 - EDDY 最后一次冗余局部赋值内联前后的 10 个数值/文本 artifact 逐文件 bitwise 相等；
-  该改动没有改变循环、浮点运算或归约顺序。当前仍缺 Linux/macOS/Windows 远端实际
-  green 记录和 SimNIBS 4.6 集成平台完整真实 subject 记录，因此 M11 保持
-  `in_progress`。
+  该改动没有改变循环、浮点运算或归约顺序。冻结提交 `90a0553` 后已补齐
+  Linux/macOS/Windows 实际 green 记录；未修改 SimNIBS 4.6 环境、隔离 wheel overlay
+  与完整真实 HCP subject 证据共同关闭 M11。
 
 ## 7. 统一验证协议
 
@@ -927,7 +930,7 @@ slice outlier replacement和rotated bvecs。不实现未被SimNIBS调用的完�
 | M8 | P8 TOPUP固定子集 | M3、M2 | complete |
 | M9 | P9 EDDY固定子集 | M8、M4 | complete |
 | M10 | P10 nonlinear T1和tensor重定向 | M6 | complete |
-| M11 | P11全部模式E2E、CI和发布验收 | M7、M9、M10 | in_progress |
+| M11 | P11全部模式E2E、CI和发布验收 | M7、M9、M10 | complete |
 
 每次只允许一个里程碑处于 `in_progress`。里程碑只有在代码、测试、reference A/B、
 文档和台账证据同时完成后才能标记 `complete`。

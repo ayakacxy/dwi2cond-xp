@@ -10,14 +10,14 @@
 > 所需 FSL 运行依赖为核心，不再以全流程 10× 或新增性能优化作为发布门禁。进一步
 > FNIRT/PPD 性能工作延期到 `v0.3.0`；本报告中的发布前状态仍保留为审计快照。
 
-> 本地发布门禁更新（2026-08-24）：低核发布复核为 `530 passed, 7 skipped`，TOPUP、
-> EDDY、FNIRT/nonlinear 三个真实合成 E2E 全部完成；低核线程兼容修复后合并
-> coverage 为 `12444/12444 statements`、100%。此前新增测试聚焦运行 `92 passed,
-> 2 skipped`。这些证据取代下文“最终 coverage 尚未重跑”的历史状态。
+> 发布门禁更新（2026-08-24）：精确 SimNIBS 4.6 本地低核复核为
+> `530 passed, 7 skipped`；冻结提交 `90a0553` 的 Linux/macOS/Windows/package
+> GitHub Actions run `32683104733` 全绿，Linux 为 `535 passed, 7 skipped`，合并
+> coverage `12443/12443 statements`、100%。这些证据取代下文历史候选状态。
 
-## 技术结论：核心 FSL 子集已经实现，正式发布门禁尚未闭合
+## 技术结论：核心 FSL 子集与 v0.2.0 发布门禁已经完成
 
-`dwi2cond-xp` 已经完成 P0–P10，共 11/12 个阶段；SimNIBS 4.6
+`dwi2cond-xp` 已经完成 P0–P11，共 12/12 个阶段；SimNIBS 4.6
 `dwi2cond` 实际使用的 DTI fitting、MCFLIRT/FLIRT、BET、GRE/FUGUE 固定路径、
 TOPUP、单壳 EDDY `--repol`、FNIRT、VECREG PPD 以及张量派生量均已有纯 Python
 实现。运行时不需要 FSL，FSL 只保留为开发和验收 reference。
@@ -39,11 +39,12 @@ nonlinear 的精确 Python/FSL 加速比。
 
 当前最准确的项目定位是：
 
-- **算法完成度：** P0–P10 complete，核心子集实现及本地同输入 A/B 已完成；
-- **工程完成度：** DAG、QA、cache、进度、wheel overlay 和历史 100% coverage 已实现；
-- **发布完成度：** P11 in progress，当前是 `v0.2.0` 发布前集成工作树；
-- **正式发布前仍需：** 最终工作树全量 coverage、新 wheel、最终冻结并提交后的三平台
-  CI，以及至少一次修复后的完整真实 subject 集成运行；
+- **算法完成度：** P0–P11 complete，核心子集实现及同输入 A/B 已完成；
+- **工程完成度：** DAG、QA、cache、进度、wheel overlay 和 100% coverage 已完成；
+- **发布完成度：** Linux/macOS/Windows/package、CodeQL 和 OpenSSF 已对冻结提交通过，
+  `v0.2.0` 正在执行 tag/Release 资产发布；
+- **SimNIBS 集成：** 未修改 SimNIBS 4.6.0 环境、真实 HCP subject 和隔离 wheel overlay
+  已通过；仓库没有注册 self-hosted runner，因此不把不会启动的远端队列伪装成门禁；
 - **性能声明仍需：** 只有要发布 HCP nonlinear Python/FSL 加速比时，才必须补一份成功
   结束的同边界 FSL manifest；它不是不声明该加速比时的版本硬门禁。
 
@@ -78,7 +79,7 @@ nonlinear 的精确 Python/FSL 加速比。
 更完整的输入合同见 [INPUT_CONTRACT.md](INPUT_CONTRACT.md)，参考环境与失败语义见
 [FSL_REFERENCE_CONTRACT.md](FSL_REFERENCE_CONTRACT.md)。
 
-## 11/12 阶段完成：P11 剩余的是最终验收，不是新算法主体
+## 12/12 阶段完成：P11 已完成最终验收
 
 | 阶段 | 内容 | 状态 | 当前最重要证据或边界 |
 | --- | --- | --- | --- |
@@ -93,10 +94,10 @@ nonlinear 的精确 Python/FSL 加速比。
 | P8 | `b02b0_nosubsamp.cnf` TOPUP 子集 | complete | 最新 field relative L2 `0.00430`，corrected pair `0.00161`。 |
 | P9 | 单壳 EDDY `--repol` 子集 | complete | 四个注入坏 slice 全部且仅有它们被检出；tensor relative L2 `0.00607`。 |
 | P10 | 四级 FNIRT、Jacobian 和 PPD | complete | 原小 fixture 封板证据已被 P11 发现的两处修复和最新 HCP A/B 取代。 |
-| P11 | QA、DAG、cache、打包和发布验收 | in progress | 本地功能基本齐全；最终 full suite、当前远端 CI 和修复后完整 subject 尚缺。 |
+| P11 | QA、DAG、cache、打包和发布验收 | complete | 本地精确 SimNIBS 4.6 集成与冻结提交三平台/打包/安全门禁均通过。 |
 
-因此，“11/12”不是说仍缺少一整套配准或张量算法。真正未闭合的是最终代码快照的
-集成、跨平台和发布证据。
+P11 的关闭不扩大算法范围：公开定位仍只覆盖 SimNIBS 4.6 `dwi2cond` 使用的固定 FSL
+子集，进一步性能优化归入 `v0.3.0`。
 
 ## 当前固定范围内的运行路径已经形成产品矩阵
 
@@ -253,13 +254,13 @@ tensor decomposition 仅约 `8.69 s`，因此下一轮不应优先“手搓 eige
 `-ffast-math`、隐式 autocast 和 silent fallback。性能结果因此可以解释为同算法工程
 优化，而不是降低计算要求。
 
-## 当前 v0.2.0 候选已通过本地发布门禁
+## 当前 v0.2.0 候选已通过本地与远端发布门禁
 
 2026-08-24 在最终生产代码树上完成的本地证据为：
 
 - 精确 SimNIBS 4.6 环境的低核完整单元测试为 `530 passed, 7 skipped`；TOPUP、EDDY、
   FNIRT/nonlinear 三个真实合成 E2E 均完成；
-- 完整运行与三个真实合成 E2E 合并后为 `12444/12444 statements`、100%；运行时固定
+- 完整运行与三个真实合成 E2E 合并后为 `12443/12443 statements`、100%；运行时固定
   `NUMBA_NUM_THREADS=3`，同时验证请求 8 workers 在低核设备上会安全收敛到可用槽位；
 - 最后 focused 回归为 `92 passed, 2 skipped`，用于关闭进度条、nonlinear sparse
   Hessian/JtJ 和 TOPUP optimizer 的剩余分支；
@@ -271,13 +272,17 @@ tensor decomposition 仅约 `8.69 s`，因此下一轮不应优先“手搓 eige
   `check-manifest`、Twine、wheel contents、release archive 隐私审计及 `pip-audit`
   全部通过。manifest 审计曾发现 10 个 JSON 未进入 sdist，补充规则并重建后已关闭。
 
-source/wheel 与 wheel cold/warm 的 40 个 NIfTI 数组和 affine bitwise 相等仍属于此前
+冻结提交 `90a0553` 的 CI run `32683104733` 已在 macOS 14 arm64、Ubuntu 22.04、
+Windows Server 2022 与 package job 全绿；CodeQL `32683104727` 和 OpenSSF
+`32683104735` 同样完成。source/wheel 与 wheel cold/warm 的 40 个 NIfTI 数组和
+affine bitwise 相等仍属于此前
 已记录的候选快照，用于证明安装形式不改变数值；它没有被包装为本轮重新计时结果。
 
-## 当前是 v0.2.0 本地发布候选，尚未打 tag
+## 当前是已封板的 v0.2.0 候选，进入 tag/Release 流程
 
 公开仓库已有 `v0.1.0`。当前 FSL 子集实现已整理为 `v0.2.0` staged candidate，
-但在最终提交、远端 CI 和 tag 完成前仍不能称为已发布版本。版本策略固定为：
+最终提交与远端 CI 已完成；在 tag Release workflow 和资产回下载审计完成前仍称为
+“已封板候选”。版本策略固定为：
 `main` 保持最新代码，稳定版本由不可变 tag/Release 保留；只有需要维护旧版补丁时才
 创建临时 backport 分支，不为 `0.1`、`0.2` 长期各维护一条开发分支。
 
@@ -286,18 +291,17 @@ source/wheel 与 wheel cold/warm 的 40 个 NIfTI 数组和 affine bitwise 相�
 | 门禁 | 当前状态 | 封板动作 |
 | --- | --- | --- |
 | P0–P10 算法与阶段 A/B | 通过 | 保留最终聚合指标和失败边界。 |
-| 最终工作树 full suite + 100% coverage | 本地通过 | 低核复核 `530 passed, 7 skipped`；`12444/12444`。 |
-| 修复后固定 8-worker 完整真实 subject 与 SimNIBS 合同 | 本地通过 | 已有完整四级 nonlinear、逐阶段 FSL A/B、最终 tensor/QA 与四模式 FEM 证据；远端 self-hosted workflow 仍需对冻结提交复核安装合同。 |
+| 最终工作树 full suite + 100% coverage | 通过 | 本地低核 `530 passed, 7 skipped`；远端 Linux `535 passed, 7 skipped`，`12443/12443`。 |
+| 修复后固定 8-worker 完整真实 subject 与 SimNIBS 合同 | 通过 | 完整四级 nonlinear、逐阶段 FSL A/B、最终 tensor/QA、四模式 FEM 与隔离 wheel overlay 均已验证。 |
 | HCP FSL nonlinear 成功 manifest | 性能声明门禁 | 仅在发布 HCP nonlinear 加速比前，提高 timeout 后正式重跑并登记 outputs 与完整计时。 |
-| 最终冻结并提交后的 Linux/macOS/Windows green | 未通过 | 提交/推送后取得实际 Actions 记录。 |
+| 最终冻结并提交后的 Linux/macOS/Windows green | 通过 | GitHub Actions run `32683104733` 四个 job 全绿。 |
 | `v0.2.0` 版本、Changelog、README 与依赖声明 | 本地通过 | 已统一版本、能力、测试、FSL reference 与性能边界。 |
 | 最终 wheel/sdist/SBOM/SHA256 与隔离安装 | 本地通过 | 最终 commit 后由 Release workflow 再生成正式资产。 |
 | staged/tracked 文件隐私与 provenance 审计 | 本地通过 | 未分发私有 MRI、FSL 源码/二进制或 subject derivative。 |
 
-当前适合称为“本地算法、科学 A/B 和发布产物门禁已完成，等待冻结提交与远端 CI 的
-`v0.2.0` 候选”，尚不适合称为“已发布”或“已获当前提交的跨平台验证”。现有 workflow
-只创建 GitHub Release，没有 PyPI publish；若计划发布到 PyPI，还需另行增加并验证
-发布步骤。
+当前适合称为“算法、科学 A/B、跨平台和发布产物门禁已完成，正在创建 GitHub Release
+的 `v0.2.0` 封板候选”。现有 workflow 只创建 GitHub Release，没有 PyPI publish；
+若计划发布到 PyPI，还需另行增加并验证发布步骤。
 
 ## 已知限制决定了公开声明的边界
 
@@ -318,17 +322,14 @@ source/wheel 与 wheel cold/warm 的 40 个 NIfTI 数组和 affine bitwise 相�
 - FEM 与 lead field 仍依赖 SimNIBS 4.6；被替代的是 dwi2cond 的 FSL 运行依赖。
 - 发布仓库不能包含私有 MRI、FSL 源码/二进制、subject derivative 或绝对本地路径。
 
-## v0.2.0 只剩远端封板，性能工作进入 v0.3.0
+## v0.2.0 只剩 tag 资产复核，性能工作进入 v0.3.0
 
 建议按以下顺序推进：
 
-1. **提交并推送冻结代码。** 取得 Linux/macOS/Windows、package、CodeQL 和安全工作流
-   对该提交的实际 green 记录。
-2. **运行 SimNIBS 4.6 self-hosted 集成。** 复核冻结提交的 overlay 安装、完整测试、
-   CLI 和未修改参考环境合同。
-3. **关闭 P11 并打 `v0.2.0` tag。** 等 tag Release workflow 成功后重新下载 wheel、
+1. **创建 `v0.2.0` tag。** P11、跨平台与安全门禁已关闭。
+2. **复核 Release 资产。** 等 tag Release workflow 成功后重新下载 wheel、
    sdist、SBOM 和校验和，复核 tag、资产哈希、provenance 与 latest 状态。
-4. **在 `v0.3.0` 再继续性能优化。** 优先 profile PPD warp resampling、FNIRT完整
+3. **在 `v0.3.0` 再继续性能优化。** 优先 profile PPD warp resampling、FNIRT完整
    estimation 和 26.1 GiB临时数组；每次只改一个热点，并用固定 warp、轨迹和最终
    tensor A/B 验收。
 
