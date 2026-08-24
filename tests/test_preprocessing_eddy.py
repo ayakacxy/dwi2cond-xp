@@ -39,6 +39,54 @@ from dwi2cond_xp.preprocessing.topup import _topup_movement_matrix
 from dwi2cond_xp.preprocessing import eddy
 
 
+def test_numba_executor_avoids_concurrent_workqueue_regions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected: list[int] = []
+    monkeypatch.setattr(eddy, "get_num_threads", lambda: 6)
+    monkeypatch.setattr(eddy, "threading_layer", lambda: "workqueue")
+    monkeypatch.setattr(eddy, "set_available_numba_threads", selected.append)
+    monkeypatch.setattr(eddy, "set_num_threads", selected.append)
+
+    executor, previous = eddy._create_numba_executor(8, 24)
+    assert executor is None
+    assert previous == 6
+    assert selected == [8]
+
+    eddy._shutdown_numba_executor(executor, previous)
+    assert selected == [8, 6]
+
+
+def test_numba_executor_uses_single_threaded_workers_when_backend_is_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state: dict[str, object] = {}
+    selected: list[int] = []
+
+    class FakeExecutor:
+        def __init__(self, *, max_workers, initializer):
+            state["max_workers"] = max_workers
+            initializer()
+
+        def shutdown(self) -> None:
+            state["shutdown"] = True
+
+    monkeypatch.setattr(eddy, "get_num_threads", lambda: 6)
+    monkeypatch.setattr(eddy, "threading_layer", lambda: "omp")
+    monkeypatch.setattr(eddy, "set_num_threads", selected.append)
+    monkeypatch.setattr(eddy, "ThreadPoolExecutor", FakeExecutor)
+
+    executor, previous = eddy._create_numba_executor(8, 3)
+    assert executor is not None
+    assert previous == 6
+    assert state == {"max_workers": 3}
+    assert selected == [1]
+
+    eddy._shutdown_numba_executor(executor, previous)
+    assert state["shutdown"] is True
+    assert selected == [1]
+
+
 def _fixture_directions(count: int = 24) -> np.ndarray:
     """Recreate the deterministic public EDDY fixture directions."""
 

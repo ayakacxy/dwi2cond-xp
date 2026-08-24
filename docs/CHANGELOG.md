@@ -100,6 +100,9 @@ No changes yet.
 
 - Clamped requested Numba worker counts to the runtime slots available on
   lower-core machines while preserving the public worker request and algorithm.
+- Avoided concurrent Numba parallel regions when the runtime selects its
+  non-thread-safe `workqueue` backend. EDDY keeps the same worker budget by
+  moving parallelism inside each serial volume call on affected platforms.
 - Made generated EDDY fixture text files use platform-independent LF endings
   and separated same-platform determinism from cross-platform floating-point
   tolerance checks.

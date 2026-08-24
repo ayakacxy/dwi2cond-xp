@@ -11,8 +11,9 @@ from pathlib import Path
 from time import perf_counter
 
 import numpy as np
-from numba import get_num_threads, njit, prange, set_num_threads
+from numba import get_num_threads, njit, prange, set_num_threads, threading_layer
 
+from ._numba import set_available_numba_threads
 from .brain_mask import robust_intensity_limits
 from .topup import (
     _cubic_derivative_weight,
@@ -26,6 +27,41 @@ from .topup import (
 
 
 GP_VOXEL_SELECTION_ATTEMPT_LIMIT = 100_000_000
+
+
+def _configure_numba_worker() -> None:
+    """Limit each outer Python worker to one inner Numba thread."""
+
+    set_num_threads(1)
+
+
+def _create_numba_executor(
+    workers: int, item_count: int
+) -> tuple[ThreadPoolExecutor | None, int]:
+    """Select a safe outer/inner parallel layout for the active Numba backend."""
+
+    previous_numba_threads = get_num_threads()
+    if workers > 1 and threading_layer() != "workqueue":
+        return (
+            ThreadPoolExecutor(
+                max_workers=min(workers, item_count),
+                initializer=_configure_numba_worker,
+            ),
+            previous_numba_threads,
+        )
+    set_available_numba_threads(workers)
+    return None, previous_numba_threads
+
+
+def _shutdown_numba_executor(
+    executor: ThreadPoolExecutor | None, previous_numba_threads: int
+) -> None:
+    """Close an outer executor or restore the serial caller's Numba thread mask."""
+
+    if executor is not None:
+        executor.shutdown()
+    else:
+        set_num_threads(previous_numba_threads)
 
 
 @dataclass(frozen=True)
@@ -2371,19 +2407,9 @@ def run_eddy_b0_iterations(
     volume_indices = tuple(range(scans.shape[3]))
     history: list[EddyIterationResult] = []
 
-    def configure_worker() -> None:
-        set_num_threads(1)
-
-    executor = (
-        ThreadPoolExecutor(
-            max_workers=min(workers, scans.shape[3]), initializer=configure_worker
-        )
-        if workers > 1
-        else None
+    executor, previous_numba_threads = _create_numba_executor(
+        workers, scans.shape[3]
     )
-    previous_numba_threads = get_num_threads()
-    if executor is None:
-        set_num_threads(1)
 
     def unwarp_volume(volume: int) -> EddyTransformResult:
         return transform_eddy_scan_to_model(
@@ -2506,10 +2532,7 @@ def run_eddy_b0_iterations(
             unwarped[..., volume] = transformed.values
             final_joint_mask *= transformed.mask
     finally:
-        if executor is not None:
-            executor.shutdown()
-        else:
-            set_num_threads(previous_numba_threads)
+        _shutdown_numba_executor(executor, previous_numba_threads)
     return EddyB0RegistrationResult(
         movement.copy(), unwarped.copy(), tuple(history), final_joint_mask
     )
@@ -2634,19 +2657,9 @@ def run_eddy_dwi_iterations(
     outlier_result: EddyOutlierResult | None = None
     stored_outliers = np.zeros((scans.shape[3], scans.shape[2]), dtype=bool)
 
-    def configure_worker() -> None:
-        set_num_threads(1)
-
-    executor = (
-        ThreadPoolExecutor(
-            max_workers=min(workers, scans.shape[3]), initializer=configure_worker
-        )
-        if workers > 1
-        else None
+    executor, previous_numba_threads = _create_numba_executor(
+        workers, scans.shape[3]
     )
-    previous_numba_threads = get_num_threads()
-    if executor is None:
-        set_num_threads(1)
 
     def unwarp_volume(volume: int) -> EddyTransformResult:
         return transform_eddy_scan_to_model(
@@ -2938,10 +2951,7 @@ def run_eddy_dwi_iterations(
             unwarped[..., volume] = transformed.values
             final_joint_mask *= transformed.mask
     finally:
-        if executor is not None:
-            executor.shutdown()
-        else:
-            set_num_threads(previous_numba_threads)
+        _shutdown_numba_executor(executor, previous_numba_threads)
     rotated = rotate_bvecs_eddy(
         vectors,
         np.ones(scans.shape[3], dtype=np.float64),
@@ -3123,11 +3133,17 @@ def run_simnibs46_eddy(
         return local_index, transformed.values
 
     dwi_local_indices = tuple(range(dwi_indices.size))
-    if workers > 1:
-        with ThreadPoolExecutor(max_workers=min(workers, dwi_indices.size)) as executor:
-            resampled_dwi = list(executor.map(resample_dwi, dwi_local_indices))
-    else:
-        resampled_dwi = list(map(resample_dwi, dwi_local_indices))
+    executor, previous_numba_threads = _create_numba_executor(
+        workers, dwi_indices.size
+    )
+    try:
+        resampled_dwi = (
+            list(executor.map(resample_dwi, dwi_local_indices))
+            if executor is not None
+            else list(map(resample_dwi, dwi_local_indices))
+        )
+    finally:
+        _shutdown_numba_executor(executor, previous_numba_threads)
     for completed, (local_index, corrected) in enumerate(resampled_dwi, start=1):
         corrected_scaled[..., int(dwi_indices[local_index])] = corrected
         if progress is not None:
