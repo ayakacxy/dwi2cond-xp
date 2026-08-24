@@ -53,6 +53,18 @@ def test_float32_mean_and_validation() -> None:
 def test_register_series_contract_and_progress(monkeypatch) -> None:
     values = [_volume(1), _volume(0.9), _volume(0.8)]
     progress = []
+    process_state = {"created": False, "shutdown": False}
+
+    class InlineProcessPool:
+        def __init__(self, *, max_workers):
+            process_state["created"] = max_workers == 2
+
+        def map(self, function, payloads):
+            return map(function, payloads)
+
+        def shutdown(self):
+            process_state["shutdown"] = True
+
     monkeypatch.setattr(legacy, "_isotropic_resample", lambda value, _sizes, _spacing: value)
     monkeypatch.setattr(
         legacy,
@@ -66,6 +78,8 @@ def test_register_series_contract_and_progress(monkeypatch) -> None:
         return result, float(dof), 3
 
     monkeypatch.setattr(legacy, "_optimize_one_stage", optimize)
+    monkeypatch.setattr(legacy, "ProcessPoolExecutor", InlineProcessPool)
+    monkeypatch.setattr(legacy.sys, "platform", "linux")
     matrices, evaluations, costs = legacy._register_mcflirt_series(
         values,
         values[0],
@@ -79,6 +93,7 @@ def test_register_series_contract_and_progress(monkeypatch) -> None:
     assert evaluations == [6, 6, 6]
     assert costs == [6.0, 6.0, 6.0]
     assert progress[-1] == (6, 6)
+    assert process_state == {"created": True, "shutdown": True}
     monkeypatch.setattr(legacy.sys, "platform", "darwin")
     threaded, _, _ = legacy._register_mcflirt_series(
         values,

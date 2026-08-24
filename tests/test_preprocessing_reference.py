@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import nibabel as nib
 import numpy as np
@@ -209,6 +210,23 @@ def test_redaction_and_resource_fallback(monkeypatch: pytest.MonkeyPatch) -> Non
     metrics = _resource_metrics(before, 0.5)
     assert metrics["peak_rss_bytes"] is None
     assert metrics["peak_rss_method"] == "unavailable"
+
+
+def test_resource_metrics_use_platform_native_scale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_resource = SimpleNamespace(
+        RUSAGE_CHILDREN=0,
+        getrusage=lambda _scope: SimpleNamespace(ru_maxrss=23),
+    )
+    monkeypatch.setitem(sys.modules, "resource", fake_resource)
+    monkeypatch.setattr(
+        os, "uname", lambda: SimpleNamespace(sysname="Darwin"), raising=False
+    )
+
+    metrics = _resource_metrics(os.times(), 0.5)
+    assert metrics["peak_rss_bytes"] == 23
+    assert metrics["peak_rss_method"] == "RUSAGE_CHILDREN"
 
 
 def test_public_manifest_audit_accepts_aggregates_and_rejects_private_content() -> None:

@@ -856,6 +856,28 @@ def test_shell_pe_simplex_expansion_branch(monkeypatch: pytest.MonkeyPatch) -> N
     assert np.isfinite(value)
 
 
+def test_shell_rigid_simplex_expansion_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    scheduled_costs = [5.0, *([10.0] * 6), 4.0, 3.0]
+    calls = 0
+
+    def fake_mi(*_args):
+        nonlocal calls
+        value = scheduled_costs[min(calls // 2, len(scheduled_costs) - 1)]
+        calls += 1
+        return -value
+
+    monkeypatch.setattr(eddy, "_soft_mutual_information_fsl_order", fake_mi)
+    b0 = np.ones((2, 2, 2, 2), dtype=np.float32)
+    dwi = np.full_like(b0, 2.0)
+    mask = np.ones((2, 2, 2), dtype=np.uint8)
+
+    parameters = eddy.estimate_eddy_shell_rigid_alignment(
+        b0, dwi, mask, mask, (1.0, 1.0, 1.0), maximum_iterations=1
+    )
+    assert parameters.shape == (6,)
+    assert parameters[0] == -2.0
+
+
 def test_eddy_iteration_and_complete_runner_validation_paths() -> None:
     scans = np.ones((3, 3, 3, 2), dtype=np.float32)
     mask = np.ones((3, 3, 3), dtype=np.uint8)

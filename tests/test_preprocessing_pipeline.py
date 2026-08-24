@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import builtins
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import nibabel as nib
@@ -264,3 +265,16 @@ def test_pipeline_duplicate_names_and_unavailable_rss_are_explicit(
 
     monkeypatch.setattr(builtins, "__import__", without_resource)
     assert pipeline._peak_rss_bytes() == (None, "unavailable")
+
+
+def test_pipeline_peak_rss_uses_platform_native_scale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_resource = SimpleNamespace(
+        RUSAGE_SELF=0,
+        getrusage=lambda _scope: SimpleNamespace(ru_maxrss=17),
+    )
+    monkeypatch.setitem(sys.modules, "resource", fake_resource)
+    monkeypatch.setattr(pipeline.sys, "platform", "darwin")
+
+    assert pipeline._peak_rss_bytes() == (17, "RUSAGE_SELF")
