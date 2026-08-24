@@ -12,11 +12,11 @@ from time import perf_counter
 
 import nibabel as nib
 import numpy as np
-from numba import set_num_threads
 from scipy.linalg import polar
 
 from ..gradients import load_gradients
 from ..nifti_fit import fit_dti_nifti
+from ._numba import set_available_numba_threads
 from .brain_mask import write_bet_brain_mask
 from .flirt_registration import register_flirt_nosearch_mutual_information
 from .nomoco import _prepare_fitting_input, _write_masked_brain
@@ -221,7 +221,7 @@ def _resample_series(
     if interpolation == "sinc":
         # The sinc kernel is already parallel over output points; keep the outer
         # volume loop sequential to avoid nested thread pools.
-        set_num_threads(workers)
+        set_available_numba_threads(workers)
         results = map(sample, items)
         executor = None
     elif workers == 1:

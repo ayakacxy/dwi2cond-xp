@@ -176,11 +176,17 @@ def main() -> int:
     nib.save(mask_image, output / "mask.nii")
     bvals = np.concatenate((np.zeros(2), np.full(directions.shape[0], 1000.0)))
     bvecs = np.column_stack((np.zeros((3, 2)), directions.T))
-    np.savetxt(output / "bvals", bvals[None, :], fmt="%.1f")
-    np.savetxt(output / "bvecs", bvecs, fmt="%.12f")
-    (output / "acqp.txt").write_text("0 1 0 0.05\n", encoding="utf-8")
+    with (output / "bvals").open("w", encoding="utf-8", newline="\n") as stream:
+        np.savetxt(stream, bvals[None, :], fmt="%.1f")
+    with (output / "bvecs").open("w", encoding="utf-8", newline="\n") as stream:
+        np.savetxt(stream, bvecs, fmt="%.12f")
+    (output / "acqp.txt").write_text(
+        "0 1 0 0.05\n", encoding="utf-8", newline="\n"
+    )
     (output / "index.txt").write_text(
-        " ".join("1" for _ in range(volume_count)) + "\n", encoding="utf-8"
+        " ".join("1" for _ in range(volume_count)) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
 
     input_files = [

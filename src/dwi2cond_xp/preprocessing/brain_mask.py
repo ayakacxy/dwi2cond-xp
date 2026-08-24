@@ -8,11 +8,13 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-from numba import njit, prange, set_num_threads
+from numba import njit, prange
 from numba.extending import register_jitable
 from scipy.ndimage import label
 from scipy.spatial import cKDTree
 from scipy.sparse import csr_matrix
+
+from ._numba import set_available_numba_threads
 
 
 @dataclass(frozen=True)
@@ -593,7 +595,7 @@ def _evolve_surface(
     original_mean_edge = float(np.mean(original_distances))
     if backend == "optimized":
         incident_faces, incident_valid = _incident_face_arrays(faces, vertices.shape[0])
-        set_num_threads(workers)
+        set_available_numba_threads(workers)
         evolved = _evolve_surface_optimized(
             image,
             original,

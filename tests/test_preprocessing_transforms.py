@@ -14,7 +14,7 @@ from dwi2cond_xp.preprocessing.transforms import (
 )
 
 
-def test_batched_affine_construction_is_bitwise_equal_for_every_dof():
+def test_batched_affine_construction_matches_scalar_for_every_dof():
     random = np.random.default_rng(83)
     center = np.array([3.2, -4.1, 8.7])
     for degrees_of_freedom in range(6, 13):
@@ -27,8 +27,8 @@ def test_batched_affine_construction_is_bitwise_equal_for_every_dof():
         direct = np.asarray(
             [affine_matrix(values, center) for values in parameters]
         )
-        np.testing.assert_array_equal(
-            affine_matrices(parameters, center), direct
+        np.testing.assert_allclose(
+            affine_matrices(parameters, center), direct, rtol=5.0e-15, atol=5.0e-15
         )
 
 

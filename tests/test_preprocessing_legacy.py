@@ -113,7 +113,7 @@ def test_register_series_contract_and_progress(monkeypatch) -> None:
 
 def test_resample_series_rotate_bvecs_and_save(tmp_path, monkeypatch) -> None:
     values = [_volume(1), _volume(2)]
-    monkeypatch.setattr(legacy, "set_num_threads", lambda workers: None)
+    monkeypatch.setattr(legacy, "set_available_numba_threads", lambda workers: workers)
     monkeypatch.setattr(legacy, "fsl_matrix_to_world", lambda *_args: np.eye(4))
     monkeypatch.setattr(
         legacy,
@@ -271,13 +271,15 @@ def test_run_legacy_input_and_field_validation(tmp_path, monkeypatch) -> None:
     nib.save(nib.Nifti1Image(bad_values, bad_image.affine), bad_dwi)
     with pytest.raises(ValueError, match="NaN or Inf"):
         legacy.run_legacy_nifti(bad_dwi, bvals, bvecs, tmp_path / "nonfinite")
-    for values, message in [
-        (np.array([1000, 1000, 1000, 1000]), "exact b=0"),
-        (np.array([0, 0, 0, 0]), "b>0"),
+    for values, message, case_name in [
+        (np.array([1000, 1000, 1000, 1000]), "exact b=0", "missing-b0"),
+        (np.array([0, 0, 0, 0]), "b>0", "missing-dwi"),
     ]:
-        _, invalid_bvals, _ = _write_inputs(tmp_path / message.replace(" ", "-"), values)
+        _, invalid_bvals, _ = _write_inputs(tmp_path / case_name, values)
         with pytest.raises(ValueError, match=message):
-            legacy.run_legacy_nifti(dwi, invalid_bvals, bvecs, tmp_path / f"invalid-{message}")
+            legacy.run_legacy_nifti(
+                dwi, invalid_bvals, bvecs, tmp_path / f"invalid-{case_name}"
+            )
 
     # Replace the expensive stage before reading the displacement.
     monkeypatch.setattr(legacy, "write_aligned_b0_mean", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("stop")))

@@ -12,6 +12,7 @@ import numpy as np
 from numba import get_num_threads, njit, prange, set_num_threads
 from scipy.sparse import bmat, csc_matrix, csr_matrix, hstack, tril
 
+from ._numba import set_available_numba_threads
 from .fnirt_topology import fsl_constrain_topology, fsl_good_fft_size
 from .topup import (
     _spline_jte_fsl_order,
@@ -1173,7 +1174,7 @@ def _spline_basis_sparse(
     previous_workers = get_num_threads()
     try:
         active_workers = min(workers, previous_workers)
-        set_num_threads(active_workers)
+        set_available_numba_threads(active_workers)
         _fill_spline_basis_sparse_fsl_order(
             field_shape,
             axes[0].data,
@@ -1234,7 +1235,7 @@ def _selected_spline_basis_sparse(
     previous_workers = get_num_threads()
     try:
         active_workers = min(workers, previous_workers)
-        set_num_threads(active_workers)
+        set_available_numba_threads(active_workers)
         _fill_selected_spline_basis_sparse_fsl_order(
             voxel_indices,
             field_shape,
@@ -1560,7 +1561,7 @@ def _symmetric_spline_jtj_blocks(
     previous_workers = get_num_threads()
     try:
         active_workers = min(workers, previous_workers)
-        set_num_threads(active_workers)
+        set_available_numba_threads(active_workers)
         block_values = _symmetric_spline_jtj_values_fsl_order(
             np.asarray(matrix.data, dtype=np.float64),
             np.asarray(matrix.indices),

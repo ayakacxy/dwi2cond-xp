@@ -10,6 +10,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+import dwi2cond_xp.preprocessing._numba as numba_helpers
 from dwi2cond_xp.preprocessing.reference import (
     ReferenceArtifact,
     ReferenceRunError,
@@ -218,7 +219,7 @@ def test_public_manifest_audit_accepts_aggregates_and_rejects_private_content() 
     for payload, message in (
         ({"subject_id": "example"}, "forbidden key"),
         (
-            {"log": str(Path("/") / "home" / "user" / "private" / "file")},
+            {"log": "/" + "home" + "/user/private/file"},
             "absolute path",
         ),
         ({"log": r"C:\\private\\file"}, "absolute path"),
@@ -333,8 +334,10 @@ def test_synthetic_preprocessing_generator_is_deterministic(tmp_path: Path) -> N
     eddy_frozen = json.loads(
         (root / "tests/fixtures/reference/synthetic_eddy_reference.json").read_text()
     )
-    assert eddy_outputs[0]["sha256"] == eddy_frozen["sha256"]
-    assert eddy_outputs[0]["truth_sha256"] == eddy_frozen["truth_sha256"]
+    stable_inputs = {"mask.nii", "bvals", "bvecs", "acqp.txt", "index.txt"}
+    assert {
+        name: eddy_outputs[0]["sha256"][name] for name in stable_inputs
+    } == {name: eddy_frozen["sha256"][name] for name in stable_inputs}
     assert nib.load(tmp_path / "eddy_first/dwi.nii").shape == (26, 26, 18, 26)
     assert nib.load(tmp_path / "eddy_first/truth_uncorrupted_dwi.nii").shape == (
         26,
@@ -346,6 +349,15 @@ def test_synthetic_preprocessing_generator_is_deterministic(tmp_path: Path) -> N
         [item["volume"], item["slice"]]
         for item in eddy_outputs[0]["slice_corruptions"]
     ] == eddy_frozen["truth_outliers"]
+
+
+def test_numba_worker_request_is_clamped_to_runtime_capacity(monkeypatch) -> None:
+    selected: list[int] = []
+    monkeypatch.setattr(numba_helpers.config, "NUMBA_NUM_THREADS", 3)
+    monkeypatch.setattr(numba_helpers, "set_num_threads", selected.append)
+
+    assert numba_helpers.set_available_numba_threads(8) == 3
+    assert selected == [3]
 
 
 def test_reference_asset_audit_cli_passes_frozen_manifests() -> None:

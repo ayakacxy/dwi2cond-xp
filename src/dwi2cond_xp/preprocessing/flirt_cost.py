@@ -7,8 +7,10 @@ from dataclasses import dataclass
 import math
 from threading import local
 
-from numba import njit, prange, set_num_threads
+from numba import njit, prange
 import numpy as np
+
+from ._numba import set_available_numba_threads
 
 
 def _finite_4x4(matrix: np.ndarray, name: str) -> np.ndarray:
@@ -797,7 +799,7 @@ class FlirtWeightedMutualInformation:
             @ np.linalg.inv(matrices)
             @ self.reference_sampling
         )
-        set_num_threads(min(int(workers), len(matrices)))
+        set_available_numba_threads(min(int(workers), len(matrices)))
         return _weighted_mi_many_kernel(
             self.reference,
             self.moving,

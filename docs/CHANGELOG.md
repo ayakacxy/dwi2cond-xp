@@ -98,6 +98,11 @@ No changes yet.
 
 ### Fixed
 
+- Clamped requested Numba worker counts to the runtime slots available on
+  lower-core machines while preserving the public worker request and algorithm.
+- Made generated EDDY fixture text files use platform-independent LF endings
+  and separated same-platform determinism from cross-platform floating-point
+  tolerance checks.
 - Restored the FSL `tensor_decomp` rule that FA/eigenvector outputs remain zero
   unless the largest tensor eigenvalue is positive; real FA support now matches
   the FSL reference exactly.

@@ -10,9 +10,9 @@
 > 所需 FSL 运行依赖为核心，不再以全流程 10× 或新增性能优化作为发布门禁。进一步
 > FNIRT/PPD 性能工作延期到 `v0.3.0`；本报告中的发布前状态仍保留为审计快照。
 
-> 本地发布门禁更新（2026-08-24）：最终功能运行 `524 passed, 7 skipped`，TOPUP、
-> EDDY、FNIRT/nonlinear 三个真实合成 E2E 全部完成；补齐 26 行失败/进度边界后，合并
-> coverage 为 `12433/12433 statements`、100%。新增测试聚焦运行 `92 passed,
+> 本地发布门禁更新（2026-08-24）：低核发布复核为 `530 passed, 7 skipped`，TOPUP、
+> EDDY、FNIRT/nonlinear 三个真实合成 E2E 全部完成；低核线程兼容修复后合并
+> coverage 为 `12444/12444 statements`、100%。此前新增测试聚焦运行 `92 passed,
 > 2 skipped`。这些证据取代下文“最终 coverage 尚未重跑”的历史状态。
 
 ## 技术结论：核心 FSL 子集已经实现，正式发布门禁尚未闭合
@@ -257,10 +257,10 @@ tensor decomposition 仅约 `8.69 s`，因此下一轮不应优先“手搓 eige
 
 2026-08-24 在最终生产代码树上完成的本地证据为：
 
-- 精确 SimNIBS 4.6 环境的完整单元测试为 `524 passed, 7 skipped`；TOPUP、EDDY、
+- 精确 SimNIBS 4.6 环境的低核完整单元测试为 `530 passed, 7 skipped`；TOPUP、EDDY、
   FNIRT/nonlinear 三个真实合成 E2E 均完成；
-- 完整运行与最后的 focused coverage 合并后为 `12433/12433 statements`、100%；
-  后续只新增测试和发布文档，没有再修改生产算法；
+- 完整运行与三个真实合成 E2E 合并后为 `12444/12444 statements`、100%；运行时固定
+  `NUMBA_NUM_THREADS=3`，同时验证请求 8 workers 在低核设备上会安全收敛到可用槽位；
 - 最后 focused 回归为 `92 passed, 2 skipped`，用于关闭进度条、nonlinear sparse
   Hessian/JtJ 和 TOPUP optimizer 的剩余分支；
 - Ruff、compileall、版本一致性、Markdown 链接、10 份 reference manifest、Git staged
@@ -286,7 +286,7 @@ source/wheel 与 wheel cold/warm 的 40 个 NIfTI 数组和 affine bitwise 相�
 | 门禁 | 当前状态 | 封板动作 |
 | --- | --- | --- |
 | P0–P10 算法与阶段 A/B | 通过 | 保留最终聚合指标和失败边界。 |
-| 最终工作树 full suite + 100% coverage | 本地通过 | `524 passed, 7 skipped`；合并 focused 后 `12433/12433`。 |
+| 最终工作树 full suite + 100% coverage | 本地通过 | 低核复核 `530 passed, 7 skipped`；`12444/12444`。 |
 | 修复后固定 8-worker 完整真实 subject 与 SimNIBS 合同 | 本地通过 | 已有完整四级 nonlinear、逐阶段 FSL A/B、最终 tensor/QA 与四模式 FEM 证据；远端 self-hosted workflow 仍需对冻结提交复核安装合同。 |
 | HCP FSL nonlinear 成功 manifest | 性能声明门禁 | 仅在发布 HCP nonlinear 加速比前，提高 timeout 后正式重跑并登记 outputs 与完整计时。 |
 | 最终冻结并提交后的 Linux/macOS/Windows green | 未通过 | 提交/推送后取得实际 Actions 记录。 |

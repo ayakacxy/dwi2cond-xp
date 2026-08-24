@@ -9,10 +9,11 @@ from pathlib import Path
 from time import perf_counter
 
 import nibabel as nib
-from numba import njit, prange, set_num_threads
+from numba import njit, prange
 import numpy as np
 from scipy.ndimage import binary_dilation, binary_erosion, convolve1d, label
 
+from ._numba import set_available_numba_threads
 from .brain_mask import bet_brain_mask
 from .flirt_registration import FlirtRegistrationResult, register_flirt_affine
 from .image_ops import masked_percentile, median_filter_box
@@ -343,7 +344,7 @@ def forward_warp_magnitude(
     if sign < 0:
         source_y = source_y[:, ::-1, :]
         shift_y = shift_y[:, ::-1, :]
-    set_num_threads(workers)
+    set_available_numba_threads(workers)
     warped = _forward_warp_y(
         np.ascontiguousarray(source_y), np.ascontiguousarray(shift_y)
     )

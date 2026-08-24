@@ -19,6 +19,8 @@ import numpy as np
 from numba import get_num_threads, njit, prange, set_num_threads
 from scipy.sparse import csc_matrix
 
+from ._numba import set_available_numba_threads
+
 
 @dataclass(frozen=True)
 class TopupLevel:
@@ -2645,7 +2647,7 @@ def run_topup_nifti(
     started = perf_counter()
     previous_workers = get_num_threads()
     try:
-        set_num_threads(workers)
+        set_available_numba_threads(workers)
         result = run_simnibs46_topup(
             np.stack((forward, reverse), axis=3),
             rows,

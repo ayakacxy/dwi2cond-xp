@@ -812,10 +812,11 @@ slice outlier replacement和rotated bvecs。不实现未被SimNIBS调用的完�
 
 当前阶段证据（2026-08-23，进行中）：
 
-- 2026-08-24 已完成 `v0.2.0` 本地发布候选收口：精确 SimNIBS 4.6 环境的完整单元
-  测试为 `524 passed, 7 skipped`，TOPUP、EDDY、FNIRT/nonlinear 三个真实合成 E2E
-  均完成；与最后 focused coverage 合并后为 `12433/12433 statements`、100%。后续只
-  增加测试、文档和 sdist manifest 规则，没有再修改生产算法；
+- 2026-08-24 已完成 `v0.2.0` 本地发布候选收口：精确 SimNIBS 4.6 环境在
+  `NUMBA_NUM_THREADS=3` 的低核复核中为 `530 passed, 7 skipped`，TOPUP、EDDY、
+  FNIRT/nonlinear 三个真实合成 E2E 均完成；合并 coverage 为
+  `12444/12444 statements`、100%。请求 8 workers 会在低核设备安全收敛到 Numba
+  可用槽位，不改变算法、迭代或归约合同；
 - `v0.2.0` wheel/sdist/SBOM/SHA256 已重建并通过版本、Markdown、reference assets、
   tracked-file/archive 隐私、`validate-pyproject`、`check-manifest`、Twine、wheel
   contents、隔离 overlay 安装、CLI、`pip check` 和 `pip-audit`。当前只剩冻结提交的
