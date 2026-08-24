@@ -41,6 +41,7 @@ def test_identity_registration_writes_valid_mask_and_qa(tmp_path):
     reference_file = tmp_path / "reference.nii.gz"
     mask_file = tmp_path / "mask.nii.gz"
     output_file = tmp_path / "registered.nii.gz"
+    progress = []
     nib.save(nib.Nifti1Image(tensor, affine), tensor_file)
     nib.save(nib.Nifti1Image(np.zeros(shape, dtype=np.float32), affine), reference_file)
     nib.save(nib.Nifti1Image(mask, affine), mask_file)
@@ -50,6 +51,7 @@ def test_identity_registration_writes_valid_mask_and_qa(tmp_path):
         reference_file,
         output_file,
         source_mask_file=mask_file,
+        progress=lambda current, total: progress.append((current, total)),
     )
 
     registered = np.asarray(nib.load(output_file).dataobj)
@@ -60,6 +62,7 @@ def test_identity_registration_writes_valid_mask_and_qa(tmp_path):
     assert np.array_equal(registered, tensor)
     assert np.array_equal(valid, mask)
     assert qa["valid_voxels"] == int(mask.sum())
+    assert progress[-1] == (8, 8)
 
 
 def test_charm_brain_mask_uses_official_label_range(tmp_path):
@@ -104,6 +107,8 @@ def test_registration_rejects_invalid_parameters_and_tensor(tmp_path):
     tensor_file, reference_file = _registration_files(tmp_path)
     with pytest.raises(ValueError, match="interpolation_order"):
         register_tensor_affine(tensor_file, reference_file, tmp_path / "o.nii.gz", interpolation_order=2)
+    with pytest.raises(ValueError, match="workers"):
+        register_tensor_affine(tensor_file, reference_file, tmp_path / "o.nii.gz", workers=0)
     bad_tensor, _ = _registration_files(tmp_path / "bad", tensor_shape=(2, 2, 2, 5))
     with pytest.raises(ValueError, match="six-component"):
         register_tensor_affine(bad_tensor, reference_file, tmp_path / "o.nii.gz")
@@ -112,6 +117,28 @@ def test_registration_rejects_invalid_parameters_and_tensor(tmp_path):
     with pytest.raises(ValueError, match="finite 4x4"):
         register_tensor_affine(
             tensor_file, reference_file, tmp_path / "o.nii.gz", world_transform=transform
+        )
+    with pytest.raises(ValueError, match="reorientation_transform"):
+        register_tensor_affine(
+            tensor_file,
+            reference_file,
+            tmp_path / "o.nii.gz",
+            reorientation_transform=np.eye(3),
+        )
+    with pytest.raises(ValueError, match="source_mask_mode"):
+        register_tensor_affine(
+            tensor_file,
+            reference_file,
+            tmp_path / "o.nii.gz",
+            source_mask_mode="unknown",
+        )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        register_tensor_affine(
+            tensor_file,
+            reference_file,
+            tmp_path / "o.nii.gz",
+            source_mask_file=tensor_file,
+            source_mask_mode="fsl-vecreg",
         )
 
 
@@ -139,6 +166,7 @@ def test_rotated_registration_uses_masks_progress_and_custom_outputs(tmp_path):
         output_valid_mask_file=valid,
         qa_file=qa,
         interpolation_order=0,
+        workers=2,
         progress=lambda current, total: progress.append((current, total)),
         alignment_assumption="test transform",
     )

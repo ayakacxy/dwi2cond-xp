@@ -21,7 +21,7 @@ def _cff_version() -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tag", help="Optional release tag, for example v0.1.0")
+    parser.add_argument("--tag", help="Optional release tag, for example v0.2.0")
     args = parser.parse_args()
 
     with (ROOT / "pyproject.toml").open("rb") as handle:

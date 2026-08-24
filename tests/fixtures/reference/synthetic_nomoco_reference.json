@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "fixture_id": "synthetic-nomoco-v1",
+  "visibility": "public-nonanatomical",
+  "status": "completed",
+  "reference": {
+    "simnibs": "4.6.0",
+    "dwi2cond": "0.4",
+    "fsl": "6.0.4:ddd0a010",
+    "script_hash_contract": "docs/FSL_REFERENCE_CONTRACT.md"
+  },
+  "command": {
+    "argv": ["dwi2cond", "--prepro", "--nomoco", "--keepstuff", "synthetic", "<absolute-path>", "<absolute-path>", "<absolute-path>"],
+    "environment_keys": ["FSLDIR", "FSLOUTPUTTYPE", "OMP_NUM_THREADS", "PATH"],
+    "threads": 1
+  },
+  "metrics": {
+    "wall_seconds": 3.283392008859664,
+    "child_cpu_seconds": 3.76,
+    "peak_rss_bytes": 75640832,
+    "peak_rss_method": "RUSAGE_CHILDREN"
+  },
+  "grids": {
+    "synthetic-grid": {
+      "affine": [[-2.0, 0.0, 0.0, 19.0], [0.0, 2.0, 0.0, -19.0], [0.0, 0.0, 2.0, -19.0], [0.0, 0.0, 0.0, 1.0]],
+      "qform": [[-2.0, 0.0, 0.0, 19.0], [0.0, 2.0, 0.0, -19.0], [0.0, 0.0, 2.0, -19.0], [0.0, 0.0, 0.0, 1.0]],
+      "qform_code": 1,
+      "sform": [[-2.0, 0.0, 0.0, 19.0], [0.0, 2.0, 0.0, -19.0], [0.0, 0.0, 2.0, -19.0], [0.0, 0.0, 0.0, 1.0]],
+      "sform_code": 1
+    }
+  },
+  "outputs": [
+    {"alias": "dwi_raw", "kind": "nifti", "size_bytes": 9853, "grid_ref": "synthetic-grid", "shape": [20, 20, 20, 14], "dtype": "float32", "finite_count": 112000, "nonzero_count": 24304, "finite_min": 0.0, "finite_max": 988.4530029296875},
+    {"alias": "nodif", "kind": "nifti", "size_bytes": 2295, "grid_ref": "synthetic-grid", "shape": [20, 20, 20], "dtype": "float32", "finite_count": 8000, "nonzero_count": 1908, "finite_min": 0.0, "finite_max": 988.4530029296875},
+    {"alias": "nodif_brain_mask", "kind": "nifti", "size_bytes": 483, "grid_ref": "synthetic-grid", "shape": [20, 20, 20], "dtype": "int16", "finite_count": 8000, "nonzero_count": 2646, "mask_count": 2646, "finite_min": 0.0, "finite_max": 1.0},
+    {"alias": "raw_fa", "kind": "nifti", "size_bytes": 738, "grid_ref": "synthetic-grid", "shape": [20, 20, 20], "dtype": "float32", "finite_count": 8000, "nonzero_count": 1736, "finite_min": 0.0, "finite_max": 0.5249898433685303},
+    {"alias": "raw_sse", "kind": "nifti", "size_bytes": 1140, "grid_ref": "synthetic-grid", "shape": [20, 20, 20], "dtype": "float32", "finite_count": 8000, "nonzero_count": 2646, "finite_min": 0.0, "finite_max": 7.676165780757475e-15},
+    {"alias": "dwi_for_fit", "kind": "nifti", "size_bytes": 9853, "grid_ref": "synthetic-grid", "shape": [20, 20, 20, 14], "dtype": "float32", "finite_count": 112000, "nonzero_count": 24304, "finite_min": 0.0, "finite_max": 988.4530029296875},
+    {"alias": "tensor", "kind": "nifti", "size_bytes": 4735, "grid_ref": "synthetic-grid", "shape": [20, 20, 20, 6], "dtype": "float32", "finite_count": 48000, "nonzero_count": 15876, "finite_min": -3.0000026526977308e-05, "finite_max": 0.0013000000035390258},
+    {"alias": "fa", "kind": "nifti", "size_bytes": 738, "grid_ref": "synthetic-grid", "shape": [20, 20, 20], "dtype": "float32", "finite_count": 8000, "nonzero_count": 1736, "finite_min": 0.0, "finite_max": 0.5249898433685303},
+    {"alias": "sse", "kind": "nifti", "size_bytes": 1140, "grid_ref": "synthetic-grid", "shape": [20, 20, 20], "dtype": "float32", "finite_count": 8000, "nonzero_count": 2646, "finite_min": 0.0, "finite_max": 7.676165780757475e-15},
+    {"alias": "run_log", "kind": "file", "size_bytes": 4037}
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "fixture_id": "synthetic-eddy-v1",
+  "fsl_detected_outliers": [[5, 8], [11, 9], [18, 7], [23, 10]],
+  "generator": "tools/generate_synthetic_eddy_fixture.py",
+  "performance": {
+    "elapsed_seconds_single_run": 9.498837919905782,
+    "interpretation": "Baseline only; not a Python implementation comparison.",
+    "scope": "26x26x18x26 synthetic single-shell fixture",
+    "workers": 8
+  },
+  "reference": {
+    "fsl": "6.0.4:ddd0a010",
+    "path": "APPLY_EDDY --repol without TOPUP",
+    "simnibs": "4.6.0"
+  },
+  "replacement_truth_ab": {
+    "corrupted_slice_relative_l2": 0.9826460614586433,
+    "fsl_repol_slice_relative_l2": 0.06521824182863573,
+    "improvement_ratio": 15.067043114112094
+  },
+  "seeded_gp_hyperparameter_ab": {
+    "initrand": 1,
+    "fsl": [4.870660, 1.133549, 5.804040],
+    "python": [4.87065984, 1.13354938, 5.80403968],
+    "maximum_absolute_difference": 3.8e-7
+  },
+  "schema_version": 1,
+  "sha256": {
+    "acqp.txt": "e06a0a33b6a2ad8821925fb86f1d13967c4194fe1f2597023df61b93f31fc149",
+    "bvals": "f4d2f11f95ca0cb06f69020fd7f1c28791b32cc66e759e0c7fbe36bf24ca2e53",
+    "bvecs": "83a1172e1d412df428fbb4ecd729d4a1d1e8cf948c69c48411fd349d54ccbf3e",
+    "dwi.nii": "2b86ffcc57d09ecf94ec3c4b933a975b95ae3a38d62a4d5e533d4c5593ec3cdf",
+    "index.txt": "d0c6b7f89430f4d72b2245e115987f0f639a90d48bda4a5f2c6d0f330f040ddc",
+    "mask.nii": "478178fb4299253c382eee6927174854ac61fd6789509252005e6067e2c53e4c"
+  },
+  "shape": [26, 26, 18, 26],
+  "truth_outliers": [[5, 8], [11, 9], [18, 7], [23, 10]],
+  "truth_sha256": {
+    "truth_uncorrupted_dwi.nii": "5be3d328f3d11403c3fe3a09d254d0488adc24a44ab7817275ceb5b128862ef7",
+    "truth_undistorted_dwi.nii": "9e60e5c4aede67f4182957c06044969eb1a7a71c034982a75d38be0ba0a09810"
+  },
+  "visibility": "public-nonanatomical"
+}

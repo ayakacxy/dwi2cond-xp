@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use dwi2cond-xp, please cite this software, SimNIBS, and the diffusion preprocessing tools used in your workflow."
 title: "dwi2cond-xp"
 type: software
-version: 0.1.0
-date-released: 2026-08-21
+version: 0.2.0
+date-released: 2026-08-24
 authors:
   - name: ayakacxy
 repository-code: "https://github.com/ayakacxy/dwi2cond-xp"

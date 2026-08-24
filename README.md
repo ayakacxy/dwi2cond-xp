@@ -19,9 +19,10 @@ Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 
 </div>
 
-`dwi2cond-xp` is a cross-platform Python pipeline that converts preprocessed
-diffusion MRI into conductivity tensors for SimNIBS 4.6 and runs validated
-anisotropic finite-element simulations without requiring FSL at runtime.
+`dwi2cond-xp` is a cross-platform Python pipeline that preprocesses supported
+raw or already-preprocessed single-shell diffusion MRI, generates conductivity
+tensors for SimNIBS 4.6, and runs validated anisotropic finite-element
+simulations without requiring FSL at runtime.
 
 This is an independent community project. It is not an official SimNIBS or FSL
 distribution.
@@ -30,7 +31,8 @@ distribution.
 
 | Contract | Result | Evidence boundary |
 | --- | ---: | --- |
-| Python test suite | **144 passed · 100.00%** | 1,644/1,644 executable statements; includes the local FSL reference test |
+| SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
+| Python test suite | **100.00% statement coverage** | 12,433/12,433 executable statements across unit tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
 | DTI tensor parity | **relative L2 4.18e-6** | Same HCP input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
 | DTI fitting wall time | **9.76 s vs 108.23 s · 11.09x** | Same server, input, worker/output boundary; not an end-to-end FEM claim |
 | Conductivity parity | **max abs 0 to 2.22e-16** | Synthetic mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
@@ -42,22 +44,25 @@ subject artifact is distributed. Full methods and evidence boundaries are in
 
 ## 🧭 Scope
 
-The supported post-preprocessing path is:
+The `v0.2.0` preprocessing and conductivity path is:
 
 ```text
-preprocessed single-shell DWI or a six-component diffusion tensor
-  -> weighted least-squares DTI fitting and QA
+raw or preprocessed single-shell DWI, or a six-component diffusion tensor
+  -> selected SimNIBS 4.6 preprocessing branch and WLS DTI fitting
+  -> unified QA, manifests, and cache validation
   -> explicit tensor mapping/reorientation to the CHARM T1 grid
   -> scalar / vn / dir / mc conductivity
   -> fixed-montage SimNIBS 4.6 FEM
   -> vector E-field NIfTI and QA manifests
 ```
 
-The project deliberately does **not** perform raw-DWI motion correction,
-eddy-current correction, susceptibility/topup/fieldmap correction, or automatic
-6/12-DOF and nonlinear DTI-to-T1 registration. Those steps must be completed by
-an external preprocessing workflow, including consistent b-vector rotation.
-Nonlinear PPD tensor reorientation is not implemented.
+Version `0.2.0` implements the SimNIBS 4.6 legacy motion/eddy path, the fixed GRE
+fieldmap and TOPUP branches, and the fixed single-shell EDDY `--repol` subset
+with an optional TOPUP field. Automatic 6/12-DOF linear DTI-to-T1 registration
+and the fixed SimNIBS 4.6 FNIRT plus nonlinear PPD tensor branch are implemented.
+Unified QA, atomic DAG manifests, cache validation, and progress reporting are
+included. FSL is retained only as an optional local numerical reference; it is
+not called by the released preprocessing runtime.
 
 The pure-Python DTI and tensor-mapping core uses NumPy, SciPy, NiBabel, h5py,
 and tqdm. Mesh conductivity, FEM, and lead-field workflows require exactly
@@ -189,7 +194,7 @@ is intentionally frozen, install the wheel without dependency resolution:
 ```bash
 conda activate simnibs
 python -c "import simnibs; assert simnibs.__version__ == '4.6.0'"
-python -m pip install --no-deps dwi2cond_xp-0.1.0-py3-none-any.whl
+python -m pip install --no-deps dwi2cond_xp-0.2.0-py3-none-any.whl
 dwi2cond-xp --help
 ```
 
@@ -228,10 +233,18 @@ ruff check src tests tools scripts
 
 ## 📥 Input contract
 
-A DWI input must be a preprocessed 4-D NIfTI with matching b-values,
-b-vectors, and a diffusion brain mask. Use a single nonzero shell plus b=0
-volumes for the DTI model. Optional gradient-nonlinearity coefficients use the
-FSL/HCP nine-component `grad_dev` convention.
+`fit-dti` accepts a preprocessed 4-D NIfTI with matching b-values, b-vectors,
+and diffusion brain mask. `preprocess-nomoco` accepts a raw single-shell DWI and
+constructs the b0 reference and mask, but deliberately applies no motion,
+eddy-current, or susceptibility correction to the DWI volumes. Use it only
+when that explicit SimNIBS 4.6 `nomoco` contract is appropriate. Optional
+gradient-nonlinearity coefficients use the FSL/HCP nine-component `grad_dev`
+convention.
+
+`preprocess-legacy` implements the SimNIBS 4.6 two-pass 6/12-DOF correction
+order and one final sinc resampling per volume. Its default `compat46` mode
+preserves the original b-vector file exactly, matching the upstream script;
+the explicit `corrected` mode rotates b-vectors with the final transforms.
 
 A tensor input must be a 4-D NIfTI whose final dimension is ordered as
 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`. Before mapping to T1, the caller must choose exactly
@@ -247,7 +260,83 @@ The final SimNIBS tensor is stored at
 See [Input contract](docs/INPUT_CONTRACT.md) for coordinate, mask, and failure
 semantics.
 
+Estimate the SimNIBS 4.6 affine T1 registration and generate its tensor/QA
+artifacts automatically:
+
+```bash
+dwi2cond-xp register-t1 dti_outputs m2m_subject t1_registration_outputs \
+  --mode affine --workers 8
+```
+
 ## 🚀 Minimal workflow
+
+Run the FSL-free SimNIBS 4.6 `nomoco` raw-DWI path with eight workers:
+
+```bash
+dwi2cond-xp preprocess-nomoco \
+  raw_dwi.nii.gz bvals bvecs nomoco_outputs \
+  --workers 8
+```
+
+This writes `DTI_tensor.nii.gz`, `DTI_FA.nii.gz`, `DTI_sse.nii.gz`, the brain
+and validity masks, and `nomoco_qa.json`. It never creates motion, eddy, or
+field artifacts. A compatible uncompressed `.nii` is verified blockwise and
+used directly by mmap; `.nii.gz` is decoded once to a shared uncompressed
+intermediate. The selected strategy is recorded in QA.
+
+Run the legacy correction path while preserving SimNIBS 4.6 b-vector behavior:
+
+```bash
+dwi2cond-xp preprocess-legacy \
+  raw_dwi.nii.gz bvals bvecs legacy_outputs \
+  --workers 8 --bvec-mode compat46
+```
+
+This writes the corrected DWI and mean, every final volume transform, nodif and
+brain mask, tensor/FA/SSE and validity outputs, and `legacy_qa.json`. Use
+`--bvec-mode corrected` only as an explicit scientific correction to the 4.6
+script behavior.
+
+Prepare a fixed GRE/FUGUE correction from an already scaled rad/s fieldmap and
+compose its signed world-mm displacement into the legacy command:
+
+```bash
+dwi2cond-xp prepare-fieldmap \
+  magnitude.nii.gz field_rads.nii.gz nodif_brain.nii.gz fieldmap_out \
+  --dwell-ms 0.5 --phase-encoding-direction y- --workers 8
+dwi2cond-xp preprocess-legacy \
+  raw_dwi.nii.gz bvals bvecs legacy_outputs \
+  --fieldmap-displacement fieldmap_out/displacement_world_mm.nii.gz --workers 8
+```
+
+Raw wrapped Siemens phase still requires PRELUDE and is rejected by this fixed
+rad/s branch.
+
+Estimate the fixed reverse-PE TOPUP field without an FSL runtime dependency:
+
+```bash
+dwi2cond-xp prepare-topup \
+  forward_b0.nii.gz reverse_b0.nii.gz topup_out \
+  --readout-seconds 0.05 --phase-encoding-direction y --workers 8
+```
+
+This writes the field, spline coefficients, movement parameters, corrected
+pair, joint validity mask, and `topup_qa.json`. Only the x/y single-axis subset
+accepted by FSL 6.0.4 TOPUP is supported; z phase encoding fails explicitly.
+
+Run the fixed single-shell EDDY path, optionally composing the TOPUP field:
+
+```bash
+dwi2cond-xp prepare-eddy \
+  raw_dwi.nii.gz bvals bvecs brain_mask.nii.gz eddy_out \
+  --readout-seconds 0.05 --phase-encoding-direction y --workers 8 \
+  --susceptibility-field topup_out/field_hz.nii.gz
+```
+
+The command writes corrected DWI, prediction-replaced scan-space data, 16
+parameters per volume, rotated b-vectors, outlier map, shell alignment,
+iteration histories, and `eddy_qa.json`. Omitting `--susceptibility-field`
+selects the same fixed EDDY algorithm without a TOPUP field.
 
 Fit a preprocessed single-shell DWI:
 

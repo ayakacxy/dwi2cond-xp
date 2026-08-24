@@ -1,0 +1,14 @@
+{
+  "fixture_id": "synthetic-b0-motion-v1",
+  "visibility": "public-nonanatomical",
+  "generator": "tools/generate_synthetic_b0_motion_fixture.py",
+  "shape": [33, 31, 29, 5],
+  "voxel_size_mm": 2.0,
+  "reference_position": 2,
+  "transform_contract": "moving_to_reference_scaled_mm",
+  "sha256": {
+    "b0_motion.nii.gz": "703682b5ca2e21d3702701a112cfbb232feeb2a1adaa3e22d0fc492fb1704e9b",
+    "bvals": "ac3b2ba16115668f6162cec888617fa6622221fa8ab914a47ef2dac269786408",
+    "truth.json": "539e478a2cefe2242243be87279b3fdbe8c543581abd764810b7563c37ef6710"
+  }
+}

@@ -9,8 +9,10 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+from threadpoolctl import threadpool_limits
 
 from .gradients import load_gradients, select_dti_volumes
+from .preprocessing.tensor_ops import decompose_tensor6
 from .tensor_fit import fit_tensor_wls
 
 
@@ -46,66 +48,9 @@ def _save_derived_maps(
     """Generate FSL-style DTI QA derivatives from six-component tensors."""
     name = output_path.name
     base = name[:-7] if name.endswith(".nii.gz") else output_path.stem
-    flat = tensor[valid].astype(np.float64)
-    matrices = np.empty((flat.shape[0], 3, 3), dtype=np.float64)
-    matrices[:, 0, 0] = flat[:, 0]
-    matrices[:, 0, 1] = matrices[:, 1, 0] = flat[:, 1]
-    matrices[:, 0, 2] = matrices[:, 2, 0] = flat[:, 2]
-    matrices[:, 1, 1] = flat[:, 3]
-    matrices[:, 1, 2] = matrices[:, 2, 1] = flat[:, 4]
-    matrices[:, 2, 2] = flat[:, 5]
-    eigenvalues, eigenvectors = np.linalg.eigh(matrices)
-    eigenvalues = eigenvalues[:, ::-1]
-    eigenvectors = eigenvectors[:, :, ::-1]
-
-    mean = np.mean(eigenvalues, axis=1)
-    denominator = np.sum(eigenvalues * eigenvalues, axis=1)
-    numerator = 1.5 * np.sum((eigenvalues - mean[:, None]) ** 2, axis=1)
-    fa_values = np.sqrt(
-        np.divide(
-            numerator,
-            denominator,
-            out=np.zeros_like(numerator),
-            # FSL 6.0.4 dtifit fixes the FA denominator threshold at 1e-10.
-            where=denominator > 1e-10,
-        )
-    )
-    centered = eigenvalues - mean[:, None]
-    e1, e2, e3 = centered[:, 2], centered[:, 1], centered[:, 0]
-    mode_numerator = (e1 + e2 - 2 * e3) * (2 * e1 - e2 - e3) * (e1 - 2 * e2 + e3)
-    mode_root = np.sqrt(
-        np.maximum(
-            e1 * e1 + e2 * e2 + e3 * e3 - e1 * e2 - e2 * e3 - e1 * e3,
-            0.0,
-        )
-    )
-    mode_denominator = 2.0 * mode_root**3
-    mode_values = np.clip(
-        np.divide(
-            mode_numerator,
-            mode_denominator,
-            out=np.zeros_like(mode_numerator),
-            where=mode_denominator != 0,
-        ),
-        -1.0,
-        1.0,
-    )
-
-    outputs: dict[str, np.ndarray] = {"FA": np.zeros(valid.shape, np.float32)}
-    outputs["FA"][valid] = fa_values
-    outputs["MD"] = np.zeros(valid.shape, np.float32)
-    outputs["MD"][valid] = mean
-    outputs["MO"] = np.zeros(valid.shape, np.float32)
-    outputs["MO"][valid] = mode_values
+    outputs = decompose_tensor6(tensor, valid)
     outputs["S0"] = s0
     outputs["sse"] = sse
-    for index in range(3):
-        scalar = np.zeros(valid.shape, dtype=np.float32)
-        scalar[valid] = eigenvalues[:, index]
-        outputs[f"L{index + 1}"] = scalar
-        vector_map = np.zeros(valid.shape + (3,), dtype=np.float32)
-        vector_map[valid] = eigenvectors[:, :, index]
-        outputs[f"V{index + 1}"] = vector_map
 
     paths: dict[str, str] = {}
     for suffix, values in outputs.items():
@@ -158,6 +103,7 @@ def select_shell_nifti(
     return selected
 
 
+@threadpool_limits.wrap(limits=1)
 def _fit_z_block(
     data_file: str,
     mask_file: str,
@@ -417,6 +363,7 @@ def fit_dti_nifti(
     return output_path
 
 
+@threadpool_limits.wrap(limits=1)
 def _fit_dti_nifti_serial(
     data_img: nib.spatialimages.SpatialImage,
     mask_img: nib.spatialimages.SpatialImage,

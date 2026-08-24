@@ -1,0 +1,11 @@
+# Matches the validated read-only SimNIBS 4.6 runtime package by package.
+numpy==2.3.0
+scipy==1.17.1
+nibabel==5.3.3
+numba==0.64.0
+threadpoolctl==3.6.0
+tqdm==4.68.4
+h5py==3.15.1
+matplotlib==3.10.8
+mne==1.12.1
+simnibs==4.6.0

@@ -14,13 +14,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Verify frozen integration environment
         run: |
-          python -c "import simnibs; assert simnibs.__version__ == '4.6.0'"
+          python scripts/verify_simnibs_environment.py --json simnibs46-environment.json
           python -m pip check
-      - name: Install project without changing environment dependencies
-        run: python -m pip install --no-deps -e .
+      - name: Create an isolated overlay from the frozen runtime
+        run: |
+          python -m venv --system-site-packages "${RUNNER_TEMP}/dwi2cond-simnibs46"
+          "${RUNNER_TEMP}/dwi2cond-simnibs46/bin/python" -m pip install --no-deps .
+      - name: Verify project installation preserved the frozen runtime
+        run: |
+          "${RUNNER_TEMP}/dwi2cond-simnibs46/bin/python" scripts/verify_simnibs_environment.py
+          "${RUNNER_TEMP}/dwi2cond-simnibs46/bin/python" -m pip check
       - name: Run contracts and CLI smoke tests
         run: |
-          pytest -q --cov=dwi2cond_xp --cov-report=term --cov-fail-under=100
-          dwi2cond-xp --help
-          dwi2cond-xp simulate-tdcs --help
-          dwi2cond-xp simulate-leadfield --help
+          "${RUNNER_TEMP}/dwi2cond-simnibs46/bin/python" -m pytest -q
+          "${RUNNER_TEMP}/dwi2cond-simnibs46/bin/dwi2cond-xp" --help
+          "${RUNNER_TEMP}/dwi2cond-simnibs46/bin/dwi2cond-xp" simulate-tdcs --help
+          "${RUNNER_TEMP}/dwi2cond-simnibs46/bin/dwi2cond-xp" simulate-leadfield --help

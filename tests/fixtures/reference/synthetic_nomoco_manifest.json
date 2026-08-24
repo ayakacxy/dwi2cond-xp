@@ -1,0 +1,22 @@
+{
+  "fixture_id": "synthetic-nomoco-v1",
+  "visibility": "public",
+  "model": "single-shell-dti",
+  "inputs": [
+    "dwi",
+    "brain_mask",
+    "bvals",
+    "bvecs"
+  ],
+  "reference": {
+    "simnibs": "4.6.0",
+    "dwi2cond": "0.4",
+    "fsl": "6.0.4"
+  },
+  "thresholds": {
+    "tensor_max_abs": 2e-08,
+    "tensor_relative_l2": 2e-05,
+    "mask_dice_min": 0.99
+  },
+  "notes": "Thresholds are frozen before implementing preprocessing algorithms."
+}

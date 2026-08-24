@@ -14,7 +14,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -28,7 +28,7 @@ jobs:
       - name: Verify source and tests
         run: |
           ruff check src tests tools scripts
-          pytest -q --cov=dwi2cond_xp --cov-report=term --cov-fail-under=100
+          python scripts/run_coverage.py
           python scripts/verify_version.py --tag "${GITHUB_REF_NAME}"
           python scripts/check_markdown_links.py
           check-manifest --verbose

@@ -1,0 +1,45 @@
+{
+  "fixture_suite_id": "synthetic-preprocessing-v1",
+  "visibility": "public-nonanatomical",
+  "generator": "tools/generate_synthetic_preprocessing_fixtures.py",
+  "shape": [16, 14, 12],
+  "affine": [
+    [-2.0, 0.0, 0.0, 15.0],
+    [0.0, 2.2, 0.0, -14.3],
+    [0.0, 0.0, 2.5, -13.75],
+    [0.0, 0.0, 0.0, 1.0]
+  ],
+  "reverse_pe": {
+    "file": "reverse_pe_b0.nii.gz",
+    "phase_encode_axis": 1,
+    "voxel_shifts": [1, -1]
+  },
+  "fieldmap": {
+    "magnitude": "fieldmap_magnitude.nii.gz",
+    "phase": "fieldmap_radians_per_second.nii.gz",
+    "phase_units": "radians_per_second"
+  },
+  "affine_registration": {
+    "source": "affine_source.nii.gz",
+    "reference": "affine_reference.nii.gz",
+    "source_world_to_reference_world": [
+      [0.992546151641322, -0.12186934340514748, 0.0, 1.5],
+      [0.12186934340514748, 0.992546151641322, 0.0, -0.8],
+      [0.0, 0.0, 1.0, 0.6],
+      [0.0, 0.0, 0.0, 1.0]
+    ]
+  },
+  "tensor": {
+    "file": "tensor_fsl6.nii.gz",
+    "component_order": ["Dxx", "Dxy", "Dxz", "Dyy", "Dyz", "Dzz"],
+    "eigenvalues": [0.0015, 0.0006, 0.0003]
+  },
+  "sha256": {
+    "affine_reference.nii.gz": "913989c809e91bddec80fd6b197a8af6b11a718c70386b1d8784ee958b84d88a",
+    "affine_source.nii.gz": "e38aae0d67db0d46c2e4679d22aee11fc00ca0deefff0686dd5f6ad20b4446e6",
+    "fieldmap_magnitude.nii.gz": "e38aae0d67db0d46c2e4679d22aee11fc00ca0deefff0686dd5f6ad20b4446e6",
+    "fieldmap_radians_per_second.nii.gz": "2765b9ba00d2bafe988eaa2d4d104dfcb67ae82c1fec7f74ee6eb4c58d98522e",
+    "reverse_pe_b0.nii.gz": "2bef25842cdda4824ef17ba83f59977c8f8c6624c1c836f91ad6854a1ce4f24b",
+    "tensor_fsl6.nii.gz": "a565b48119803e95252dd7991af0866363e136d709f7b4f1b84bb08bfef1382a"
+  }
+}

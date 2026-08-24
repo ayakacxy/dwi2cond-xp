@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dwi2cond-xp"
-version = "0.1.0"
-description = "FSL-free post-preprocessing DTI-to-conductivity workflows for SimNIBS 4.6"
+version = "0.2.0"
+description = "Pure-Python FSL-subset preprocessing and DTI-to-conductivity workflows for SimNIBS 4.6"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = "GPL-3.0-only"
@@ -34,8 +34,10 @@ dependencies = [
   "h5py>=3.10,<4",
   "matplotlib>=3.8,<4",
   "nibabel>=5,<6",
+  "numba>=0.64,<1",
   "numpy>=2,<3",
   "scipy>=1.11,<2",
+  "threadpoolctl>=3.1,<4",
   "tqdm>=4.64,<5",
 ]
 

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "fixture_id": "synthetic-legacy-v1",
+  "visibility": "public-nonanatomical",
+  "reference": {
+    "simnibs": "4.6.0",
+    "dwi2cond": "0.4",
+    "fsl": "6.0.4:ddd0a010"
+  },
+  "execution": {
+    "dwi2cond_xp_workers": 8,
+    "dwi2cond_xp_process_wall_seconds_median": 2.75,
+    "dwi2cond_xp_process_wall_seconds_repeats": [2.75, 2.71, 2.87],
+    "dwi2cond_xp_pipeline_wall_seconds_median": 1.951107972767204,
+    "dwi2cond_xp_peak_rss_kib_median": 226824,
+    "dwi2cond_xp_cpu_percent_median": 224,
+    "dwi2cond_xp_speedup_over_fsl_wall": 2.460270642218265,
+    "fsl_harness_wall_seconds": 6.765744266100228,
+    "fsl_harness_child_cpu_seconds": 7.54,
+    "fsl_harness_peak_rss_bytes": 145436672
+  },
+  "comparison": {
+    "volume_count": 14,
+    "final_matrix_max_abs": 0.06993334900000003,
+    "corner_displacement_mean_mm": 0.06524137460112264,
+    "corner_displacement_max_mm": 0.09416057339975534,
+    "corrected_dwi_relative_l2": 0.009101571812642748,
+    "corrected_mean_relative_l2": 0.013019203690673728,
+    "mask_dice": 0.9931947069943289,
+    "common_mask_tensor_relative_l2": 0.7725097498015738,
+    "common_mask_fa_relative_l2": 0.0373036690522491,
+    "common_mask_sse_relative_l2": 1.0608566127277494,
+    "fixed_fsl_matrix_resampling_max_abs": 0.00428009033203125,
+    "fixed_fsl_matrix_resampling_relative_l2": 7.429615038745396e-7,
+    "compat46_bvec_byte_exact": true,
+    "formal_output_interpolations_per_volume": 1,
+    "optimized_sinc_reference_bitwise_equal": true,
+    "optimized_normcorr_reference_bitwise_equal": true,
+    "optimized_outputs_preoptimization_bitwise_equal": true
+  },
+  "notes": "The noiseless sharp synthetic fixture makes tensor and SSE relative errors unstable near the BET boundary. Matrix/corner, corrected-DWI, fixed-matrix resampling, FA, absolute error, and eroded-interior checks remain separate evidence; no whole-grid tensor exactness claim is made."
+}

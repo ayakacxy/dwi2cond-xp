@@ -12,15 +12,15 @@
 [![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
-[English](README.md) · [文档](docs/README.md) · [验证](docs/VALIDATION.md) · [基准](docs/BENCHMARKS.md) · [更新记录](docs/CHANGELOG.md)
+[English](README.md) · [文档](docs/README.md) · [总报告](docs/DWI2COND_COMPLETION_AND_PERFORMANCE_REPORT.md) · [10×性能评估](docs/DWI2COND_10X_PERFORMANCE_FEASIBILITY_REPORT.md) · [验证](docs/VALIDATION.md) · [基准](docs/BENCHMARKS.md) · [更新记录](docs/CHANGELOG.md)
 
 🧠 **DTI 拟合** · ⚡ **运行时无 FSL** · 🧭 **张量重定向** · ⚡ **各向异性 FEM** · 🧪 **100% 语句覆盖**
 
 </div>
 
-`dwi2cond-xp` 是一个跨平台 Python 流程：从已预处理的 diffusion MRI 或六分量
-diffusion tensor 出发，生成 SimNIBS 4.6 电导率张量并运行经过验证的各向异性有限元
-仿真。主运行路径不依赖 FSL。
+`dwi2cond-xp` 是一个跨平台 Python 流程：对支持的原始或已预处理单壳 diffusion MRI
+执行预处理，生成 SimNIBS 4.6 电导率张量，并运行经过验证的各向异性有限元仿真。
+正式计算路径不依赖 FSL。
 
 这是独立社区项目，不是 SimNIBS 或 FSL 官方发行物。英文 [README](README.md) 是默认
 发布入口，本文件同步最重要的安装、输入和科学边界。
@@ -29,7 +29,8 @@ diffusion tensor 出发，生成 SimNIBS 4.6 电导率张量并运行经过验�
 
 | 合同 | 结果 | 证据边界 |
 | --- | ---: | --- |
-| Python 测试 | **144 passed · 100.00%** | 覆盖 1,644/1,644 条可执行语句，包含本机 FSL reference |
+| SimNIBS 4.6 预处理子集 | **纯 Python · 运行时无 FSL** | `nomoco`、legacy、固定 GRE/TOPUP/EDDY、线性/FNIRT 配准和 PPD 张量重定向 |
+| Python 测试 | **100.00% statement coverage** | 12,433/12,433 条可执行语句，覆盖单元测试和真实合成 TOPUP/EDDY/FNIRT E2E |
 | DTI tensor 一致性 | **relative L2 4.18e-6** | 同一 HCP 输入、WLS 与 gradient-nonlinearity 合同，对照 FSL 6.0.4 |
 | DTI 拟合时间 | **9.76 s vs 108.23 s · 11.09x** | 同服务器、输入与输出边界，不代表完整 FEM 加速 |
 | 电导率一致性 | **max abs 0 至 2.22e-16** | synthetic mesh 对照 SimNIBS 4.6 的 `vn/dir/mc` |
@@ -41,17 +42,20 @@ diffusion tensor 出发，生成 SimNIBS 4.6 电导率张量并运行经过验�
 ## 🧭 支持范围
 
 ```text
-已预处理单壳 DWI 或六分量 diffusion tensor
-  -> 两遍加权最小二乘 DTI 拟合与 QA
+原始或已预处理单壳 DWI，或六分量 diffusion tensor
+  -> 选择 SimNIBS 4.6 预处理分支并执行两遍 WLS DTI 拟合
+  -> 统一 QA、manifest 和 cache 验证
   -> 显式映射/重定向到 CHARM T1 网格
   -> scalar / vn / dir / mc 电导率
   -> SimNIBS 4.6 固定 montage FEM
   -> 三分量 E-field NIfTI 与 QA manifest
 ```
 
-本项目不负责原始 DWI 的 motion、eddy-current、susceptibility/topup/fieldmap 校正，
-也不自动估计 6/12 DOF affine 或非线性 DTI→T1 配准。上述步骤及一致的 b-vector
-rotation 必须由外部预处理完成。当前未实现 nonlinear PPD tensor reorientation。
+`v0.2.0` 已实现 SimNIBS 4.6 legacy motion/eddy 路径、接受已换算 rad/s 场图的固定
+GRE/FUGUE分支、固定TOPUP分支，以及支持可选TOPUP场的单壳EDDY `--repol`子集。
+自动6/12 DOF线性DTI→T1配准，以及SimNIBS 4.6固定FNIRT与nonlinear PPD tensor
+重定向分支均已实现；同时包含统一 QA、原子 DAG manifest、cache 验证和进度显示。
+FSL 仅作为可选的本地数值 reference 保留，不会被正式预处理运行路径调用。
 
 纯 Python DTI/tensor 映射核心依赖 NumPy、SciPy、NiBabel、h5py 和 tqdm。Mesh
 电导率、FEM 与 lead field 固定要求 `SimNIBS 4.6.0 + Python 3.11`；完整流程的平台
@@ -172,7 +176,7 @@ $\boldsymbol\Sigma_i=\sigma_t\mathbf I$。
 ```bash
 conda activate simnibs
 python -c "import simnibs; assert simnibs.__version__ == '4.6.0'"
-python -m pip install --no-deps dwi2cond_xp-0.1.0-py3-none-any.whl
+python -m pip install --no-deps dwi2cond_xp-0.2.0-py3-none-any.whl
 dwi2cond-xp --help
 ```
 
@@ -200,21 +204,56 @@ python -m pip install .
 
 ## 📥 输入合同
 
-DWI 必须是已预处理的四维 NIfTI，bvals、bvecs、brain mask 必须与其体积顺序一致。
-DTI 模型显式使用 b=0 加一个非零壳层，不会静默拟合全部多壳数据。可选 `grad_dev`
-使用 HCP/FSL 九分量约定。
+`fit-dti` 接受已预处理的四维 NIfTI，bvals、bvecs、brain mask 必须与其体积顺序一致。
+`preprocess-nomoco` 接受原始单壳 DWI 并生成 b0 参考和脑掩膜，但按 SimNIBS 4.6
+`nomoco` 合同明确不对 DWI volumes 做 motion、eddy-current 或 susceptibility correction；
+只有在该合同适合数据时才能使用。DTI 模型显式使用 b=0 加一个非零壳层，不会静默
+拟合全部多壳数据。可选 `grad_dev` 使用 HCP/FSL 九分量约定。
+
+`preprocess-legacy`按SimNIBS 4.6顺序执行两轮6/12 DOF校正，并保证每个正式volume
+只做一次最终sinc重采样。默认`compat46`逐字节保留原bvec，复现上游脚本；只有显式
+选择`corrected`时才按最终变换旋转bvec。
 
 Tensor NIfTI 的末维固定为 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`。映射到 T1 前，调用者必须
-二选一：提供外部估计的 input-world→reference-world 4×4 affine，或在已有外部对齐
-证据时显式使用 `--assume-aligned`。同一被试并不自动意味着 DWI 与 T1 已经对齐。
+选择自动`register-t1`，或为通用`register-tensor`提供外部估计的
+input-world→reference-world 4×4 affine；只有已有外部对齐证据时才能显式使用
+`--assume-aligned`。同一被试并不自动意味着 DWI 与 T1 已经对齐。
 
 ## 🚀 最小流程
 
 ```bash
+dwi2cond-xp preprocess-nomoco \
+  raw_dwi.nii.gz bvals bvecs nomoco_outputs --workers 8
+
+dwi2cond-xp preprocess-legacy \
+  raw_dwi.nii.gz bvals bvecs legacy_outputs \
+  --workers 8 --bvec-mode compat46
+
+dwi2cond-xp prepare-fieldmap \
+  magnitude.nii.gz field_rads.nii.gz nodif_brain.nii.gz fieldmap_out \
+  --dwell-ms 0.5 --phase-encoding-direction y- --workers 8
+
+dwi2cond-xp prepare-topup \
+  forward_b0.nii.gz reverse_b0.nii.gz topup_out \
+  --readout-seconds 0.05 --phase-encoding-direction y --workers 8
+
+dwi2cond-xp prepare-eddy \
+  raw_dwi.nii.gz bvals bvecs brain_mask.nii.gz eddy_out \
+  --readout-seconds 0.05 --phase-encoding-direction y --workers 8 \
+  --susceptibility-field topup_out/field_hz.nii.gz
+
+dwi2cond-xp preprocess-legacy \
+  raw_dwi.nii.gz bvals bvecs legacy_fieldmap_outputs \
+  --fieldmap-displacement fieldmap_out/displacement_world_mm.nii.gz --workers 8
+
 dwi2cond-xp fit-dti \
   preprocessed_dwi.nii.gz bvals bvecs brain_mask.nii.gz tensor_dwi.nii.gz \
   --grad-dev grad_dev.nii.gz --workers 8 \
   --valid-mask-out tensor_valid_mask.nii.gz --qa-json tensor_fit_qa.json
+
+dwi2cond-xp register-t1 \
+  dti_outputs m2m_subject t1_registration_outputs \
+  --mode affine --workers 8
 
 dwi2cond-xp register-tensor \
   tensor_dwi.nii.gz m2m_subject/T1.nii.gz \
@@ -227,6 +266,26 @@ dwi2cond-xp simulate-tdcs m2m_subject simulation_outputs \
   --shape rect --dimensions 50 50 --thickness 4 \
   --solver pardiso --volume-tissues 1 2 3 --cpus 8 --dry-run
 ```
+
+`preprocess-nomoco` 输出 `DTI_tensor.nii.gz`、`DTI_FA.nii.gz`、`DTI_sse.nii.gz`、
+brain/valid mask 和 `nomoco_qa.json`，不会生成伪造的 motion、eddy 或 field artifact。
+满足float32、FSL标准方向、有限且非负合同的未压缩`.nii`经分块验证后直接mmap；
+`.nii.gz`只解压一次到所有worker共享的未压缩中间文件，所选策略会写入QA。
+
+`preprocess-legacy`输出校正DWI与mean、每个volume的最终矩阵、nodif与brain mask、
+tensor/FA/SSE、valid mask和`legacy_qa.json`。`corrected` bvec模式是相对SimNIBS 4.6
+行为的显式科学修正，不会被静默启用。
+
+`prepare-fieldmap`输出rad/s场图、voxel shift、带符号的NIfTI world-mm pull位移、
+校正b0/mask和单位manifest。原始Siemens wrapped phase仍依赖PRELUDE，本固定rad/s
+分支会显式拒绝，不使用近似解缠。
+
+`prepare-topup`按SimNIBS 4.6九级固定配置输出Hz field、spline coefficients、movement、
+corrected pair、joint mask和QA；运行时不依赖FSL。FSL 6.0.4不支持的z向PE会显式报错。
+
+`prepare-eddy`按SimNIBS 4.6固定五轮单壳EDDY流程执行motion/quadratic EC、spherical GP、
+prediction-based `--repol`、rotated bvec和shell alignment；可选组合TOPUP Hz场。输出
+corrected DWI、outlier-free data、每volume 16参数、outlier map、迭代history和QA JSON。
 
 移除 `--dry-run` 后才执行求解。`scalar/vn/dir/mc` 分目录保存；各向异性 tensor 缺失
 时直接报错，不静默回退 scalar。正式体数据只保留 WM/GM/CSF（标签 1/2/3），严格

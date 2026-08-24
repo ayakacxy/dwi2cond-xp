@@ -5,7 +5,7 @@ Describe the user-visible and scientific change.
 ## Validation
 
 - [ ] `ruff check src tests tools scripts`
-- [ ] `pytest -q --cov=dwi2cond_xp --cov-report=term-missing --cov-fail-under=100`
+- [ ] `python scripts/run_coverage.py`
 - [ ] Numerical reference comparison added or updated when applicable
 - [ ] Timing boundary and hardware recorded for performance claims
 

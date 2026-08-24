@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "fixture_id": "synthetic-topup-v1",
+  "visibility": "public-nonanatomical",
+  "reference": {
+    "simnibs": "4.6.0",
+    "fsl": "6.0.4:ddd0a010",
+    "path": "APPLY_TOPUP with b02b0_nosubsamp.cnf"
+  },
+  "contract": {
+    "input_shape": [16, 14, 12, 2],
+    "voxel_sizes_mm": [2.0, 2.2, 2.5],
+    "phase_encoding_rows": [[0, 1, 0, 0.05], [0, -1, 0, 0.05]],
+    "field_units": "hertz",
+    "coefficient_units": "hertz",
+    "movement_order": ["x_mm", "y_mm", "z_mm", "x_rad", "y_rad", "z_rad"],
+    "spline_order": 3,
+    "final_knot_spacing_voxels": [2, 2, 2],
+    "coefficient_shape": [11, 10, 9]
+  },
+  "reference_outputs": {
+    "field_hz_min": 11.762660026550293,
+    "field_hz_max": 20.347686767578125,
+    "field_hz_mean": 18.620176801724092,
+    "movement_parameters": [
+      [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      [-0.00580567907, 0.0, -0.003012401349, -0.001652057302, -0.0009778647824, -0.0008454017947]
+    ],
+    "uncorrected_pair_relative_l2": 0.67700739834088,
+    "corrected_pair_relative_l2": 0.008927923028150282,
+    "pair_consistency_improvement_ratio": 75.830335477382
+  },
+  "python_coefficient_expansion_ab": {
+    "dense_field_max_abs": 1.4658327422978346e-06,
+    "dense_field_mean_abs": 4.669179989254456e-07,
+    "dense_field_relative_l2": 2.983452876512172e-08,
+    "note": "FSL writes field coefficients as float32 while --fout is expanded from optimizer-internal double coefficients."
+  },
+  "performance": {
+    "fsl_topup_only_wall_seconds": 4.63,
+    "fsl_apply_topup_reference_wall_seconds": 5.5529091828502715,
+    "fsl_peak_rss_kib": 14552,
+    "scope": "16x14x12 two-volume synthetic reverse-PE fixture",
+    "interpretation": "Baseline only; Python end-to-end timing is not available until the fixed optimizer path is complete."
+  }
+}

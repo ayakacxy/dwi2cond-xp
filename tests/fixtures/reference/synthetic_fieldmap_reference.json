@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "fixture_id": "synthetic-fieldmap-v1",
+  "visibility": "public-nonanatomical",
+  "reference": {
+    "simnibs": "4.6.0",
+    "fsl": "6.0.4:ddd0a010",
+    "path": "APPLY_FMCORR rad/s input branch"
+  },
+  "contract": {
+    "fieldmap_units": "radians_per_second",
+    "dwell_input_units": "milliseconds",
+    "dwell_seconds": 0.0005,
+    "voxel_shift_units": "voxels",
+    "displacement_units": "nifti_world_millimeters",
+    "workers": 8,
+    "median_filter": false
+  },
+  "negative_y_comparison": {
+    "matrix_max_abs": 1.266861e-05,
+    "distorted_magnitude_max_abs": 6.103515625e-05,
+    "distorted_magnitude_relative_l2": 4.564957123420754e-08,
+    "mapped_field_max_abs": 0.0001010894775390625,
+    "mapped_field_relative_l2": 6.65772347474558e-07,
+    "mapped_mask_array_equal": true,
+    "voxel_shift_max_abs": 7.82310962677002e-08,
+    "voxel_shift_relative_l2": 8.932355513024959e-07,
+    "corrected_b0_max_abs": 9.1552734375e-05,
+    "corrected_b0_relative_l2": 7.357941456120898e-08,
+    "corrected_mask_array_equal": true
+  },
+  "positive_y_comparison": {
+    "matrix_max_abs": 1.551231e-05,
+    "distorted_magnitude_max_abs": 6.103515625e-05,
+    "distorted_magnitude_relative_l2": 4.9849525396439276e-08,
+    "mapped_field_max_abs": 2.6702880859375e-05,
+    "mapped_field_relative_l2": 2.0313343895850267e-07,
+    "mapped_mask_array_equal": true,
+    "voxel_shift_max_abs": 2.2584572434425354e-08,
+    "voxel_shift_relative_l2": 3.056549360280769e-07,
+    "corrected_b0_max_abs": 7.62939453125e-05,
+    "corrected_b0_relative_l2": 6.644962269319876e-08,
+    "corrected_mask_array_equal": true
+  },
+  "fixed_fsl_shift_composition": {
+    "corrected_dwi_relative_l2": 0.016762173997064877,
+    "shared_fitter_tensor_relative_l2": 0.01550703628865944,
+    "shared_fitter_fa_relative_l2": 0.015312330384995503,
+    "formal_interpolations_per_volume": 1,
+    "note": "The identical FSL voxel-shift map is converted to world-mm displacement before the Python legacy one-pass sinc composition; both corrected series are then fitted with the same fitter."
+  },
+  "performance": {
+    "dwi2cond_xp_process_wall_seconds_repeats": [6.88, 6.55, 6.81],
+    "dwi2cond_xp_process_wall_seconds_median": 6.81,
+    "dwi2cond_xp_internal_wall_seconds_repeats": [6.0777745000086725, 5.7974958517588675, 6.073430927004665],
+    "dwi2cond_xp_internal_wall_seconds_median": 6.073430927004665,
+    "dwi2cond_xp_peak_rss_kib_range": [219596, 221796],
+    "fsl_reference_wall_seconds": 0.4628362632356584,
+    "scope": "16x14x12 synthetic fieldmap preparation only",
+    "interpretation": "This tiny fixture is dominated by Python startup and the full MI search schedule; it is not a claim that the P7 component is faster than FSL."
+  }
+}

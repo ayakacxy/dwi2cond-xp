@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "fixture_id": "synthetic-t1-registration-v1",
+  "visibility": "public-nonanatomical",
+  "reference": {
+    "simnibs": "4.6.0",
+    "dwi2cond": "0.4",
+    "fsl": "6.0.4:ddd0a010"
+  },
+  "synthetic": {
+    "shape": [24, 23, 22],
+    "voxel_size_mm": [2.0, 2.0, 2.0],
+    "known_translation_mm": 2.0,
+    "rigid": {
+      "matrix_max_abs": 3.0049e-5,
+      "corner_displacement_mean_mm": 6.86885e-5,
+      "corner_displacement_max_mm": 9.49267e-5,
+      "tensor_relative_l2": 7.16163e-6,
+      "fa_relative_l2": 6.826e-8,
+      "v1_relative_l2": 4.308e-6
+    },
+    "affine": {
+      "matrix_max_abs": 0.00894885,
+      "corner_displacement_mean_mm": 0.00508487,
+      "corner_displacement_max_mm": 0.00931386,
+      "tensor_relative_l2": 0.000394931,
+      "fa_relative_l2": 7.072e-8,
+      "v1_relative_l2": 5.588e-5
+    },
+    "t1_brain_array_exact": true,
+    "brain_rim_array_exact": true
+  },
+  "private_whole_head_summary": {
+    "dti_shape": [145, 174, 145],
+    "t1_shape": [260, 311, 260],
+    "workers": 8,
+    "runtime_thread_limit": "unrestricted",
+    "dwi2cond_xp_external_wall_seconds": 53.23,
+    "dwi2cond_xp_cpu_percent": 2351,
+    "dwi2cond_xp_peak_rss_kib": 3103744,
+    "fsl_external_wall_seconds": 233.18,
+    "speedup_over_fsl_wall": 4.380612436595905,
+    "matrix_max_abs": 0.00661515192,
+    "corner_displacement_mean_mm": 0.00385192191,
+    "corner_displacement_max_mm": 0.00771820878,
+    "tensor_relative_l2": 0.00023718731580936873,
+    "fa_relative_l2": 0.0003239514955672723,
+    "fa_support_exact": true,
+    "v1_axial_angle_mean_degrees": 0.015660002827644348,
+    "v1_axial_angle_p99_degrees": 0.1557663530111313,
+    "v1_axial_angle_max_degrees": 84.2444839477539,
+    "qa_fa_relative_l2": 0.0001235494548170757,
+    "qa_sse_relative_l2": 0.00022214428135241117,
+    "output_grid_exact": true,
+    "fallback": "none"
+  },
+  "optimization_contract": {
+    "matrices_preoptimization_bitwise_equal": true,
+    "tensor_and_qa_preoptimization_bitwise_equal": true,
+    "fsl_positive_l1_semantics_changed_fa_voxels": 3,
+    "approximate_algorithm": false,
+    "fast_math": false
+  }
+}
