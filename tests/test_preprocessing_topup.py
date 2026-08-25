@@ -723,6 +723,19 @@ def test_topup_matrix_and_runner_validation_paths(
     nib.save(nib.Nifti1Image(np.ones((3, 3), dtype=np.float32), affine), bad_shape)
     with pytest.raises(ValueError, match="share one 3D shape"):
         run_topup_nifti(forward, bad_shape, tmp_path / "d", readout_seconds=0.05, phase_encoding_direction="y")
+    different_shape = tmp_path / "different-shape.nii.gz"
+    nib.save(
+        nib.Nifti1Image(np.ones((4, 3, 3), dtype=np.float32), affine),
+        different_shape,
+    )
+    with pytest.raises(ValueError, match="share one 3D shape"):
+        run_topup_nifti(
+            forward,
+            different_shape,
+            tmp_path / "d2",
+            readout_seconds=0.05,
+            phase_encoding_direction="y",
+        )
     bad_affine = tmp_path / "bad-affine.nii.gz"
     shifted = affine.copy()
     shifted[0, 3] = 1.0

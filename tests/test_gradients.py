@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from dwi2cond_xp.gradients import load_gradients, select_dti_volumes
+from dwi2cond_xp.gradients import (
+    load_gradients,
+    select_dti_volumes,
+    validate_single_shell_volumes,
+)
 
 
 def test_selects_only_b0_and_requested_shell():
@@ -54,3 +58,16 @@ def test_shell_parameter_validation_and_missing_b0():
         select_dti_volumes(np.array([0, 1000]), tolerance=0)
     with pytest.raises(ValueError, match="No b=0"):
         select_dti_volumes(np.full(6, 1000.0))
+
+
+@pytest.mark.parametrize(
+    ("bvals", "kwargs", "message"),
+    (
+        (np.array([0.0, *([1000.0] * 6)]), {"shell_tolerance": 0}, "tolerance"),
+        (np.full(6, 1000.0), {}, "No b=0"),
+        (np.array([0.0, *([1000.0] * 5)]), {}, "fewer than six"),
+    ),
+)
+def test_strict_single_shell_validation_errors(bvals, kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        validate_single_shell_volumes(bvals, **kwargs)

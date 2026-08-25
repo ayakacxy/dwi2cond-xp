@@ -47,12 +47,15 @@ def _coverage_run(
     *,
     workspace: Path,
     base_environment: dict[str, str],
+    environment_updates: dict[str, str] | None = None,
 ) -> Path:
     """Run a coverage batch with an independent data file and cold compilation cache."""
 
     data_file = workspace / f"coverage-{label}"
     cache_directory = workspace / f"numba-{label}"
     environment = _coverage_environment(base_environment, data_file, cache_directory)
+    if environment_updates is not None:
+        environment.update(environment_updates)
     _run(
         [
             sys.executable,
@@ -231,11 +234,22 @@ def main() -> int:
     try:
         unit = _coverage_run(
             "unit",
-            ["-m", "pytest", "-q"],
+            ["-m", "pytest", "-q", "--ignore=tests/test_montage_plot.py"],
             workspace=workspace,
             base_environment=base_environment,
         )
-        data_files = [unit, *_collect_e2e_coverage(workspace, base_environment)]
+        montage = _coverage_run(
+            "montage",
+            ["-m", "pytest", "-q", "tests/test_montage_plot.py"],
+            workspace=workspace,
+            base_environment=base_environment,
+            environment_updates={"NUMBA_DISABLE_JIT": "1"},
+        )
+        data_files = [
+            unit,
+            montage,
+            *_collect_e2e_coverage(workspace, base_environment),
+        ]
         destination = args.data_file.resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.unlink(missing_ok=True)

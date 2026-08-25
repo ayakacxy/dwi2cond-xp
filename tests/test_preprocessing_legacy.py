@@ -241,13 +241,49 @@ def test_run_legacy_pipeline_contract(tmp_path, monkeypatch, bvec_mode) -> None:
         )
 
     monkeypatch.setattr(legacy, "fit_dti_nifti", fit)
+    raw_fieldmap_kwargs = {}
+    if bvec_mode == "compat46":
+        magnitude = tmp_path / "magnitude.nii.gz"
+        radians = tmp_path / "radians.nii.gz"
+        template = nib.load(dwi)
+        legacy._save_nifti(_volume(1.0), template, magnitude)
+        legacy._save_nifti(_volume(10.0), template, radians)
+
+        def fake_fieldmap(_magnitude, _radians, _b0, target, **_kwargs):
+            target = Path(target)
+            target.mkdir(parents=True, exist_ok=True)
+            legacy._save_nifti(
+                np.zeros((7, 7, 7, 3), dtype=np.float32),
+                template,
+                target / "displacement_world_mm.nii.gz",
+            )
+            legacy._save_nifti(
+                np.ones((7, 7, 7), dtype=np.float32),
+                template,
+                target / "corrected_mask.nii.gz",
+            )
+            return {"status": "completed"}
+
+        monkeypatch.setattr(legacy, "run_fieldmap_nifti", fake_fieldmap)
+        raw_fieldmap_kwargs = {
+            "fieldmap_magnitude_file": magnitude,
+            "fieldmap_radians_per_second_file": radians,
+            "fieldmap_dwell_milliseconds": 0.5,
+            "fieldmap_phase_encoding_direction": "y-",
+        }
     if bvec_mode == "corrected":
         monkeypatch.setattr(legacy, "_rotate_bvecs", lambda _a, vectors, _m: vectors)
     displacement = None
+    corrected_mask = None
     grad_dev = None
     if bvec_mode == "corrected":
         displacement = tmp_path / "field.nii.gz"
         nib.save(nib.Nifti1Image(np.zeros((7, 7, 7, 3)), np.diag([-2, 2, 2, 1])), displacement)
+        corrected_mask = tmp_path / "corrected_mask.nii.gz"
+        nib.save(
+            nib.Nifti1Image(np.ones((7, 7, 7)), np.diag([-2, 2, 2, 1])),
+            corrected_mask,
+        )
         grad_dev = dwi
     report = legacy.run_legacy_nifti(
         dwi,
@@ -256,15 +292,18 @@ def test_run_legacy_pipeline_contract(tmp_path, monkeypatch, bvec_mode) -> None:
         output,
         bvec_mode=bvec_mode,
         fieldmap_displacement_file=displacement,
+        fieldmap_corrected_mask_file=corrected_mask,
         grad_dev_file=grad_dev,
         workers=2,
         progress=lambda *_args: None,
+        **raw_fieldmap_kwargs,
     )
     assert report["status"] == "completed"
     assert report["interpolation"]["formal_output_passes_per_volume"] == 1
     assert len(list((output / "DWI_corr.mat").glob("MAT_*"))) == 4
     if bvec_mode == "compat46":
         assert (output / "DWIbvecs").read_bytes() == bvecs.read_bytes()
+        assert report["interpolation"]["fieldmap_input"] == "raw-radians-per-second"
 
 
 def test_run_legacy_input_and_field_validation(tmp_path, monkeypatch) -> None:
@@ -273,6 +312,35 @@ def test_run_legacy_input_and_field_validation(tmp_path, monkeypatch) -> None:
         legacy.run_legacy_nifti(dwi, bvals, bvecs, tmp_path / "bad", bvec_mode="bad")
     with pytest.raises(ValueError, match="positive integer"):
         legacy.run_legacy_nifti(dwi, bvals, bvecs, tmp_path / "bad-workers", workers=0)
+    with pytest.raises(ValueError, match="raw fieldmap requires"):
+        legacy.run_legacy_nifti(
+            dwi,
+            bvals,
+            bvecs,
+            tmp_path / "incomplete-raw-fieldmap",
+            fieldmap_magnitude_file=dwi,
+        )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        legacy.run_legacy_nifti(
+            dwi,
+            bvals,
+            bvecs,
+            tmp_path / "mixed-fieldmap",
+            fieldmap_magnitude_file=dwi,
+            fieldmap_radians_per_second_file=dwi,
+            fieldmap_dwell_milliseconds=0.5,
+            fieldmap_phase_encoding_direction="y",
+            fieldmap_displacement_file=dwi,
+            fieldmap_corrected_mask_file=dwi,
+        )
+    with pytest.raises(ValueError, match="displacement and corrected mask"):
+        legacy.run_legacy_nifti(
+            dwi,
+            bvals,
+            bvecs,
+            tmp_path / "incomplete-prepared-fieldmap",
+            fieldmap_displacement_file=dwi,
+        )
     short_bvals = tmp_path / "short-bvals"
     short_bvecs = tmp_path / "short-bvecs"
     np.savetxt(short_bvals, [[0, 1000]])
@@ -300,3 +368,23 @@ def test_run_legacy_input_and_field_validation(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(legacy, "write_aligned_b0_mean", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("stop")))
     with pytest.raises(RuntimeError, match="stop"):
         legacy.run_legacy_nifti(dwi, bvals, bvecs, tmp_path / "early-stop")
+
+
+def test_corrected_fieldmap_mask_requires_matching_grid(tmp_path: Path) -> None:
+    dwi, _, _ = _write_inputs(tmp_path)
+    reference = nib.load(dwi)
+    bad_shape = tmp_path / "bad-shape-mask.nii.gz"
+    bad_affine = tmp_path / "bad-affine-mask.nii.gz"
+    nib.save(nib.Nifti1Image(np.ones((6, 7, 7)), reference.affine), bad_shape)
+    shifted = reference.affine.copy()
+    shifted[0, 3] += 1.0
+    nib.save(nib.Nifti1Image(np.ones((7, 7, 7)), shifted), bad_affine)
+
+    with pytest.raises(ValueError, match="match the DWI grid"):
+        legacy._replace_mask_with_corrected(
+            bad_shape, reference, tmp_path / "shape-output.nii.gz"
+        )
+    with pytest.raises(ValueError, match="affine"):
+        legacy._replace_mask_with_corrected(
+            bad_affine, reference, tmp_path / "affine-output.nii.gz"
+        )

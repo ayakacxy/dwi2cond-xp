@@ -166,3 +166,24 @@ def test_vn_excentricity_and_mc_without_intensity_are_supported():
     )
     assert np.linalg.det(vn[0]) == pytest.approx(0.126**3)
     assert np.allclose(mc[0], np.eye(3) * 4.0 ** (1 / 3))
+
+
+@pytest.mark.parametrize("mode", ["dir", "mc"])
+def test_dir_mc_zero_tensor_follows_post_reconstruction_fix(mode):
+    tensors = np.stack(
+        (
+            np.zeros((3, 3)),
+            np.diag([1.5e-3, 0.7e-3, 0.4e-3]),
+            np.diag([1.4e-3, 0.8e-3, 0.5e-3]),
+            np.diag([1.6e-3, 0.9e-3, 0.6e-3]),
+        )
+    )
+    conductivity, report = tensors_to_conductivity(
+        tensors,
+        np.ones(4, dtype=int),
+        {1: 0.126},
+        mode=mode,
+        anisotropic_tissues=(1,),
+    )
+    assert np.array_equal(conductivity[0], np.eye(3) * 0.126)
+    assert report["intensity_scale"] == pytest.approx(163.106112448201, rel=1e-12)

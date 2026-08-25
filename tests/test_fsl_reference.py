@@ -128,6 +128,84 @@ def test_small_nifti_matches_fsl_wls_with_grad_dev(tmp_path):
         assert np.allclose(axial_dot, 1.0, rtol=0, atol=2e-5), suffix
 
 
+@pytest.mark.skipif(
+    not FSL_DTIFIT.is_file(),
+    reason="FSL reference disabled; set FSL_DTIFIT to a local dtifit executable",
+)
+def test_strict_mode_matches_fsl_nonpositive_and_nan_edge_cases(tmp_path):
+    """用真实 FSL 固定非正信号与 NaN 的兼容行为。"""
+
+    bvals, bvecs = _gradient_fixture()
+    shape = (3, 1, 1)
+    design = form_design_matrix(bvals, bvecs)
+    tensor = np.array([1.4e-3, 8e-5, -4e-5, 7e-4, 6e-5, 4e-4])
+    normal = np.exp(
+        -(design[:, :6] @ tensor + design[:, 6] * -np.log(1000.0))
+    )
+    data = np.broadcast_to(normal, shape + (bvals.size,)).copy().astype(np.float32)
+    data[1, 0, 0, :] = -1.0
+    data[2, 0, 0, 3] = np.nan
+
+    affine = np.eye(4)
+    data_file = tmp_path / "edge-data.nii.gz"
+    mask_file = tmp_path / "edge-mask.nii.gz"
+    bvals_file = tmp_path / "edge-bvals"
+    bvecs_file = tmp_path / "edge-bvecs"
+    nib.save(nib.Nifti1Image(data, affine), data_file)
+    nib.save(nib.Nifti1Image(np.ones(shape, dtype=np.uint8), affine), mask_file)
+    np.savetxt(bvals_file, bvals[None, :], fmt="%.8g")
+    np.savetxt(bvecs_file, bvecs.T, fmt="%.12g")
+
+    ours_file = tmp_path / "ours-edge.nii.gz"
+    fit_dti_nifti(
+        data_file,
+        bvals_file,
+        bvecs_file,
+        mask_file,
+        ours_file,
+        compatibility_mode="strict-fsl",
+        workers=1,
+    )
+
+    fsl_prefix = tmp_path / "fsl-edge"
+    environment = os.environ.copy()
+    environment["FSLDIR"] = str(FSL_DTIFIT.parent.parent)
+    environment["FSLOUTPUTTYPE"] = "NIFTI_GZ"
+    subprocess.run(
+        [
+            str(FSL_DTIFIT),
+            "-k",
+            str(data_file),
+            "-m",
+            str(mask_file),
+            "-r",
+            str(bvecs_file),
+            "-b",
+            str(bvals_file),
+            "-o",
+            str(fsl_prefix),
+            "--wls",
+            "--save_tensor",
+            "--sse",
+        ],
+        check=True,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    for ours_suffix, fsl_suffix, rtol, atol in (
+        ("", "_tensor", 3e-5, 3e-8),
+        ("_S0", "_S0", 3e-5, 3e-5),
+        ("_sse", "_sse", 3e-5, 3e-5),
+    ):
+        ours = np.asarray(nib.load(tmp_path / f"ours-edge{ours_suffix}.nii.gz").dataobj)
+        reference = np.asarray(nib.load(tmp_path / f"fsl-edge{fsl_suffix}.nii.gz").dataobj)
+        assert np.allclose(
+            np.squeeze(ours), np.squeeze(reference), rtol=rtol, atol=atol
+        ), ours_suffix
+
+
 def test_invalid_voxel_is_explicitly_recorded(tmp_path):
     """All-nonpositive signals must be zeroed and reported without NaN."""
     bvals, bvecs = _gradient_fixture()
@@ -153,6 +231,7 @@ def test_invalid_voxel_is_explicitly_recorded(tmp_path):
         output_file,
         z_chunk=1,
         workers=2,
+        compatibility_mode="robust",
     )
 
     tensor = np.asarray(nib.load(output_file).dataobj)

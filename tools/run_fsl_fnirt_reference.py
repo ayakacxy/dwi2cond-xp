@@ -23,9 +23,7 @@ def _simnibs_external_file(name: str) -> Path:
 
     spec = find_spec("simnibs")
     if spec is None or not spec.submodule_search_locations:
-        raise SystemExit(
-            "SimNIBS is required unless --simnibs-t1-script is provided"
-        )
+        raise SystemExit("SimNIBS is required unless --simnibs-t1-script is provided")
     return Path(next(iter(spec.submodule_search_locations))) / "external" / name
 
 
@@ -34,6 +32,7 @@ def _worker(
     tensor: Path,
     reference: Path,
     affine: Path,
+    brain_mask: Path,
     output: Path,
 ) -> int:
     """Execute the exact nonlinear branch from ``dwi2cond.t1reg.source.sh``."""
@@ -52,6 +51,16 @@ def _worker(
             "--logout=fnirt.log",
             "--subsamp=8,4,2,2",
             "--verbose",
+        ],
+        output,
+    )
+    _run(
+        [
+            "fslmaths",
+            "DTI_coregT1_tensor",
+            "-mas",
+            str(brain_mask),
+            "DTI_coregT1_tensor",
         ],
         output,
     )
@@ -85,17 +94,27 @@ def main() -> int:
     parser.add_argument("--tensor", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
     parser.add_argument("--affine", type=Path, required=True)
+    parser.add_argument("--brain-mask", type=Path, required=True)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--fsl-dir", type=Path, default=Path("/usr/local/fsl"))
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=600.0,
+        help="Maximum reference wall time; increase this for whole-head FNIRT",
+    )
     parser.add_argument(
         "--simnibs-t1-script",
         type=Path,
         help="Optional path to dwi2cond.t1reg.source.sh",
     )
     args = parser.parse_args()
+    if not args.timeout_seconds > 0:
+        parser.error("--timeout-seconds must be positive")
     inputs = tuple(
-        path.resolve() for path in (args.fa, args.tensor, args.reference, args.affine)
+        path.resolve()
+        for path in (args.fa, args.tensor, args.reference, args.affine, args.brain_mask)
     )
     if args.worker:
         return _worker(*inputs, args.work.resolve())
@@ -115,6 +134,7 @@ def main() -> int:
         fsl / "src/fnirt/fnirtfns.cpp",
         fsl / "src/fnirt/fnirt_costfunctions.cpp",
         fsl / "src/fdt/vecreg.cc",
+        fsl / "src/avwutils/fslmaths.cc",
     )
     environment = {
         "FSLDIR": str(fsl),
@@ -147,6 +167,8 @@ def main() -> int:
             str(inputs[2]),
             "--affine",
             str(inputs[3]),
+            "--brain-mask",
+            str(inputs[4]),
             "--work",
             str(args.work.resolve()),
             "--fsl-dir",
@@ -159,7 +181,7 @@ def main() -> int:
         reference_version="SimNIBS 4.6.0 dwi2cond 0.4 / FSL 6.0.4:ddd0a010",
         script_paths=source_paths,
         threads=1,
-        timeout_seconds=600,
+        timeout_seconds=args.timeout_seconds,
         include_output_digests=True,
     )
     print(json.dumps({"status": manifest["status"], "manifest": str(args.manifest)}))

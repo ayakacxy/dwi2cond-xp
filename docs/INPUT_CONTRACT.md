@@ -3,14 +3,14 @@
 ## Raw DWI without correction
 
 `preprocess-nomoco` implements the SimNIBS 4.6 `nomoco` path. It reorients the
-NIfTI storage, converts and clips the fitting data to nonnegative float32,
-registers only the b0 volumes to construct their mean and brain mask, and then
-runs WLS fitting. It does not apply the estimated b0 transforms to the DWI and
+NIfTI storage, registers only the exact `b=0` volumes to construct their mean
+and brain mask, applies the official nonnegative threshold only at the final
+fit boundary, and then runs WLS fitting. It does not apply the estimated b0 transforms to the DWI and
 does not estimate motion, eddy-current, or susceptibility fields.
 
 The DWI, b-values, and b-vectors must describe the same ordered volumes. The
-single-tensor model still selects b=0 plus one explicit shell; multishell data
-is never fitted silently. Optional `grad_dev` must match the original DWI grid
+strict single-tensor model accepts every volume only after validating one
+nonzero shell; multishell data is never selected or fitted silently. Optional `grad_dev` must match the original DWI grid
 and is storage-reoriented with the DWI before fitting.
 
 An uncompressed `.nii` is used directly only after blockwise verification that
@@ -40,9 +40,12 @@ separate scientific mode that rotates nonzero-shell vectors with the finite-
 strain rotation of each final affine and restores unit length. These modes are
 never selected implicitly.
 
-An optional `--fieldmap-displacement` must be an `(X,Y,Z,3)` finite displacement
+An optional prepared `--fieldmap-displacement` must be an `(X,Y,Z,3)` finite displacement
 on the DWI grid, expressed in moving-world millimetres. It is composed with the
-affine pull coordinates before the single final interpolation.
+affine pull coordinates before the single final interpolation and must be paired
+with its corrected brain mask. The complete workflow can instead accept the
+magnitude, already-unwrapped radians-per-second field, dwell, and PE direction
+as one raw GRE bundle and prepare both artifacts in the same cached DAG.
 
 `prepare-fieldmap <magnitude> <field_radians_per_second> <b0_brain>
 <output_directory>` implements the SimNIBS 4.6 GRE/FUGUE branch for an already
@@ -64,15 +67,22 @@ selected silently.
 
 `prepare-eddy <dwi> <bvals> <bvecs> <brain_mask> <output_directory>` implements
 the fixed SimNIBS 4.6 single-shell EDDY path. The DWI and mask must share shape
-and affine; b-values and 3xN b-vectors must match the ordered volumes. The
+and affine; b-values and either 3xN or Nx3 b-vectors must match the ordered volumes. The
 nonzero b-values must form one shell, `--readout-seconds` must be positive, and
-phase encoding is limited to `x`, `x-`, `y`, or `y-`. An optional
+phase encoding may be `x`, `x-`, `y`, `y-`, `z`, or `z-`. An optional
 `--susceptibility-field` is a finite Hz NIfTI on the DWI grid. The command uses
 prediction-based slice replacement by default, records the deterministic random
 seed, writes corrected and outlier-free DWI, 16 parameters per volume, rotated
 b-vectors, outlier and shell-alignment artifacts, iteration histories, and QA.
 `--no-repol` and `--no-rigid-shell-alignment` are explicit fixed-path controls;
 no failed optimized path silently falls back.
+
+When `run-pipeline` receives a reverse-PE 4-D image, it storage-reorients the
+series, performs the official rigid alignment and temporal mean, estimates
+TOPUP, creates the EDDY mask from TOPUP's first corrected b0 with the official
+BET fraction, and passes the complete TOPUP products into EDDY. Because FSL
+6.0.4 TOPUP rejects z phase encoding, this combined branch remains limited to
+x/y directions even though no-TOPUP EDDY accepts z.
 
 ## Preprocessed DWI
 
@@ -81,9 +91,10 @@ distortion corrections appropriate for its acquisition. The b-vectors must have
 been rotated consistently with motion correction. The DWI, brain mask, b-values,
 and b-vectors must describe the same ordered volumes.
 
-The DTI fit uses b=0 volumes and one nonzero shell. Multishell data must be
-reduced explicitly with `select-shell` or an equivalent traceable step. The code
-does not silently fit a single-tensor model to every nonzero shell.
+The strict DTI fit uses every supplied volume after validating exact b0 plus one
+nonzero shell. Multishell data must be reduced explicitly with `select-shell`
+or an equivalent traceable step before this boundary. The code does not silently
+select b1000 or fit a single-tensor model to multiple nonzero shells.
 
 The optional `grad_dev` NIfTI uses the HCP/FSL nine-component convention and
 must match the DWI spatial shape and affine.
@@ -93,6 +104,19 @@ must match the DWI spatial shape and affine.
 Tensor NIfTIs have shape `(X,Y,Z,6)` with final-axis ordering
 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`. Values must be finite. A validity mask should be
 carried forward from fitting or supplied by the external producer.
+
+`run-prefit-pipeline` accepts an official-style pre-fitted tensor, performs the
+storage-only reorientation and `fslmaths -tensor_decomp` semantics, then joins
+the same T1 registration, publication, and QA DAG without requiring raw DWI.
+
+## Compatibility modes
+
+`strict-fsl` is the default for fitting and nonlinear PPD. It preserves the
+FSL-compatible input handling and fails explicitly where FSL itself aborts or
+where a fold/singular active-support transform has no valid tensor result.
+`robust` is a separate opt-in policy that excludes invalid fit voxels and
+zero-fills unsafe nonlinear locations. The selected mode is recorded in stage
+parameters and is never changed through silent fallback.
 
 ## T1 alignment
 

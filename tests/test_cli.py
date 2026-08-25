@@ -376,7 +376,11 @@ def test_nonlinear_t1_registration_route_uses_fixed_contract(
             "FA2T1.mat",
             str(output),
         ),
-        {"workers": 8},
+            {
+                "brain_mask_file": None,
+                "workers": 8,
+                "compatibility_mode": "strict-fsl",
+            },
     )
     created = _Progress.instances[first_progress:]
     assert created[0].n == 4

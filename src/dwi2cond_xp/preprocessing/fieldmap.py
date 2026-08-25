@@ -17,6 +17,7 @@ from ._numba import set_available_numba_threads
 from .brain_mask import bet_brain_mask
 from .flirt_registration import FlirtRegistrationResult, register_flirt_affine
 from .image_ops import masked_percentile, median_filter_box
+from .orientation import write_fsl_reoriented
 from .resampling import resample_image
 from .transforms import (
     fsl_matrix_to_world,
@@ -544,9 +545,22 @@ def run_fieldmap_nifti(
     started = perf_counter()
     if not np.isfinite(dwell_milliseconds) or dwell_milliseconds <= 0:
         raise ValueError("dwell_milliseconds must be positive and finite")
-    magnitude_image, magnitude = _load_3d(magnitude_file, "magnitude")
-    field_image, field = _load_3d(field_radians_per_second_file, "fieldmap")
-    b0_image, b0 = _load_3d(b0_brain_file, "b0 brain")
+    output = Path(output_directory)
+    output.mkdir(parents=True, exist_ok=True)
+    prepared_magnitude = write_fsl_reoriented(
+        magnitude_file, output / "magnitude_reoriented.nii.gz", float32=True
+    )
+    prepared_field = write_fsl_reoriented(
+        field_radians_per_second_file,
+        output / "field_reoriented_radians_per_second.nii.gz",
+        float32=True,
+    )
+    prepared_b0 = write_fsl_reoriented(
+        b0_brain_file, output / "b0_brain_reoriented.nii.gz", float32=True
+    )
+    magnitude_image, magnitude = _load_3d(prepared_magnitude, "magnitude")
+    field_image, field = _load_3d(prepared_field, "fieldmap")
+    b0_image, b0 = _load_3d(prepared_b0, "b0 brain")
     if magnitude.shape != field.shape or not np.allclose(
         magnitude_image.affine, field_image.affine, rtol=0.0, atol=1e-5
     ):
@@ -561,7 +575,13 @@ def run_fieldmap_nifti(
         )
         magnitude_mask = bet.mask
     else:
-        mask_image, magnitude_mask = _load_3d(magnitude_mask_file, "magnitude mask")
+        prepared_magnitude_mask = write_fsl_reoriented(
+            magnitude_mask_file,
+            output / "magnitude_mask_reoriented.nii.gz",
+        )
+        mask_image, magnitude_mask = _load_3d(
+            prepared_magnitude_mask, "magnitude mask"
+        )
         if mask_image.shape[:3] != magnitude.shape or not np.allclose(
             mask_image.affine, magnitude_image.affine, rtol=0.0, atol=1e-5
         ):
@@ -569,7 +589,11 @@ def run_fieldmap_nifti(
     if b0_mask_file is None:
         b0_mask = b0 > 0
     else:
-        mask_image, b0_mask = _load_3d(b0_mask_file, "b0 mask")
+        prepared_b0_mask = write_fsl_reoriented(
+            b0_mask_file,
+            output / "b0_mask_reoriented.nii.gz",
+        )
+        mask_image, b0_mask = _load_3d(prepared_b0_mask, "b0 mask")
         if mask_image.shape[:3] != b0.shape or not np.allclose(
             mask_image.affine, b0_image.affine, rtol=0.0, atol=1e-5
         ):
@@ -588,8 +612,6 @@ def run_fieldmap_nifti(
         median_filter=median_filter,
         progress=progress,
     )
-    output = Path(output_directory)
-    output.mkdir(parents=True, exist_ok=True)
     field_outputs = {
         "field_radians_per_second": (result.field_radians_per_second, magnitude_image, np.float32),
         "magnitude_brain": (result.magnitude_brain, magnitude_image, np.float32),
@@ -624,6 +646,7 @@ def run_fieldmap_nifti(
         "registration_cost": "mutual_information",
         "registration_degrees_of_freedom": 6,
         "registration_evaluations": result.registration.evaluations,
+        "raw_storage_reorientation": "fslreorient2std-compatible-no-interpolation",
         "elapsed_seconds": perf_counter() - started,
         "outputs": paths,
     }

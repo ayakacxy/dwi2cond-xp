@@ -149,7 +149,8 @@ def tensors_to_conductivity(
             continue
         tissue_tensors = tensors[indices].copy()
         zero = np.all(np.isclose(tissue_tensors.reshape(-1, 9), 0), axis=1)
-        tissue_tensors[zero] = conductivity * np.eye(3)
+        if mode == "vn":
+            tissue_tensors[zero] = conductivity * np.eye(3)
         eigenvalues, eigenvectors = _sorted_eigensystem(tissue_tensors)
 
         if mode == "vn":
@@ -196,7 +197,9 @@ def tensors_to_conductivity(
             scaling = 0.0 if mode == "mc" else excentricity_scaling
             if scaling is not None:
                 eigenvalues = _adjust_excentricity(eigenvalues, scaling)
-            output[indices] = _form_tensors(eigenvalues, eigenvectors)
+            reconstructed = _form_tensors(eigenvalues, eigenvectors)
+            reconstructed[zero] = conductivity * np.eye(3)
+            output[indices] = reconstructed
             reports["tissues"][str(tag_int)] = {
                 "elements": int(indices.size),
                 "zero_tensors": int(np.count_nonzero(zero)),
@@ -221,7 +224,11 @@ def tensors_to_conductivity(
             scaling = 0.0 if mode == "mc" else excentricity_scaling
             if scaling is not None:
                 eigenvalues = _adjust_excentricity(eigenvalues, scaling)
-            output[indices] = _form_tensors(eigenvalues, eigenvectors)
+            reconstructed = _form_tensors(eigenvalues, eigenvectors)
+            reconstructed[
+                np.all(np.isclose(tensors[indices].reshape(-1, 9), 0), axis=1)
+            ] = conductivity * np.eye(3)
+            output[indices] = reconstructed
             reports["tissues"][str(tag)]["second_fix"] = fixed
             reports["tissues"][str(tag)]["mean_conductivity"] = float(
                 np.sum(

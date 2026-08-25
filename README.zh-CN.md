@@ -44,7 +44,7 @@
 | 合同 | 结果 | 证据边界 |
 | --- | ---: | --- |
 | SimNIBS 4.6 预处理子集 | **纯 Python · 运行时无 FSL** | `nomoco`、legacy、固定 GRE/TOPUP/EDDY、线性/FNIRT 配准和 PPD 张量重定向 |
-| Python 测试 | **100.00% statement coverage** | 12,443/12,443 条可执行语句，覆盖单元测试和真实合成 TOPUP/EDDY/FNIRT E2E |
+| Python 测试 | **100.00% statement coverage** | 12,826/12,826 条可执行语句，覆盖 568 个通过测试和真实合成 TOPUP/EDDY/FNIRT E2E |
 | DTI tensor 一致性 | **relative L2 4.18e-6** | 同一 HCP 输入、WLS 与 gradient-nonlinearity 合同，对照 FSL 6.0.4 |
 | DTI 拟合时间 | **9.76 s vs 108.23 s · 11.09x** | 同服务器、输入与输出边界，不代表完整 FEM 加速 |
 | 电导率一致性 | **max abs 0 至 2.22e-16** | synthetic mesh 对照 SimNIBS 4.6 的 `vn/dir/mc` |
@@ -65,11 +65,13 @@
   -> 三分量 E-field NIfTI 与 QA manifest
 ```
 
-`v0.2.0` 已实现 SimNIBS 4.6 legacy motion/eddy 路径、接受已换算 rad/s 场图的固定
+`v0.3.0` 已实现 SimNIBS 4.6 legacy motion/eddy 路径、接受已换算 rad/s 场图的固定
 GRE/FUGUE分支、固定TOPUP分支，以及支持可选TOPUP场的单壳EDDY `--repol`子集。
 自动6/12 DOF线性DTI→T1配准，以及SimNIBS 4.6固定FNIRT与nonlinear PPD tensor
 重定向分支均已实现；同时包含统一 QA、原子 DAG manifest、cache 验证和进度显示。
-FSL 仅作为可选的本地数值 reference 保留，不会被正式预处理运行路径调用。
+本版本还修复了 v0.2.0 审计发现的产物流向、mask、拟合语义、TOPUP→EDDY 闭环、
+官方默认值、预拟合 tensor 导入和 m2m 发布问题。FSL 仅作为可选的本地数值
+reference 保留，不会被正式预处理运行路径调用。
 
 纯 Python DTI/tensor 映射核心依赖 NumPy、SciPy、NiBabel、h5py 和 tqdm。Mesh
 电导率、FEM 与 lead field 固定要求 `SimNIBS 4.6.0 + Python 3.11`；完整流程的平台
@@ -190,7 +192,7 @@ $\boldsymbol\Sigma_i=\sigma_t\mathbf I$。
 ```bash
 conda activate simnibs
 python -c "import simnibs; assert simnibs.__version__ == '4.6.0'"
-python -m pip install --no-deps dwi2cond_xp-0.2.0-py3-none-any.whl
+python -m pip install --no-deps dwi2cond_xp-0.3.0-py3-none-any.whl
 dwi2cond-xp --help
 ```
 
@@ -240,6 +242,32 @@ input-world→reference-world 4×4 affine；只有已有外部对齐证据时才
 
 ## 🚀 最小流程
 
+运行官方默认的正确性路径（`legacy + nonlinear`），并把最终 tensor 原子发布到
+m2m 目录：
+
+```bash
+dwi2cond-xp run-pipeline \
+  raw_dwi.nii.gz bvals bvecs m2m_subject workflow_outputs \
+  --workers 8
+```
+
+reverse-PE 采集应使用完整 TOPUP→EDDY 闭环，不要手工拼接 standalone 产物：
+
+```bash
+dwi2cond-xp run-pipeline \
+  raw_dwi.nii.gz bvals bvecs m2m_subject workflow_outputs \
+  --preprocessing-mode eddy \
+  --reverse-phase-encoding reverse_pe_4d.nii.gz \
+  --readout-seconds 0.05 --phase-encoding-direction y --workers 8
+```
+
+官方格式的预拟合 tensor 可进入同一 T1、发布和 QA DAG：
+
+```bash
+dwi2cond-xp run-prefit-pipeline \
+  DTI_tensor.nii.gz m2m_subject workflow_outputs --workers 8
+```
+
 ```bash
 dwi2cond-xp preprocess-nomoco \
   raw_dwi.nii.gz bvals bvecs nomoco_outputs --workers 8
@@ -263,7 +291,8 @@ dwi2cond-xp prepare-eddy \
 
 dwi2cond-xp preprocess-legacy \
   raw_dwi.nii.gz bvals bvecs legacy_fieldmap_outputs \
-  --fieldmap-displacement fieldmap_out/displacement_world_mm.nii.gz --workers 8
+  --fieldmap-displacement fieldmap_out/displacement_world_mm.nii.gz \
+  --fieldmap-corrected-mask fieldmap_out/corrected_mask.nii.gz --workers 8
 
 dwi2cond-xp fit-dti \
   preprocessed_dwi.nii.gz bvals bvecs brain_mask.nii.gz tensor_dwi.nii.gz \
@@ -329,16 +358,16 @@ panel 共用对称色标；切片只由 brain mask 最大面积决定，不根�
 预处理、配准、建模或 FEM。全电极 lead-field 接口和数据合同已支持并测试，但当前
 发布证据不包含真实被试的全电极完整运行。
 
-Linux release 门禁为 `535 passed, 7 skipped`，全部 `12,443/12,443` 个可执行语句
+本地 v0.3.0 release 门禁为 `568 passed, 6 skipped`，全部 `12,826/12,826` 个可执行语句
 严格达到 `100.00%` 覆盖率；跨平台 CI 同样强制该门槛。只有外部 reference 或集成
 前置条件不可用时才跳过对应可选测试。
 
 ## 🛣️ 后续路线图
 
-`v0.2.0` 已完成运行时不依赖 FSL 的预处理里程碑。当前 `main` 分支继续承载最新开发，
-已发布版本则由不可变 tag 和 GitHub Release 长期保留。
+`v0.3.0` 是根据 v0.2.0 算法审计形成的正确性修复版，用于恢复受支持范围内的
+SimNIBS 4.6/FSL 6.0.4 官方流程和计算合同；它不再是原先规划的加速版本。
 
-`v0.3.0` 的计划重点是：
+性能工作顺延到 `v0.4.0` 或更高版本，计划重点是：
 
 - 冻结仿射和非线性预处理分支在相同输入、相同输出、8 workers 下的端到端基准；
 - profile 并优化剩余的 FNIRT、非线性 PPD、仿射、压缩和 I/O 热点；

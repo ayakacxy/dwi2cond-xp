@@ -136,6 +136,7 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
         "voxel_shift_from_field",
     ),
     **_exports(".topup", "TopupRunResult", "run_simnibs46_topup", "run_topup_nifti"),
+    **_exports(".topup_eddy", "run_topup_eddy_nifti"),
     **_exports(
         ".eddy",
         "EddyB0RegistrationResult",

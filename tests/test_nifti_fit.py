@@ -9,6 +9,7 @@ import pytest
 
 from dwi2cond_xp.nifti_fit import _fit_z_block, fit_dti_nifti, select_shell_nifti
 from dwi2cond_xp.tensor_fit import form_design_matrix
+from dwi2cond_xp.preprocessing.tensor_ops import decompose_tensor6
 
 
 def _gradients() -> tuple[np.ndarray, np.ndarray]:
@@ -87,6 +88,38 @@ def test_select_shell_rejects_bad_image_contract(tmp_path: Path) -> None:
         select_shell_nifti(paths["data"], paths["bvals"], paths["bvecs"], "x", "y", "z")
 
 
+def test_fit_rejects_implicit_multishell_input(tmp_path: Path) -> None:
+    paths, bvals, bvecs = _write_fixture(tmp_path)
+    extra = np.concatenate((bvals, np.full(6, 2000.0)))
+    extra_bvecs = np.vstack((bvecs, bvecs[2:8]))
+    image = nib.load(paths["data"])
+    values = np.asarray(image.dataobj)
+    expanded = np.concatenate((values, values[..., 2:8]), axis=3)
+    nib.save(nib.Nifti1Image(expanded, image.affine, image.header), paths["data"])
+    np.savetxt(paths["bvals"], extra[None, :])
+    np.savetxt(paths["bvecs"], extra_bvecs.T)
+    with pytest.raises(ValueError, match="select-shell"):
+        fit_dti_nifti(
+            paths["data"],
+            paths["bvals"],
+            paths["bvecs"],
+            paths["mask"],
+            tmp_path / "tensor.nii.gz",
+        )
+
+
+def test_dtifit_and_fslmaths_decomposition_keep_distinct_negative_tensor_semantics():
+    tensor = np.array([[-0.2e-3, 0.1e-3, 0.0, -0.5e-3, 0.0, -0.7e-3]])
+    dtifit = decompose_tensor6(tensor, semantics="dtifit")
+    fslmaths = decompose_tensor6(tensor, semantics="fslmaths")
+    assert dtifit["MD"][0] < 0
+    assert dtifit["FA"][0] > 0
+    assert np.max(np.abs(dtifit["V1"][0])) > 0
+    assert fslmaths["MD"][0] == 0
+    assert fslmaths["FA"][0] == 0
+    assert not np.any(fslmaths["V1"][0])
+
+
 def test_serial_fit_writes_custom_outputs_and_progress(tmp_path: Path) -> None:
     paths, _, _ = _write_fixture(tmp_path)
     progress: list[tuple[int, int, int]] = []
@@ -100,6 +133,7 @@ def test_serial_fit_writes_custom_outputs_and_progress(tmp_path: Path) -> None:
         paths["mask"],
         output,
         grad_dev_file=paths["grad"],
+        compatibility_mode="robust",
         workers=1,
         z_chunk=1,
         voxel_batch=1,
@@ -130,6 +164,7 @@ def test_fit_z_block_covers_invalid_and_empty_blocks(tmp_path: Path) -> None:
         0,
         1,
         1,
+        "robust",
     )
     assert block[6:] == (2, 1, 0, 0)
     assert block[5].sum() == 1
@@ -143,8 +178,111 @@ def test_fit_z_block_covers_invalid_and_empty_blocks(tmp_path: Path) -> None:
         1,
         2,
         2,
+        "robust",
     )
     assert empty[6:] == (0, 0, 0, 0)
+
+
+def test_strict_block_and_serial_paths_reject_fsl_abort_domains(tmp_path: Path) -> None:
+    paths, bvals, bvecs = _write_fixture(tmp_path)
+    selected = np.arange(bvals.size)
+
+    with pytest.raises(ValueError, match="only NaN"):
+        _fit_z_block(
+            str(paths["data"]),
+            str(paths["mask"]),
+            None,
+            selected,
+            bvals,
+            bvecs,
+            0,
+            1,
+            1,
+            "strict-fsl",
+        )
+    with pytest.raises(ValueError, match="compatibility_mode"):
+        _fit_z_block(
+            str(paths["data"]),
+            str(paths["mask"]),
+            None,
+            selected,
+            bvals,
+            bvecs,
+            0,
+            1,
+            1,
+            "unknown",
+        )
+
+    image = nib.load(paths["data"])
+    values = np.ones(image.shape, dtype=np.float32)
+    nib.save(nib.Nifti1Image(values, image.affine, image.header), paths["data"])
+    strict = _fit_z_block(
+        str(paths["data"]),
+        str(paths["mask"]),
+        None,
+        selected,
+        bvals,
+        bvecs,
+        0,
+        1,
+        1,
+        "strict-fsl",
+    )
+    assert strict[6] == 2
+
+    values[0, 0, 0, 0] = np.inf
+    nib.save(nib.Nifti1Image(values, image.affine, image.header), paths["data"])
+    with pytest.raises(ValueError, match="FSL dtifit aborts"):
+        _fit_z_block(
+            str(paths["data"]),
+            str(paths["mask"]),
+            None,
+            selected,
+            bvals,
+            bvecs,
+            0,
+            1,
+            1,
+            "strict-fsl",
+        )
+    with pytest.raises(ValueError, match="FSL dtifit aborts"):
+        fit_dti_nifti(
+            paths["data"],
+            paths["bvals"],
+            paths["bvecs"],
+            paths["mask"],
+            tmp_path / "inf-tensor.nii.gz",
+            compatibility_mode="strict-fsl",
+            workers=1,
+        )
+
+    values.fill(1.0)
+    values[0, 0, 0, :] = np.nan
+    nib.save(nib.Nifti1Image(values, image.affine, image.header), paths["data"])
+    with pytest.raises(ValueError, match="only NaN"):
+        fit_dti_nifti(
+            paths["data"],
+            paths["bvals"],
+            paths["bvecs"],
+            paths["mask"],
+            tmp_path / "nan-tensor.nii.gz",
+            compatibility_mode="strict-fsl",
+            workers=1,
+        )
+
+
+def test_nifti_fit_rejects_unknown_compatibility_mode(tmp_path: Path) -> None:
+    paths, _, _ = _write_fixture(tmp_path)
+    with pytest.raises(ValueError, match="compatibility_mode"):
+        fit_dti_nifti(
+            paths["data"],
+            paths["bvals"],
+            paths["bvecs"],
+            paths["mask"],
+            tmp_path / "tensor.nii.gz",
+            compatibility_mode="unknown",
+        )
 
 
 @pytest.mark.parametrize("bad_value", [0, -1])
@@ -203,6 +341,7 @@ def test_parallel_fit_reports_completed_blocks(tmp_path: Path) -> None:
         paths["mask"],
         output,
         workers=2,
+        compatibility_mode="robust",
         z_chunk=1,
         voxel_batch=1,
         progress=lambda done, total, z: progress.append((done, total, z)),

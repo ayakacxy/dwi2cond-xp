@@ -373,6 +373,7 @@ def test_eddy_nifti_writes_structured_fixed_subset_outputs(
             )
         ),
         outlier_free_scans=scans.copy(),
+        joint_mask=np.ones(scans.shape[:3], dtype=np.uint8),
         scale_factor=1.25,
         shell_pe_translation_mm=0.125,
         shell_alignment_parameters=np.arange(6, dtype=np.float64),
@@ -396,6 +397,7 @@ def test_eddy_nifti_writes_structured_fixed_subset_outputs(
     assert report["outlier_slices"] == 1
     assert nib.load(output / "corrected_dwi.nii.gz").shape == scans.shape
     assert nib.load(output / "outlier_free_data.nii.gz").shape == scans.shape
+    assert nib.load(output / "eddy_output_mask.nii.gz").shape == scans.shape[:3]
     assert np.loadtxt(output / "eddy_parameters.txt").shape == (4, 16)
     assert np.loadtxt(output / "rotated_bvecs").shape == (3, 4)
     assert np.loadtxt(output / "outlier_map.txt", dtype=np.uint8).sum() == 1
@@ -690,6 +692,10 @@ def test_eddy_reference_bvec_and_field_offset_contracts() -> None:
         movements, 0.1, common[0], common[1], 1
     )
     assert translated.shape == movements.shape
+    translated_z = eddy.apply_eddy_shell_pe_translation(
+        movements, 0.1, common[0], common[1], 2
+    )
+    assert translated_z.shape == movements.shape
 
 
 def test_eddy_nifti_rejects_all_header_and_table_errors(tmp_path: Path) -> None:
@@ -706,7 +712,7 @@ def test_eddy_nifti_rejects_all_header_and_table_errors(tmp_path: Path) -> None:
 
     common = (dwi, bvals, bvecs, mask, tmp_path / "out")
     for kwargs in (
-        {"readout_seconds": 0.05, "phase_encoding_direction": "z"},
+        {"readout_seconds": 0.05, "phase_encoding_direction": "bad"},
         {"readout_seconds": 0.0, "phase_encoding_direction": "y"},
         {"readout_seconds": 0.05, "phase_encoding_direction": "y", "workers": 0},
         {"readout_seconds": 0.05, "phase_encoding_direction": "y", "random_seed": -1},
@@ -729,10 +735,21 @@ def test_eddy_nifti_rejects_all_header_and_table_errors(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="share one affine"):
         run_eddy_nifti(dwi, bvals, bvecs, shifted_mask, tmp_path / "c", readout_seconds=0.05, phase_encoding_direction="y")
     np.savetxt(tmp_path / "short-bvals", np.asarray([[0, 1000]]))
-    with pytest.raises(ValueError, match="one value per"):
+    with pytest.raises(ValueError, match="different numbers"):
         run_eddy_nifti(dwi, tmp_path / "short-bvals", bvecs, mask, tmp_path / "d", readout_seconds=0.05, phase_encoding_direction="y")
-    np.savetxt(tmp_path / "bad-bvecs", np.ones((2, 3)))
-    with pytest.raises(ValueError, match=r"shape \(3, N\)"):
+    np.savetxt(tmp_path / "short-bvecs", np.asarray([[0, 1], [0, 0], [0, 0]]))
+    with pytest.raises(ValueError, match="one value per DWI volume"):
+        run_eddy_nifti(
+            dwi,
+            tmp_path / "short-bvals",
+            tmp_path / "short-bvecs",
+            mask,
+            tmp_path / "d2",
+            readout_seconds=0.05,
+            phase_encoding_direction="y",
+        )
+    np.savetxt(tmp_path / "bad-bvecs", np.ones((2, 2)))
+    with pytest.raises(ValueError, match="3xN or Nx3"):
         run_eddy_nifti(dwi, bvals, tmp_path / "bad-bvecs", mask, tmp_path / "e", readout_seconds=0.05, phase_encoding_direction="y")
     bad_field = tmp_path / "bad-field.nii.gz"
     nib.save(nib.Nifti1Image(np.ones((3, 2, 2)), affine), bad_field)
@@ -801,7 +818,7 @@ def test_eddy_transform_derivative_and_shell_contracts() -> None:
         lambda: eddy.estimate_eddy_shell_pe_translation(np.ones((3, 3, 3)), dwi, mask, mask, (2, 2, 2), 1),
         lambda: eddy.estimate_eddy_shell_pe_translation(b0, np.full_like(dwi, np.nan), mask, mask, (2, 2, 2), 1),
         lambda: eddy.estimate_eddy_shell_pe_translation(b0, dwi, np.ones((2, 2, 2)), mask, (2, 2, 2), 1),
-        lambda: eddy.estimate_eddy_shell_pe_translation(b0, dwi, mask, mask, (2, 2, 2), 2),
+        lambda: eddy.estimate_eddy_shell_pe_translation(b0, dwi, mask, mask, (2, 2, 2), 3),
         lambda: eddy.estimate_eddy_shell_pe_translation(b0, dwi, mask, mask, (2, 2, 2), 1, maximum_iterations=0),
         lambda: eddy.estimate_eddy_shell_rigid_alignment(np.ones((3, 3, 3)), dwi, mask, mask, (2, 2, 2)),
         lambda: eddy.estimate_eddy_shell_rigid_alignment(b0, np.full_like(dwi, np.nan), mask, mask, (2, 2, 2)),
@@ -810,7 +827,7 @@ def test_eddy_transform_derivative_and_shell_contracts() -> None:
         lambda: eddy.apply_eddy_shell_rigid_alignment(np.zeros((2, 5)), np.zeros(6), (3, 3, 3), (2, 2, 2)),
         lambda: eddy.apply_eddy_shell_rigid_alignment(np.zeros((2, 6)), np.zeros(5), (3, 3, 3), (2, 2, 2)),
         lambda: eddy.apply_eddy_shell_pe_translation(np.zeros((2, 5)), 0.0, (3, 3, 3), (2, 2, 2), 1),
-        lambda: eddy.apply_eddy_shell_pe_translation(np.zeros((2, 6)), 0.0, (3, 3, 3), (2, 2, 2), 2),
+        lambda: eddy.apply_eddy_shell_pe_translation(np.zeros((2, 6)), 0.0, (3, 3, 3), (2, 2, 2), 3),
     )
     for call in shell_errors:
         with pytest.raises(ValueError):
@@ -1002,6 +1019,7 @@ def test_complete_eddy_runner_covers_single_b0_serial_and_pe_alignment(
         align_shells_post_eddy=False,
     )
     assert result.corrected_scans.shape == scans.shape
+    assert np.array_equal(result.joint_mask, np.ones(scans.shape[:3], dtype=np.uint8))
 
 
 def test_outlier_volume_selection_and_restore_are_explicit() -> None:

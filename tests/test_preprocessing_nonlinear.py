@@ -671,11 +671,22 @@ def test_fold_singularity_and_masks_are_explicit():
         np.eye(4),
         displacement,
         reference_mask=reference_mask,
+        compatibility_mode="robust",
     )
     assert np.all(result.near_singular_mask)
     assert np.all(result.fold_mask)
     assert not np.any(result.valid_mask)
     assert not np.any(result.tensor)
+
+    with pytest.raises(ValueError, match="strict-fsl nonlinear PPD"):
+        resample_tensor_ppd_fsl(
+            tensor,
+            np.eye(4),
+            shape,
+            np.eye(4),
+            displacement,
+            reference_mask=reference_mask,
+        )
 
 
 def test_repeated_and_low_fa_are_reported_without_renaming_output():
@@ -728,6 +739,15 @@ def test_nonlinear_contract_rejects_invalid_inputs():
             np.eye(4),
             warp,
             reference_mask=np.ones((2, 2, 2)),
+        )
+    with pytest.raises(ValueError, match="compatibility_mode"):
+        resample_tensor_ppd_fsl(
+            tensor,
+            np.eye(4),
+            (3, 3, 3),
+            np.eye(4),
+            warp,
+            compatibility_mode="bad",
         )
 
 
@@ -1168,7 +1188,40 @@ def test_nonlinear_nifti_accepts_explicit_fnirt_coefficients(tmp_path):
         workers=2,
     )
     assert qa["warp_kind"] == "coefficients"
-    assert qa["jacobian_contract"] == "FNIRT analytic nonlinear spline Jacobian"
+
+
+def test_nonlinear_output_mask_matches_post_vecreg_source_order(tmp_path):
+    shape = (5, 4, 3)
+    tensor_file = tmp_path / "tensor.nii.gz"
+    reference_file = tmp_path / "reference.nii.gz"
+    warp_file = tmp_path / "warp.nii.gz"
+    output_mask_file = tmp_path / "T1_brainmask.nii.gz"
+    output_file = tmp_path / "registered.nii.gz"
+    mask = np.ones(shape, dtype=np.uint8)
+    mask[0] = 0
+    nib.save(nib.Nifti1Image(_diagonal_tensor(shape), np.eye(4)), tensor_file)
+    nib.save(nib.Nifti1Image(np.ones(shape), np.eye(4)), reference_file)
+    nib.save(nib.Nifti1Image(np.zeros(shape + (3,)), np.eye(4)), warp_file)
+    nib.save(nib.Nifti1Image(mask, np.eye(4)), output_mask_file)
+
+    qa = register_tensor_nonlinear_nifti(
+        tensor_file,
+        reference_file,
+        warp_file,
+        output_file,
+        output_mask_file=output_mask_file,
+        workers=2,
+    )
+
+    tensor = np.asarray(nib.load(output_file).dataobj)
+    valid = np.asarray(nib.load(tmp_path / "registered_valid_mask.nii.gz").dataobj)
+    fa = np.asarray(nib.load(tmp_path / "registered_FA.nii.gz").dataobj)
+    assert not np.any(tensor[0])
+    assert not np.any(valid[0])
+    assert not np.any(fa[0])
+    assert np.any(tensor[1:])
+    assert qa["output_mask_contract"].endswith("T1 brain mask")
+    assert qa["jacobian_contract"] == "finite-difference complete displacement"
     assert qa["jacobian_determinant_min"] == 1.0
     assert qa["jacobian_determinant_max"] == 1.0
     assert np.array_equal(np.asarray(nib.load(output_file).dataobj), tensor)
@@ -1289,6 +1342,14 @@ def test_nonlinear_nifti_rejects_all_file_contract_errors(tmp_path):
             warp_file,
             output_file,
             reference_mask_file=bad_mask,
+        )
+    with pytest.raises(ValueError, match="output mask"):
+        register_tensor_nonlinear_nifti(
+            tensor_file,
+            reference_file,
+            warp_file,
+            output_file,
+            output_mask_file=bad_mask,
         )
     with pytest.raises(ValueError, match="derivative_base"):
         register_tensor_nonlinear_nifti(

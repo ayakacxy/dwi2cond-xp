@@ -19,6 +19,7 @@ from ..nifti_fit import fit_dti_nifti
 from ._numba import set_available_numba_threads
 from .brain_mask import write_bet_brain_mask
 from .flirt_registration import register_flirt_nosearch_mutual_information
+from .fieldmap import run_fieldmap_nifti
 from .nomoco import _prepare_fitting_input, _write_masked_brain
 from .orientation import write_fsl_reoriented
 from .resampling import resample_image
@@ -271,6 +272,38 @@ def _save_nifti(values: np.ndarray, template: nib.spatialimages.SpatialImage, pa
     nib.save(image, str(path))
 
 
+def _replace_mask_with_corrected(
+    corrected_mask_file: str | Path,
+    reference_image: nib.spatialimages.SpatialImage,
+    output_file: Path,
+) -> None:
+    """验证并写入与 corrected DWI 同网格的场图 mask。"""
+
+    corrected_mask_image = nib.load(str(corrected_mask_file))
+    corrected_mask = np.asarray(corrected_mask_image.dataobj) != 0
+    if corrected_mask.shape != reference_image.shape[:3]:
+        raise ValueError("The corrected fieldmap mask must match the DWI grid")
+    if not np.allclose(
+        corrected_mask_image.affine,
+        reference_image.affine,
+        rtol=0.0,
+        atol=1.0e-5,
+    ):
+        raise ValueError("The corrected fieldmap mask affine must match the DWI grid")
+    mask_header = reference_image.header.copy()
+    mask_header.set_data_dtype(np.uint8)
+    mask_output = nib.Nifti1Image(
+        corrected_mask.astype(np.uint8), reference_image.affine, mask_header
+    )
+    mask_output.set_qform(
+        reference_image.get_qform(), int(reference_image.header["qform_code"])
+    )
+    mask_output.set_sform(
+        reference_image.get_sform(), int(reference_image.header["sform_code"])
+    )
+    nib.save(mask_output, str(output_file))
+
+
 def _load_displacement(
     displacement_file: str | Path, template: nib.spatialimages.SpatialImage
 ) -> np.ndarray:
@@ -296,11 +329,17 @@ def run_legacy_nifti(
     grad_dev_file: str | Path | None = None,
     bvec_mode: str = "compat46",
     fieldmap_displacement_file: str | Path | None = None,
-    shell: float = 1000.0,
+    fieldmap_corrected_mask_file: str | Path | None = None,
+    fieldmap_magnitude_file: str | Path | None = None,
+    fieldmap_radians_per_second_file: str | Path | None = None,
+    fieldmap_dwell_milliseconds: float | None = None,
+    fieldmap_phase_encoding_direction: str | None = None,
+    shell: float | None = None,
     tolerance: float = 100.0,
     z_chunk: int = 4,
     voxel_batch: int = 4096,
     workers: int = 8,
+    compatibility_mode: str = "strict-fsl",
     bet_backend: str = "optimized",
     max_evaluations: int = 1200,
     progress: LegacyProgress | None = None,
@@ -311,6 +350,27 @@ def run_legacy_nifti(
         raise ValueError("bvec_mode must be compat46 or corrected")
     if workers <= 0:
         raise ValueError("The worker count must be a positive integer")
+    prepared_fieldmap = (
+        fieldmap_displacement_file is not None
+        or fieldmap_corrected_mask_file is not None
+    )
+    raw_fieldmap_values = (
+        fieldmap_magnitude_file,
+        fieldmap_radians_per_second_file,
+        fieldmap_dwell_milliseconds,
+        fieldmap_phase_encoding_direction,
+    )
+    raw_fieldmap = any(value is not None for value in raw_fieldmap_values)
+    if raw_fieldmap and not all(value is not None for value in raw_fieldmap_values):
+        raise ValueError(
+            "raw fieldmap requires magnitude, radians-per-second field, dwell, and PE direction"
+        )
+    if raw_fieldmap and prepared_fieldmap:
+        raise ValueError("raw and prepared fieldmap inputs are mutually exclusive")
+    if prepared_fieldmap and (
+        fieldmap_displacement_file is None or fieldmap_corrected_mask_file is None
+    ):
+        raise ValueError("prepared fieldmap requires displacement and corrected mask")
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
     paths = {
@@ -372,6 +432,32 @@ def run_legacy_nifti(
     nodif = np.asarray(nib.load(str(paths["nodif"])).dataobj, dtype=np.float32)
     stage_seconds["nodif_and_mask"] = perf_counter() - started
 
+    fieldmap_report = None
+    if raw_fieldmap:
+        started = perf_counter()
+        fieldmap_output = output / "fieldmap"
+        fieldmap_report = run_fieldmap_nifti(
+            fieldmap_magnitude_file,
+            fieldmap_radians_per_second_file,
+            paths["nodif"],
+            fieldmap_output,
+            dwell_milliseconds=float(fieldmap_dwell_milliseconds),
+            phase_encoding_direction=str(fieldmap_phase_encoding_direction),
+            b0_mask_file=paths["mask"],
+            workers=workers,
+            bet_backend=bet_backend,
+            progress=(
+                None
+                if progress is None
+                else lambda phase, done, total: progress(
+                    f"fieldmap_{phase}", done, total
+                )
+            ),
+        )
+        fieldmap_displacement_file = fieldmap_output / "displacement_world_mm.nii.gz"
+        fieldmap_corrected_mask_file = fieldmap_output / "corrected_mask.nii.gz"
+        stage_seconds["prepare_fieldmap"] = perf_counter() - started
+
     started = perf_counter()
     raw_mean = _float32_mean(volumes, diffusion_indices)
     pass1, pass1_evaluations, pass1_costs = _register_mcflirt_series(
@@ -430,9 +516,8 @@ def run_legacy_nifti(
     )
     np.savetxt(paths["mean_transform"], mean_registration.matrix, fmt="%.10g")
     final_matrices = [mean_registration.matrix @ matrix for matrix in pass2]
-    direct_prefix_count = int(b0_indices[-1]) + 1
     direct_b0, b0_evaluations, b0_costs = _register_mcflirt_series(
-        volumes[:direct_prefix_count],
+        volumes,
         nodif,
         image.affine,
         degrees_of_freedom=6,
@@ -447,7 +532,6 @@ def run_legacy_nifti(
     displacement = None
     if fieldmap_displacement_file is not None:
         displacement = _load_displacement(fieldmap_displacement_file, image)
-
     started = perf_counter()
     corrected_volumes = _resample_series(
         volumes,
@@ -485,6 +569,12 @@ def run_legacy_nifti(
     if grad_dev_file is not None:
         normalized_grad_dev = output / "grad_dev.nii"
         write_fsl_reoriented(grad_dev_file, normalized_grad_dev, float32=True)
+    if fieldmap_corrected_mask_file is not None:
+        _replace_mask_with_corrected(
+            fieldmap_corrected_mask_file,
+            image,
+            paths["mask"],
+        )
     started = perf_counter()
     fit_dti_nifti(
         paths["dwi_for_fit"],
@@ -499,6 +589,7 @@ def run_legacy_nifti(
         z_chunk=z_chunk,
         voxel_batch=voxel_batch,
         workers=workers,
+        compatibility_mode=compatibility_mode,
         progress=(None if progress is None else lambda done, total, _z: progress("fit_dti", done, total)),
         valid_mask_file=paths["valid"],
         qa_file=paths["fit_qa"],
@@ -513,6 +604,7 @@ def run_legacy_nifti(
         "bvec_mode": bvec_mode,
         "bvec_contract": "copied_original" if bvec_mode == "compat46" else "finite_strain_rotated",
         "workers": workers,
+        "compatibility_mode": compatibility_mode,
         "input_shape": list(image.shape),
         "b0_indices": b0_indices.tolist(),
         "diffusion_indices": diffusion_indices.tolist(),
@@ -523,6 +615,10 @@ def run_legacy_nifti(
             "pass1_mean_only": "trilinear",
             "pass2_mean_only": "sinc",
             "fieldmap_composed_before_sampling": fieldmap_displacement_file is not None,
+            "fieldmap_corrected_mask_for_fit": fieldmap_corrected_mask_file is not None,
+            "fieldmap_input": "raw-radians-per-second" if raw_fieldmap else (
+                "prepared" if prepared_fieldmap else "none"
+            ),
         },
         "registration": {
             "pass1_dof": 6,
@@ -532,7 +628,7 @@ def run_legacy_nifti(
             "pass1_evaluations": pass1_evaluations,
             "pass2_evaluations": pass2_evaluations,
             "direct_b0_evaluations": b0_evaluations,
-            "direct_b0_evaluated_prefix_count": direct_prefix_count,
+            "direct_b0_evaluated_volume_count": len(volumes),
             "pass1_costs": pass1_costs,
             "pass2_costs": pass2_costs,
             "direct_b0_costs": b0_costs,
@@ -540,6 +636,7 @@ def run_legacy_nifti(
             "mean_to_nodif_evaluations": mean_registration.evaluations,
         },
         "stage_seconds": stage_seconds,
+        "fieldmap": fieldmap_report,
         "wall_seconds": perf_counter() - started_total,
         "artifacts": {
             "corrected_dwi": paths["corrected"].name,

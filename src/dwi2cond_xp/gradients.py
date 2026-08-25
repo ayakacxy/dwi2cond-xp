@@ -51,3 +51,28 @@ def select_dti_volumes(
     if np.count_nonzero(is_shell) < 6:
         raise ValueError("The target shell has fewer than six directions")
     return selected
+
+
+def validate_single_shell_volumes(
+    bvals: np.ndarray,
+    *,
+    b0_threshold: float = 0.0,
+    shell_tolerance: float = 100.0,
+) -> np.ndarray:
+    """验证官方调用者已准备好的单壳输入，并返回全部 volume。"""
+
+    values = np.asarray(bvals, dtype=np.float64).reshape(-1)
+    if b0_threshold < 0 or shell_tolerance <= 0:
+        raise ValueError("b0 threshold must be nonnegative and tolerance positive")
+    b0 = values <= b0_threshold
+    diffusion = values > b0_threshold
+    if np.count_nonzero(b0) == 0:
+        raise ValueError("No b=0 volume was found")
+    if np.count_nonzero(diffusion) < 6:
+        raise ValueError("The single-shell input has fewer than six directions")
+    shell_values = values[diffusion]
+    if float(np.max(shell_values) - np.min(shell_values)) > shell_tolerance:
+        raise ValueError(
+            "Multishell input is not accepted implicitly; run select-shell first"
+        )
+    return np.arange(values.size, dtype=np.int64)

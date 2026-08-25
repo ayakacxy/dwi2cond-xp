@@ -97,7 +97,7 @@ def test_nomoco_pipeline_matches_existing_fit_and_emits_no_correction_artifacts(
     )
 
     direct = tmp_path / "direct.nii.gz"
-    fitting_input = dwi if direct_mmap else output / "DWIforfit.nii"
+    fitting_input = output / "DWIforfit.nii"
     fit_dti_nifti(
         fitting_input,
         output / "DWIbvals",
@@ -118,7 +118,7 @@ def test_nomoco_pipeline_matches_existing_fit_and_emits_no_correction_artifacts(
             np.asarray(nib.load(tmp_path / f"direct_{suffix}.nii.gz").dataobj),
         )
     if direct_mmap:
-        assert not (output / "DWIforfit.nii").exists()
+        assert (output / "DWIforfit.nii").exists()
         assert report["fitting_input"]["strategy"] == "validated_input_mmap"
     else:
         assert np.min(np.asarray(nib.load(output / "DWIforfit.nii").dataobj)) == 0.0

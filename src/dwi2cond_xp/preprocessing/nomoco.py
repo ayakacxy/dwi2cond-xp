@@ -27,7 +27,7 @@ def _prepare_fitting_input(
     *,
     z_chunk: int = 8,
 ) -> tuple[Path, dict[str, object]]:
-    """Validate a directly mmap-able NIfTI, or materialize normalized input once."""
+    """验证可直接读取的原始 DWI，必要时只做无插值存储重排。"""
 
     source = Path(data_file)
     image = nib.load(str(source), mmap=True)
@@ -60,10 +60,9 @@ def _prepare_fitting_input(
                 break
             if np.any(block < 0):
                 nonnegative = False
-                break
         validation["finite"] = finite
         validation["nonnegative"] = nonnegative
-        if finite and nonnegative:
+        if finite:
             validation.update(
                 {
                     "strategy": "validated_input_mmap",
@@ -77,7 +76,7 @@ def _prepare_fitting_input(
         source,
         materialized_file,
         float32=True,
-        nonnegative=True,
+        nonnegative=False,
     )
     validation.update(
         {
@@ -125,12 +124,13 @@ def run_nomoco_nifti(
     output_directory: str | Path,
     *,
     grad_dev_file: str | Path | None = None,
-    shell: float = 1000.0,
+    shell: float | None = None,
     tolerance: float = 100.0,
-    b0_threshold: float = 50.0,
+    b0_threshold: float = 0.0,
     z_chunk: int = 4,
     voxel_batch: int = 4096,
     workers: int = 8,
+    compatibility_mode: str = "strict-fsl",
     bet_backend: str = "optimized",
     progress: NomocoProgress | None = None,
 ) -> dict[str, object]:
@@ -138,8 +138,7 @@ def run_nomoco_nifti(
 
     b0 registration is used only to construct the reference mean and brain mask;
     the diffusion volumes themselves receive no motion, eddy, or fieldmap correction.
-    Formal fitting input only applies FSL storage reordering, float32 conversion,
-    and truncation below zero.
+    原始 b0、BET 与配准均保留负值；只在所有校正完成后的拟合边界截零。
     """
 
     if workers <= 0:
@@ -147,6 +146,7 @@ def run_nomoco_nifti(
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
     paths = {
+        "materialized": output / "DWIraw.nii",
         "dwi_for_fit": output / "DWIforfit.nii",
         "bvals": output / "DWIbvals",
         "bvecs": output / "DWIbvecs",
@@ -168,7 +168,7 @@ def run_nomoco_nifti(
     started = perf_counter()
     fitting_input, input_strategy = _prepare_fitting_input(
         data_file,
-        paths["dwi_for_fit"],
+        paths["materialized"],
         z_chunk=max(8, z_chunk),
     )
     shutil.copyfile(bvals_file, paths["bvals"])
@@ -212,8 +212,14 @@ def run_nomoco_nifti(
         progress("brain_mask", 1, 1)
 
     started = perf_counter()
-    fit_dti_nifti(
+    write_fsl_reoriented(
         fitting_input,
+        paths["dwi_for_fit"],
+        float32=True,
+        nonnegative=True,
+    )
+    fit_dti_nifti(
+        paths["dwi_for_fit"],
         paths["bvals"],
         paths["bvecs"],
         paths["nodif_mask"],
@@ -225,6 +231,7 @@ def run_nomoco_nifti(
         z_chunk=z_chunk,
         voxel_batch=voxel_batch,
         workers=workers,
+        compatibility_mode=compatibility_mode,
         progress=(
             None
             if progress is None
@@ -250,8 +257,9 @@ def run_nomoco_nifti(
         "b0_qa": paths["b0_qa"].name,
         "fit_qa": paths["fit_qa"].name,
     }
+    artifacts["dwi_for_fit"] = paths["dwi_for_fit"].name
     if input_strategy["materialized"]:
-        artifacts["dwi_for_fit"] = paths["dwi_for_fit"].name
+        artifacts["raw_reoriented"] = paths["materialized"].name
     if normalized_grad_dev is not None:
         artifacts["grad_dev"] = normalized_grad_dev.name
     report: dict[str, object] = {
@@ -267,6 +275,7 @@ def run_nomoco_nifti(
         "shell": shell,
         "shell_tolerance": tolerance,
         "b0_threshold": b0_threshold,
+        "compatibility_mode": compatibility_mode,
         "fitting_input": input_strategy,
         "stage_seconds": stage_seconds,
         "total_seconds": sum(stage_seconds.values()),

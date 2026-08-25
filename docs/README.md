@@ -24,10 +24,14 @@
 
 ## Project status
 
-- [Roadmap](ROADMAP.md): post-`v0.2.0` priorities and explicit non-goals.
+- [Roadmap](ROADMAP.md): post-`v0.3.0` priorities and explicit non-goals.
 - [End-to-end performance feasibility report](DWI2COND_10X_PERFORMANCE_FEASIBILITY_REPORT.md):
-  quantitative `v0.3.0` planning, branch-specific budgets, and nonlinear
-  bottlenecks; it is not a completed performance claim.
+  historical performance planning, branch-specific budgets, and nonlinear
+  bottlenecks; the work is deferred to `v0.4.0+` and is not a completed claim.
+- [v0.2.0 algorithm audit](V0.2.0_ALGORITHM_AUDIT_REPORT_2026-08-25.md):
+  workflow and numerical defects that motivated the v0.3.0 correctness release.
+- [v0.3.0 remediation audit](V0.3.0_ALGORITHM_EQUIVALENCE_AUDIT_2026-08-26.md):
+  issue-by-issue disposition, supported subset, numerical checks, and release boundary.
 - [FSL subset reimplementation plan](FSL_SUBSET_REIMPLEMENTATION_PLAN.md): the
   completed P0--P11 implementation and acceptance ledger.
 - [Changelog](CHANGELOG.md): released and unreleased user-visible changes.

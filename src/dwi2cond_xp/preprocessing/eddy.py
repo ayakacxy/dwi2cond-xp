@@ -13,8 +13,10 @@ from time import perf_counter
 import numpy as np
 from numba import get_num_threads, njit, prange, set_num_threads, threading_layer
 
+from ..gradients import load_gradients
 from ._numba import set_available_numba_threads
 from .brain_mask import robust_intensity_limits
+from .orientation import write_fsl_reoriented
 from .topup import (
     _cubic_derivative_weight,
     _cubic_weight,
@@ -205,6 +207,7 @@ class EddyRunResult:
     rotated_bvecs: np.ndarray
     outlier_map: np.ndarray
     outlier_free_scans: np.ndarray | None
+    joint_mask: np.ndarray
     scale_factor: float
     shell_pe_translation_mm: float
     shell_alignment_parameters: np.ndarray
@@ -2117,8 +2120,8 @@ def estimate_eddy_shell_pe_translation(
         raise ValueError("b0 and DWI scans must be finite")
     if b0_mask.shape != b0_values.shape[:3] or dwi_mask.shape != b0_mask.shape:
         raise ValueError("joint masks must match the scan grid")
-    if phase_encoding_axis not in (0, 1):
-        raise ValueError("FSL post-EDDY shell alignment supports x or y PE")
+    if phase_encoding_axis not in (0, 1, 2):
+        raise ValueError("FSL post-EDDY shell alignment requires x, y, or z PE")
     if maximum_iterations < 1 or fractional_cost_tolerance <= 0.0:
         raise ValueError("Nelder-Mead limits must be positive")
     b0_mean = _mean_volumes_fsl_order(b0_values)
@@ -2352,8 +2355,8 @@ def apply_eddy_shell_pe_translation(
     movements = np.asarray(movement_parameters, dtype=np.float64)
     if movements.ndim != 2 or movements.shape[1] != 6:
         raise ValueError("movement_parameters must have shape (N, 6)")
-    if phase_encoding_axis not in (0, 1):
-        raise ValueError("FSL post-EDDY shell alignment supports x or y PE")
+    if phase_encoding_axis not in (0, 1, 2):
+        raise ValueError("FSL post-EDDY shell alignment requires x, y, or z PE")
     shell_parameters = np.zeros(6, dtype=np.float64)
     shell_parameters[phase_encoding_axis] = translation_mm
     return apply_eddy_shell_rigid_alignment(
@@ -3008,8 +3011,8 @@ def run_simnibs46_eddy(
         raise ValueError("brain_mask must be nonempty and match the scan grid")
     if workers < 1:
         raise ValueError("workers must be positive")
-    b0_indices = np.flatnonzero(shell_values <= 50.0)
-    dwi_indices = np.flatnonzero(shell_values > 50.0)
+    b0_indices = np.flatnonzero(shell_values <= 100.0)
+    dwi_indices = np.flatnonzero(shell_values > 100.0)
     if b0_indices.size == 0 or dwi_indices.size < 2:
         raise ValueError("the fixed subset requires at least one b0 and two DWI scans")
     positive_bvals = shell_values[dwi_indices]
@@ -3119,7 +3122,7 @@ def run_simnibs46_eddy(
         else scaled[..., dwi_indices]
     )
 
-    def resample_dwi(local_index: int) -> tuple[int, np.ndarray]:
+    def resample_dwi(local_index: int) -> tuple[int, np.ndarray, np.ndarray]:
         transformed = transform_eddy_scan_to_model(
             dwi_scan_space[..., local_index],
             dwi_movement[local_index],
@@ -3130,7 +3133,7 @@ def run_simnibs46_eddy(
             readout_seconds,
             susceptibility_field_hz=prepared_field,
         )
-        return local_index, transformed.values
+        return local_index, transformed.values, transformed.mask
 
     dwi_local_indices = tuple(range(dwi_indices.size))
     executor, previous_numba_threads = _create_numba_executor(
@@ -3144,8 +3147,12 @@ def run_simnibs46_eddy(
         )
     finally:
         _shutdown_numba_executor(executor, previous_numba_threads)
-    for completed, (local_index, corrected) in enumerate(resampled_dwi, start=1):
+    final_joint_mask = b0_result.joint_mask.copy()
+    for completed, (local_index, corrected, sampled_mask) in enumerate(
+        resampled_dwi, start=1
+    ):
         corrected_scaled[..., int(dwi_indices[local_index])] = corrected
+        final_joint_mask *= sampled_mask
         if progress is not None:
             progress("final_resampling", int(b0_indices.size) + completed, values.shape[3])
     if progress is not None and b0_indices.size:
@@ -3173,6 +3180,7 @@ def run_simnibs46_eddy(
         outlier_free = np.asarray(
             outlier_free_scaled / np.float32(scale_factor), dtype=np.float32
         )
+    corrected_scaled *= final_joint_mask[..., None]
     return EddyRunResult(
         np.asarray(corrected_scaled / np.float32(scale_factor), dtype=np.float32),
         movement,
@@ -3180,6 +3188,7 @@ def run_simnibs46_eddy(
         rotated,
         outlier_map,
         outlier_free,
+        final_joint_mask,
         scale_factor,
         shell_translation,
         shell_alignment,
@@ -3213,9 +3222,11 @@ def run_eddy_nifti(
         "x-": (0, -1),
         "y": (1, 1),
         "y-": (1, -1),
+        "z": (2, 1),
+        "z-": (2, -1),
     }
     if phase_encoding_direction not in directions:
-        raise ValueError("phase encoding direction must be x, x-, y, or y-")
+        raise ValueError("phase encoding direction must be x, x-, y, y-, z, or z-")
     if not np.isfinite(readout_seconds) or readout_seconds <= 0.0:
         raise ValueError("readout seconds must be positive and finite")
     if workers < 1:
@@ -3223,8 +3234,20 @@ def run_eddy_nifti(
     if random_seed < 0:
         raise ValueError("random seed must be nonnegative")
 
-    image = nib.load(str(dwi_file))
-    mask_image = nib.load(str(brain_mask_file))
+    output = Path(output_directory)
+    output.mkdir(parents=True, exist_ok=True)
+    prepared_dwi = write_fsl_reoriented(
+        dwi_file,
+        output / "DWIraw.nii",
+        float32=True,
+        nonnegative=False,
+    )
+    prepared_mask = write_fsl_reoriented(
+        brain_mask_file,
+        output / "nodif_brain_mask.nii.gz",
+    )
+    image = nib.load(str(prepared_dwi))
+    mask_image = nib.load(str(prepared_mask))
     scans = np.asarray(image.dataobj, dtype=np.float32)
     mask = np.asarray(mask_image.dataobj)
     if scans.ndim != 4:
@@ -3233,16 +3256,19 @@ def run_eddy_nifti(
         raise ValueError("brain mask must match the DWI spatial shape")
     if not np.allclose(image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6):
         raise ValueError("brain mask and DWI must share one affine")
-    bvals = np.asarray(np.loadtxt(bvals_file), dtype=np.float64).reshape(-1)
-    bvecs = np.atleast_2d(np.loadtxt(bvecs_file, dtype=np.float64))
+    bvals, loaded_bvecs = load_gradients(bvals_file, bvecs_file)
+    bvecs = loaded_bvecs.T
     if bvals.shape != (scans.shape[3],):
         raise ValueError("b-values must contain one value per DWI volume")
-    if bvecs.shape != (3, scans.shape[3]):
-        raise ValueError("b-vectors must have shape (3, N) matching the DWI")
 
     susceptibility_field: np.ndarray | None = None
     if susceptibility_field_file is not None:
-        field_image = nib.load(str(susceptibility_field_file))
+        prepared_field = write_fsl_reoriented(
+            susceptibility_field_file,
+            output / "susceptibility_field_hz.nii.gz",
+            float32=True,
+        )
+        field_image = nib.load(str(prepared_field))
         susceptibility_field = np.asarray(field_image.dataobj, dtype=np.float32)
         if susceptibility_field.shape != scans.shape[:3]:
             raise ValueError("susceptibility field must match the DWI spatial shape")
@@ -3272,13 +3298,17 @@ def run_eddy_nifti(
     )
     algorithm_seconds = perf_counter() - started
 
-    output = Path(output_directory)
-    output.mkdir(parents=True, exist_ok=True)
     float_header = image.header.copy()
     float_header.set_data_dtype(np.float32)
     nib.save(
         nib.Nifti1Image(result.corrected_scans, image.affine, float_header),
         output / "corrected_dwi.nii.gz",
+    )
+    mask_header = mask_image.header.copy()
+    mask_header.set_data_dtype(np.uint8)
+    nib.save(
+        nib.Nifti1Image(result.joint_mask.astype(np.uint8), image.affine, mask_header),
+        output / "eddy_output_mask.nii.gz",
     )
     if result.outlier_free_scans is not None:
         nib.save(
@@ -3339,7 +3369,9 @@ def run_eddy_nifti(
         "replace_outliers": replace_outliers,
         "align_shells_post_eddy": align_shells_post_eddy,
         "susceptibility_field": susceptibility_field is not None,
+        "raw_storage_reorientation": "fslreorient2std-compatible-no-interpolation",
         "outlier_slices": int(np.count_nonzero(result.outlier_map)),
+        "joint_mask_voxels": int(np.count_nonzero(result.joint_mask)),
         "scale_factor": result.scale_factor,
         "shell_pe_translation_mm": result.shell_pe_translation_mm,
         "shell_alignment_parameters": result.shell_alignment_parameters.tolist(),

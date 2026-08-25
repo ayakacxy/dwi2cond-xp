@@ -1,5 +1,11 @@
 # Validation
 
+The local `v0.3.0` correctness gate completed with `568 passed, 6 skipped` and
+`12,826/12,826` executable statements covered (`100.00%`), including cold-cache
+synthetic TOPUP, EDDY, and FNIRT/PPD E2E paths plus direct FSL 6.0.4 `dtifit`
+comparisons. Cross-platform CI and tag-release results remain pending until the
+v0.3.0 commit is pushed and the immutable tag workflow completes.
+
 ## Automated contracts
 
 Tests cover gradient conventions, weighted fitting, invalid voxels, the fixed

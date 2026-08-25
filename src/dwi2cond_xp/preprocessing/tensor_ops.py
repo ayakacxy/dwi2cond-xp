@@ -11,10 +11,11 @@ def decompose_tensor6(
     tensor: np.ndarray,
     valid: np.ndarray | None = None,
     *,
+    semantics: str = "fslmaths",
     requested: tuple[str, ...] | None = None,
     return_eigenvalue_range: bool = False,
 ) -> dict[str, np.ndarray] | tuple[dict[str, np.ndarray], tuple[float | None, float | None]]:
-    """Return FSL-style eigenvalue, eigenvector, FA, MD, and mode arrays."""
+    """按 ``fslmaths`` 或 ``dtifit`` 语义分解六分量张量。"""
 
     values = np.asarray(tensor)
     if values.ndim < 1 or values.shape[-1] != 6:
@@ -23,6 +24,8 @@ def decompose_tensor6(
     selected = np.ones(spatial_shape, dtype=bool) if valid is None else np.asarray(valid, dtype=bool)
     if selected.shape != spatial_shape:
         raise ValueError("The tensor validity mask must match the spatial shape")
+    if semantics not in {"fslmaths", "dtifit"}:
+        raise ValueError("semantics must be fslmaths or dtifit")
     available = {
         "FA", "MD", "MO", "L1", "L2", "L3", "V1", "V2", "V3"
     }
@@ -37,9 +40,12 @@ def decompose_tensor6(
     eigenvalues, eigenvectors = np.linalg.eigh(matrices)
     eigenvalues = eigenvalues[:, ::-1]
     eigenvectors = eigenvectors[:, :, ::-1]
-    # FSL writes decomposition results only when the largest eigenvalue is positive;
-    # all other voxels remain zero.
-    positive_l1 = eigenvalues[:, 0] > 0
+    # fslmaths 以最大特征值门控；dtifit 对掩膜内已拟合体素无条件写出。
+    write_values = (
+        eigenvalues[:, 0] > 0
+        if semantics == "fslmaths"
+        else np.ones(eigenvalues.shape[0], dtype=bool)
+    )
 
     mean = np.mean(eigenvalues, axis=1)
     denominator = np.sum(eigenvalues * eigenvalues, axis=1)
@@ -83,19 +89,19 @@ def decompose_tensor6(
         if suffix not in wanted:
             continue
         output = np.zeros(spatial_shape, dtype=np.float32)
-        output[selected] = np.where(positive_l1, selected_values, 0.0)
+        output[selected] = np.where(write_values, selected_values, 0.0)
         outputs[suffix] = output
     for index in range(3):
         scalar_name = f"L{index + 1}"
         vector_name = f"V{index + 1}"
         if scalar_name in wanted:
             scalar = np.zeros(spatial_shape, dtype=np.float32)
-            scalar[selected] = np.where(positive_l1, eigenvalues[:, index], 0.0)
+            scalar[selected] = np.where(write_values, eigenvalues[:, index], 0.0)
             outputs[scalar_name] = scalar
         if vector_name in wanted:
             vector = np.zeros(spatial_shape + (3,), dtype=np.float32)
             vector[selected] = np.where(
-                positive_l1[:, None], eigenvectors[:, :, index], 0.0
+                write_values[:, None], eigenvectors[:, :, index], 0.0
             )
             outputs[vector_name] = vector
     if not return_eigenvalue_range:

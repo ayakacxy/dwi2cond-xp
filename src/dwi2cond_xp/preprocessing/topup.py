@@ -20,6 +20,7 @@ from numba import get_num_threads, njit, prange, set_num_threads
 from scipy.sparse import csc_matrix
 
 from ._numba import set_available_numba_threads
+from .orientation import write_fsl_reoriented
 
 
 @dataclass(frozen=True)
@@ -2628,8 +2629,24 @@ def run_topup_nifti(
     }
     if phase_encoding_direction not in directions:
         raise ValueError("phase encoding direction must be x, x-, y, or y-")
-    forward_image = nib.load(str(forward_b0_file))
-    reverse_image = nib.load(str(reverse_b0_file))
+    source_forward = nib.load(str(forward_b0_file))
+    source_reverse = nib.load(str(reverse_b0_file))
+    if len(source_forward.shape) != 3 or len(source_reverse.shape) != 3:
+        raise ValueError("forward and reverse b0 images must share one 3D shape")
+    output = Path(output_directory)
+    output.mkdir(parents=True, exist_ok=True)
+    prepared_forward = write_fsl_reoriented(
+        forward_b0_file,
+        output / "forward_b0_reoriented.nii.gz",
+        float32=True,
+    )
+    prepared_reverse = write_fsl_reoriented(
+        reverse_b0_file,
+        output / "reverse_b0_reoriented.nii.gz",
+        float32=True,
+    )
+    forward_image = nib.load(str(prepared_forward))
+    reverse_image = nib.load(str(prepared_reverse))
     forward = np.asarray(forward_image.dataobj, dtype=np.float32)
     reverse = np.asarray(reverse_image.dataobj, dtype=np.float32)
     if forward.ndim != 3 or reverse.shape != forward.shape:
@@ -2658,8 +2675,6 @@ def run_topup_nifti(
         set_num_threads(previous_workers)
     algorithm_seconds = perf_counter() - started
 
-    output = Path(output_directory)
-    output.mkdir(parents=True, exist_ok=True)
     header = forward_image.header.copy()
     header.set_data_dtype(np.float32)
     nib.save(
@@ -2703,6 +2718,7 @@ def run_topup_nifti(
         "status": "complete",
         "algorithm": "SimNIBS-4.6-b02b0_nosubsamp-fixed-subset",
         "algorithm_seconds": algorithm_seconds,
+        "raw_storage_reorientation": "fslreorient2std-compatible-no-interpolation",
         "input_shape": list(forward.shape),
         "voxel_sizes_mm": list(voxel_sizes),
         "phase_encoding_direction": phase_encoding_direction,

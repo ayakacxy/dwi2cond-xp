@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dwi2cond-xp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Pure-Python FSL-subset preprocessing and DTI-to-conductivity workflows for SimNIBS 4.6"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"

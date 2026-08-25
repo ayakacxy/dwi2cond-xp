@@ -112,12 +112,17 @@ def _build_parser() -> argparse.ArgumentParser:
     fit.add_argument("mask")
     fit.add_argument("output")
     fit.add_argument("--grad-dev")
-    fit.add_argument("--shell", type=float, default=1000.0)
+    fit.add_argument("--shell", type=float)
     fit.add_argument("--tolerance", type=float, default=100.0)
-    fit.add_argument("--b0-threshold", type=float, default=50.0)
+    fit.add_argument("--b0-threshold", type=float, default=0.0)
     fit.add_argument("--z-chunk", type=int, default=4)
     fit.add_argument("--voxel-batch", type=int, default=4096)
     fit.add_argument("--workers", type=int, default=1)
+    fit.add_argument(
+        "--compatibility-mode",
+        choices=("strict-fsl", "robust"),
+        default="strict-fsl",
+    )
     fit.add_argument("--valid-mask-out")
     fit.add_argument("--qa-json")
     fit.add_argument(
@@ -135,12 +140,17 @@ def _build_parser() -> argparse.ArgumentParser:
     nomoco.add_argument("bvecs")
     nomoco.add_argument("output_directory")
     nomoco.add_argument("--grad-dev")
-    nomoco.add_argument("--shell", type=float, default=1000.0)
+    nomoco.add_argument("--shell", type=float)
     nomoco.add_argument("--tolerance", type=float, default=100.0)
-    nomoco.add_argument("--b0-threshold", type=float, default=50.0)
+    nomoco.add_argument("--b0-threshold", type=float, default=0.0)
     nomoco.add_argument("--z-chunk", type=int, default=4)
     nomoco.add_argument("--voxel-batch", type=int, default=4096)
     nomoco.add_argument("--workers", type=int, default=8)
+    nomoco.add_argument(
+        "--compatibility-mode",
+        choices=("strict-fsl", "robust"),
+        default="strict-fsl",
+    )
     nomoco.add_argument(
         "--bet-backend", choices=("reference", "optimized"), default="optimized"
     )
@@ -158,11 +168,24 @@ def _build_parser() -> argparse.ArgumentParser:
         "--bvec-mode", choices=("compat46", "corrected"), default="compat46"
     )
     legacy.add_argument("--fieldmap-displacement")
-    legacy.add_argument("--shell", type=float, default=1000.0)
+    legacy.add_argument("--fieldmap-corrected-mask")
+    legacy.add_argument("--fieldmap-magnitude")
+    legacy.add_argument("--fieldmap-radians-per-second")
+    legacy.add_argument("--fieldmap-dwell-ms", type=float)
+    legacy.add_argument(
+        "--fieldmap-phase-encoding-direction",
+        choices=("x", "x-", "y", "y-", "z", "z-"),
+    )
+    legacy.add_argument("--shell", type=float)
     legacy.add_argument("--tolerance", type=float, default=100.0)
     legacy.add_argument("--z-chunk", type=int, default=4)
     legacy.add_argument("--voxel-batch", type=int, default=4096)
     legacy.add_argument("--workers", type=int, default=8)
+    legacy.add_argument(
+        "--compatibility-mode",
+        choices=("strict-fsl", "robust"),
+        default="strict-fsl",
+    )
     legacy.add_argument(
         "--bet-backend", choices=("reference", "optimized"), default="optimized"
     )
@@ -268,7 +291,13 @@ def _build_parser() -> argparse.ArgumentParser:
     nonlinear.add_argument("reference")
     nonlinear.add_argument("affine_matrix")
     nonlinear.add_argument("output_directory")
+    nonlinear.add_argument("--brain-mask")
     nonlinear.add_argument("--workers", type=int, default=8)
+    nonlinear.add_argument(
+        "--compatibility-mode",
+        choices=("strict-fsl", "robust"),
+        default="strict-fsl",
+    )
     nonlinear.add_argument("--progress", choices=("tqdm", "off"), default="tqdm")
     pipeline_qa = subparsers.add_parser(
         "pipeline-qa",
@@ -315,27 +344,61 @@ def _build_parser() -> argparse.ArgumentParser:
     pipeline.add_argument(
         "--preprocessing-mode",
         choices=("nomoco", "legacy", "eddy"),
-        default="nomoco",
+        default="legacy",
     )
     pipeline.add_argument(
-        "--t1-mode", choices=("rigid", "affine", "nonlinear"), default="affine"
+        "--t1-mode", choices=("rigid", "affine", "nonlinear"), default="nonlinear"
     )
     pipeline.add_argument("--grad-dev")
     pipeline.add_argument("--dwi-brain-mask")
+    pipeline.add_argument("--reverse-phase-encoding")
     pipeline.add_argument("--susceptibility-field")
+    pipeline.add_argument("--fieldmap-corrected-mask")
+    pipeline.add_argument("--fieldmap-magnitude")
+    pipeline.add_argument("--fieldmap-radians-per-second")
+    pipeline.add_argument("--fieldmap-dwell-ms", type=float)
     pipeline.add_argument("--readout-seconds", type=float)
-    pipeline.add_argument("--phase-encoding-direction", choices=("x", "x-", "y", "y-"))
+    pipeline.add_argument(
+        "--phase-encoding-direction", choices=("x", "x-", "y", "y-", "z", "z-")
+    )
     pipeline.add_argument("--random-seed", type=int, default=1)
     pipeline.add_argument("--workers", type=int, default=8)
     pipeline.add_argument(
+        "--fit-compatibility-mode",
+        choices=("strict-fsl", "robust"),
+        default="strict-fsl",
+    )
+    pipeline.add_argument(
         "--fem-smoke", choices=("none", "dry-run", "run"), default="none"
     )
+    pipeline.add_argument("--no-publish-to-m2m", action="store_true")
     pipeline.add_argument(
         "--solver",
         choices=("pardiso", "hypre", "mumps", "petsc_pardiso"),
         default="pardiso",
     )
     pipeline.add_argument("--progress", choices=("tqdm", "off"), default="tqdm")
+    prefit_pipeline = subparsers.add_parser(
+        "run-prefit-pipeline",
+        help="Run the official pre-fitted tensor import, T1 registration, and FEM DAG",
+    )
+    prefit_pipeline.add_argument("tensor")
+    prefit_pipeline.add_argument("m2m_directory")
+    prefit_pipeline.add_argument("output_directory")
+    prefit_pipeline.add_argument(
+        "--t1-mode", choices=("rigid", "affine", "nonlinear"), default="nonlinear"
+    )
+    prefit_pipeline.add_argument("--workers", type=int, default=8)
+    prefit_pipeline.add_argument(
+        "--fem-smoke", choices=("none", "dry-run", "run"), default="none"
+    )
+    prefit_pipeline.add_argument("--no-publish-to-m2m", action="store_true")
+    prefit_pipeline.add_argument(
+        "--solver",
+        choices=("pardiso", "hypre", "mumps", "petsc_pardiso"),
+        default="pardiso",
+    )
+    prefit_pipeline.add_argument("--progress", choices=("tqdm", "off"), default="tqdm")
     conductivity = subparsers.add_parser(
         "tensor-to-mesh",
         help="Write a SimNIBS mesh with dir/vn/mc conductivity tensors",
@@ -536,6 +599,7 @@ def main(argv: list[str] | None = None) -> int:
                 z_chunk=args.z_chunk,
                 voxel_batch=args.voxel_batch,
                 workers=args.workers,
+                compatibility_mode=args.compatibility_mode,
                 bet_backend=args.bet_backend,
                 progress=report_nomoco,
             )
@@ -576,11 +640,19 @@ def main(argv: list[str] | None = None) -> int:
                 grad_dev_file=args.grad_dev,
                 bvec_mode=args.bvec_mode,
                 fieldmap_displacement_file=args.fieldmap_displacement,
+                fieldmap_corrected_mask_file=args.fieldmap_corrected_mask,
+                fieldmap_magnitude_file=args.fieldmap_magnitude,
+                fieldmap_radians_per_second_file=args.fieldmap_radians_per_second,
+                fieldmap_dwell_milliseconds=args.fieldmap_dwell_ms,
+                fieldmap_phase_encoding_direction=(
+                    args.fieldmap_phase_encoding_direction
+                ),
                 shell=args.shell,
                 tolerance=args.tolerance,
                 z_chunk=args.z_chunk,
                 voxel_batch=args.voxel_batch,
                 workers=args.workers,
+                compatibility_mode=args.compatibility_mode,
                 bet_backend=args.bet_backend,
                 max_evaluations=args.max_evaluations,
                 progress=report_legacy,
@@ -875,7 +947,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.reference,
                 args.affine_matrix,
                 args.output_directory,
+                brain_mask_file=args.brain_mask,
                 workers=args.workers,
+                compatibility_mode=args.compatibility_mode,
                 progress=report_fnirt,
             )
         finally:
@@ -963,12 +1037,15 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         return 0
-    if args.command == "run-pipeline":
+    if args.command in ("run-pipeline", "run-prefit-pipeline"):
         workflow_module = import_module(".preprocessing.workflow", __package__)
+        is_prefit = args.command == "run-prefit-pipeline"
         expected_stages = 3
-        if args.preprocessing_mode == "eddy":
+        if not is_prefit and args.preprocessing_mode == "eddy":
             expected_stages += 1
         if args.t1_mode == "nonlinear":
+            expected_stages += 1
+        if not args.no_publish_to_m2m:
             expected_stages += 1
         if args.fem_smoke != "none":
             expected_stages += 4
@@ -1113,28 +1190,62 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = workflow_module.run_dwi2cond_pipeline(
                 workflow_module.Dwi2CondPipelineConfig(
-                    data=Path(args.data),
-                    bvals=Path(args.bvals),
-                    bvecs=Path(args.bvecs),
+                    data=None if is_prefit else Path(args.data),
+                    bvals=None if is_prefit else Path(args.bvals),
+                    bvecs=None if is_prefit else Path(args.bvecs),
                     m2m_directory=Path(args.m2m_directory),
                     output_directory=Path(args.output_directory),
-                    preprocessing_mode=args.preprocessing_mode,
+                    prefit_tensor=Path(args.tensor) if is_prefit else None,
+                    preprocessing_mode=("prefit" if is_prefit else args.preprocessing_mode),
                     t1_mode=args.t1_mode,
-                    grad_dev=(None if args.grad_dev is None else Path(args.grad_dev)),
+                    grad_dev=(
+                        None
+                        if is_prefit or args.grad_dev is None
+                        else Path(args.grad_dev)
+                    ),
                     dwi_brain_mask=(
                         None
-                        if args.dwi_brain_mask is None
+                        if is_prefit or args.dwi_brain_mask is None
                         else Path(args.dwi_brain_mask)
+                    ),
+                    reverse_phase_encoding=(
+                        None
+                        if is_prefit or args.reverse_phase_encoding is None
+                        else Path(args.reverse_phase_encoding)
                     ),
                     susceptibility_field=(
                         None
-                        if args.susceptibility_field is None
+                        if is_prefit or args.susceptibility_field is None
                         else Path(args.susceptibility_field)
                     ),
-                    readout_seconds=args.readout_seconds,
-                    phase_encoding_direction=args.phase_encoding_direction,
-                    random_seed=args.random_seed,
+                    fieldmap_corrected_mask=(
+                        None
+                        if is_prefit or args.fieldmap_corrected_mask is None
+                        else Path(args.fieldmap_corrected_mask)
+                    ),
+                    fieldmap_magnitude=(
+                        None
+                        if is_prefit or args.fieldmap_magnitude is None
+                        else Path(args.fieldmap_magnitude)
+                    ),
+                    fieldmap_radians_per_second=(
+                        None
+                        if is_prefit or args.fieldmap_radians_per_second is None
+                        else Path(args.fieldmap_radians_per_second)
+                    ),
+                    fieldmap_dwell_milliseconds=(
+                        None if is_prefit else args.fieldmap_dwell_ms
+                    ),
+                    readout_seconds=None if is_prefit else args.readout_seconds,
+                    phase_encoding_direction=(
+                        None if is_prefit else args.phase_encoding_direction
+                    ),
+                    random_seed=1 if is_prefit else args.random_seed,
                     workers=args.workers,
+                    fit_compatibility_mode=(
+                        "strict-fsl" if is_prefit else args.fit_compatibility_mode
+                    ),
+                    publish_to_m2m=not args.no_publish_to_m2m,
                     fem_smoke=args.fem_smoke,
                     solver=args.solver,
                 ),
@@ -1317,6 +1428,7 @@ def main(argv: list[str] | None = None) -> int:
             z_chunk=args.z_chunk,
             voxel_batch=args.voxel_batch,
             workers=args.workers,
+            compatibility_mode=args.compatibility_mode,
             progress=report,
             valid_mask_file=args.valid_mask_out,
             qa_file=args.qa_json,

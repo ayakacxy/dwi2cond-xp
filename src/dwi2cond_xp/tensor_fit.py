@@ -13,6 +13,16 @@ def _validate_gradients(bvals: np.ndarray, bvecs: np.ndarray) -> tuple[np.ndarra
     return bvals, bvecs
 
 
+def _normalize_bvecs_fsl(bvecs: np.ndarray) -> np.ndarray:
+    """按 ``dtifit`` 的读取顺序单位化所有非零 b-vector。"""
+
+    vectors = np.asarray(bvecs, dtype=np.float64).copy()
+    norms = np.linalg.norm(vectors, axis=1)
+    nonzero = norms != 0.0
+    vectors[nonzero] /= norms[nonzero, None]
+    return vectors
+
+
 def _gradient_transform(grad_dev: np.ndarray) -> np.ndarray:
     """Construct I+L using the FSL grad_nonlin nine-component order."""
     grad_dev = np.asarray(grad_dev, dtype=np.float64)
@@ -43,6 +53,7 @@ def form_design_matrix(
     otherwise.
     """
     bvals, bvecs = _validate_gradients(bvals, bvecs)
+    bvecs = _normalize_bvecs_fsl(bvecs)
     if grad_dev is None:
         h = bvecs
         design = np.empty((bvals.size, 7), dtype=np.float64)
@@ -57,7 +68,7 @@ def form_design_matrix(
         return design
 
     transform = _gradient_transform(grad_dev)
-    # Normalizing directions and adjusting b preserves b*g*g from the transformed vector.
+    # 原始方向先按 dtifit 单位化；梯度非线性后的模长通过 b*g*g 自然保留。
     h = np.einsum("vij,nj->vni", transform, bvecs, optimize=True)
     scaled = bvals[None, :]
     design = np.empty((grad_dev.shape[0], bvals.size, 7), dtype=np.float64)
@@ -111,6 +122,7 @@ def fit_tensor_wls(
     bvecs: np.ndarray,
     grad_dev: np.ndarray | None = None,
     *,
+    compatibility_mode: str = "strict-fsl",
     return_sse: bool = False,
     return_metrics: bool = False,
 ) -> (
@@ -125,6 +137,8 @@ def fit_tensor_wls(
     float32 when writing NIfTI to match the FSL file contract.
     """
     signals = np.asarray(signals, dtype=np.float64)
+    if compatibility_mode not in {"strict-fsl", "robust"}:
+        raise ValueError("compatibility_mode must be strict-fsl or robust")
     if signals.ndim != 2:
         raise ValueError("signals must be VxN")
     bvals, bvecs = _validate_gradients(bvals, bvecs)
@@ -132,9 +146,14 @@ def fit_tensor_wls(
         raise ValueError("The signal-volume count does not match bvals/bvecs")
     if grad_dev is not None and np.asarray(grad_dev).shape != (signals.shape[0], 9):
         raise ValueError("grad_dev must contain the same number of voxels as signals")
-    if not np.all(np.isfinite(signals)):
-        raise ValueError("signals contain NaN or Inf")
-    if np.any(np.max(signals, axis=1) <= 0):
+    if compatibility_mode == "strict-fsl":
+        if np.any(np.isinf(signals)):
+            raise ValueError("strict-fsl rejects Inf because FSL dtifit aborts")
+        if np.any(np.all(np.isnan(signals), axis=1)):
+            raise ValueError("strict-fsl cannot fit a voxel containing only NaN")
+    elif not np.all(np.isfinite(signals)):
+        raise ValueError("robust fitting requires finite signals")
+    if compatibility_mode == "robust" and np.any(np.max(signals, axis=1) <= 0):
         raise ValueError("At least one fitted voxel has no positive signal")
 
     design = form_design_matrix(bvals, bvecs, grad_dev)
@@ -144,9 +163,17 @@ def fit_tensor_wls(
     np.log(signals, out=initial_log, where=positive)
     initial = _solve_wls(design, weights, initial_log)
 
-    max_signal = np.max(np.abs(signals), axis=1)
-    mean_signal = np.mean(signals, axis=1)
-    max_log = np.log(np.finfo(np.float64).max)
+    if compatibility_mode == "strict-fsl":
+        # NEWMAT 的 MaximumAbsoluteValue/Sum 会跳过 NaN；dtifit 随后把该次测量
+        # 当作非正信号，赋权 1 并用 0.01*S0 替换。
+        max_signal = np.nanmax(np.abs(signals), axis=1)
+        mean_signal = np.nanmean(signals, axis=1)
+    else:
+        max_signal = np.max(np.abs(signals), axis=1)
+        mean_signal = np.mean(signals, axis=1)
+    max_log = 23.0 if compatibility_mode == "strict-fsl" else np.log(
+        np.finfo(np.float64).max
+    )
     s0 = max_signal.copy()
     valid_s0 = initial[:, 6] > -max_log
     s0[valid_s0] = np.exp(-initial[valid_s0, 6])
@@ -167,7 +194,11 @@ def fit_tensor_wls(
         residual = np.einsum("vni,vi->vn", design, fitted) + robust_log
     sse = np.sum(residual * residual, axis=1)
     if return_metrics:
-        fitted_s0 = np.exp(np.clip(-fitted[:, 6], -max_log, max_log))
+        fitted_s0 = (
+            np.exp(-fitted[:, 6])
+            if compatibility_mode == "strict-fsl"
+            else np.exp(np.clip(-fitted[:, 6], -max_log, max_log))
+        )
         fitted_s0 = np.where(fitted_s0 < mean_signal, mean_signal, fitted_s0)
         return tensor, fitted_s0, sse
     return tensor, sse

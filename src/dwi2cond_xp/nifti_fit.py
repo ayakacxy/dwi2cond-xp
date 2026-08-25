@@ -11,7 +11,7 @@ import nibabel as nib
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from .gradients import load_gradients, select_dti_volumes
+from .gradients import load_gradients, select_dti_volumes, validate_single_shell_volumes
 from .preprocessing.tensor_ops import decompose_tensor6
 from .tensor_fit import fit_tensor_wls
 
@@ -48,7 +48,7 @@ def _save_derived_maps(
     """Generate FSL-style DTI QA derivatives from six-component tensors."""
     name = output_path.name
     base = name[:-7] if name.endswith(".nii.gz") else output_path.stem
-    outputs = decompose_tensor6(tensor, valid)
+    outputs = decompose_tensor6(tensor, valid, semantics="dtifit")
     outputs["S0"] = s0
     outputs["sse"] = sse
 
@@ -114,6 +114,7 @@ def _fit_z_block(
     z0: int,
     z1: int,
     voxel_batch: int,
+    compatibility_mode: str,
 ) -> tuple:
     """Independent worker entry point for z-block fitting."""
     data_img = nib.load(data_file, mmap=True)
@@ -131,7 +132,16 @@ def _fit_z_block(
     signals = data_chunk[mask_chunk][:, selected]
     finite = np.all(np.isfinite(signals), axis=1)
     has_positive = np.max(np.where(np.isfinite(signals), signals, -np.inf), axis=1) > 0
-    valid = finite & has_positive
+    if compatibility_mode == "strict-fsl":
+        if np.any(np.isinf(signals)):
+            raise ValueError("strict-fsl rejects Inf because FSL dtifit aborts")
+        if np.any(np.all(np.isnan(signals), axis=1)):
+            raise ValueError("strict-fsl cannot fit a voxel containing only NaN")
+        valid = np.ones(masked_count, dtype=bool)
+    elif compatibility_mode == "robust":
+        valid = finite & has_positive
+    else:
+        raise ValueError("compatibility_mode must be strict-fsl or robust")
     nonfinite_count = int(np.count_nonzero(~finite))
     all_nonpositive_count = int(np.count_nonzero(finite & ~has_positive))
     nonpositive_measurements = int(np.count_nonzero(np.isfinite(signals) & (signals <= 0)))
@@ -155,6 +165,7 @@ def _fit_z_block(
             selected_bvals,
             selected_bvecs,
             batch_grad,
+            compatibility_mode=compatibility_mode,
             return_metrics=True,
         )
         fitted_valid[start:stop] = batch_tensor.astype(np.float32)
@@ -191,22 +202,20 @@ def fit_dti_nifti(
     output_file: str | Path,
     *,
     grad_dev_file: str | Path | None = None,
-    shell: float = 1000.0,
+    shell: float | None = None,
     tolerance: float = 100.0,
-    b0_threshold: float = 50.0,
+    b0_threshold: float = 0.0,
     z_chunk: int = 4,
     voxel_batch: int = 4096,
     workers: int = 1,
+    compatibility_mode: str = "strict-fsl",
     progress: ProgressCallback | None = None,
     valid_mask_file: str | Path | None = None,
     qa_file: str | Path | None = None,
 ) -> Path:
-    """Fit a NIfTI in z-blocks and write tensor, validity mask, and QA JSON.
-
-    Masked voxels containing NaN/Inf or no positive selected measurement are
-    excluded. Their tensor is set to zero and recorded in the mask and QA JSON,
-    preventing FSL-style NaN/Inf output.
-    """
+    """分块拟合 NIfTI，并显式记录 strict-FSL 或 robust 输入合同。"""
+    if compatibility_mode not in {"strict-fsl", "robust"}:
+        raise ValueError("compatibility_mode must be strict-fsl or robust")
     if z_chunk <= 0 or voxel_batch <= 0 or workers <= 0:
         raise ValueError("z_chunk, voxel_batch, and workers must be positive integers")
     data_img = nib.load(str(data_file))
@@ -229,11 +238,19 @@ def fit_dti_nifti(
     bvals, bvecs = load_gradients(bvals_file, bvecs_file)
     if bvals.size != data_img.shape[3]:
         raise ValueError("The DWI fourth axis does not match bvals/bvecs")
-    selected = select_dti_volumes(
-        bvals,
-        shell=shell,
-        tolerance=tolerance,
-        b0_threshold=b0_threshold,
+    selected = (
+        validate_single_shell_volumes(
+            bvals,
+            b0_threshold=b0_threshold,
+            shell_tolerance=tolerance,
+        )
+        if shell is None
+        else select_dti_volumes(
+            bvals,
+            shell=shell,
+            tolerance=tolerance,
+            b0_threshold=b0_threshold,
+        )
     )
     selected_bvals = bvals[selected]
     selected_bvecs = bvecs[selected]
@@ -265,6 +282,7 @@ def fit_dti_nifti(
                     z0,
                     z1,
                     voxel_batch,
+                    compatibility_mode,
                 ): (z0, z1)
                 for z0, z1 in blocks
             }
@@ -311,6 +329,7 @@ def fit_dti_nifti(
             valid_output,
             s0_output,
             sse_output,
+            compatibility_mode,
         )
 
     header = data_img.header.copy()
@@ -355,6 +374,7 @@ def fit_dti_nifti(
         "all_nonpositive_voxels": all_nonpositive_voxels,
         "nonpositive_measurements": nonpositive_measurements,
         "invalid_tensor_value": 0.0,
+        "compatibility_mode": compatibility_mode,
         "tensor_component_order": ["Dxx", "Dxy", "Dxz", "Dyy", "Dyz", "Dzz"],
         "valid_mask": str(valid_mask_path),
         "derived_outputs": derived_paths,
@@ -379,6 +399,7 @@ def _fit_dti_nifti_serial(
     valid_output: np.ndarray,
     s0_output: np.ndarray,
     sse_output: np.ndarray,
+    compatibility_mode: str,
 ) -> tuple[int, int, int]:
     """Retain the single-process reference path."""
     processed = 0
@@ -392,13 +413,21 @@ def _fit_dti_nifti_serial(
             if progress is not None:
                 progress(processed, total_masked, z1)
             continue
+        masked_count = int(np.count_nonzero(mask_chunk))
 
         # Arbitrary time indexing is costly for gzip NIfTI; read a z-block then select volumes.
         data_chunk = np.asanyarray(data_img.dataobj[:, :, z0:z1, :], dtype=np.float32)
         signals = data_chunk[mask_chunk][:, selected]
         finite = np.all(np.isfinite(signals), axis=1)
         has_positive = np.max(np.where(np.isfinite(signals), signals, -np.inf), axis=1) > 0
-        valid = finite & has_positive
+        if compatibility_mode == "strict-fsl":
+            if np.any(np.isinf(signals)):
+                raise ValueError("strict-fsl rejects Inf because FSL dtifit aborts")
+            if np.any(np.all(np.isnan(signals), axis=1)):
+                raise ValueError("strict-fsl cannot fit a voxel containing only NaN")
+            valid = np.ones(masked_count, dtype=bool)
+        else:
+            valid = finite & has_positive
         nonfinite_voxels += int(np.count_nonzero(~finite))
         all_nonpositive_voxels += int(np.count_nonzero(finite & ~has_positive))
         nonpositive_measurements += int(np.count_nonzero(np.isfinite(signals) & (signals <= 0)))
@@ -421,6 +450,7 @@ def _fit_dti_nifti_serial(
                 selected_bvals,
                 selected_bvecs,
                 batch_grad,
+                compatibility_mode=compatibility_mode,
                 return_metrics=True,
             )
             fitted_valid[start:stop] = batch_tensor.astype(np.float32)

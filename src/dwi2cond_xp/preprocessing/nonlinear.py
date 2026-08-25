@@ -228,6 +228,7 @@ def resample_tensor_ppd_fsl(
     singular_tolerance: float = 1e-8,
     repeated_eigenvalue_tolerance: float = 1e-8,
     low_fa_threshold: float = 0.05,
+    compatibility_mode: str = "strict-fsl",
 ) -> NonlinearTensorResult:
     """Resample an FSL tensor through a dense FNIRT warp and apply PPD.
 
@@ -256,6 +257,8 @@ def resample_tensor_ppd_fsl(
         raise ValueError(
             "eigenvalue tolerance must be positive and FA threshold nonnegative"
         )
+    if compatibility_mode not in ("strict-fsl", "robust"):
+        raise ValueError("compatibility_mode must be strict-fsl or robust")
 
     if source_mask is None:
         source_valid = np.any(values[..., :3] != 0.0, axis=-1)
@@ -333,9 +336,22 @@ def resample_tensor_ppd_fsl(
     rotation, ppd_stable = _ppd_rotation(
         forward, eigenvectors, singular_tolerance=singular_tolerance
     )
+    active_support = target_valid & sampled_source_mask.reshape(target_shape)
+    unsafe = active_support & (
+        ~finite_tensor
+        | fold
+        | near_singular
+        | ppd_fold
+        | ppd_near_singular
+        | ~ppd_stable
+    )
+    if compatibility_mode == "strict-fsl" and np.any(unsafe):
+        raise ValueError(
+            "strict-fsl nonlinear PPD encountered an invalid tensor or Jacobian; "
+            "use robust mode only when explicit zero-filling is intended"
+        )
     valid = (
-        target_valid
-        & sampled_source_mask.reshape(target_shape)
+        active_support
         & finite_tensor
         & ~fold
         & ~near_singular
@@ -375,6 +391,7 @@ def register_tensor_nonlinear_nifti(
     *,
     source_mask_file: str | Path | None = None,
     reference_mask_file: str | Path | None = None,
+    output_mask_file: str | Path | None = None,
     warp_kind: str = "displacement",
     affine_matrix_file: str | Path | None = None,
     knot_spacing: tuple[int, int, int] | None = None,
@@ -382,6 +399,7 @@ def register_tensor_nonlinear_nifti(
     final_subsampling: int = 2,
     workers: int = 8,
     derivative_base: str | None = None,
+    compatibility_mode: str = "strict-fsl",
 ) -> dict[str, object]:
     """Apply a dense or coefficient FNIRT warp and write tensor derivatives."""
 
@@ -453,6 +471,17 @@ def register_tensor_nonlinear_nifti(
         ):
             raise ValueError("The reference mask must match the reference grid")
         reference_mask = np.asarray(reference_mask_image.dataobj) > 0
+    output_mask = None
+    if output_mask_file is not None:
+        output_mask_image = nib.load(str(output_mask_file))
+        if output_mask_image.shape != reference_image.shape or not np.allclose(
+            output_mask_image.affine,
+            reference_image.affine,
+            rtol=0.0,
+            atol=1e-5,
+        ):
+            raise ValueError("The output mask must match the reference grid")
+        output_mask = np.asarray(output_mask_image.dataobj) > 0
     loaded_at = time.perf_counter()
     result = resample_tensor_ppd_fsl(
         tensor,
@@ -462,6 +491,7 @@ def register_tensor_nonlinear_nifti(
         displacement,
         source_mask=source_mask,
         reference_mask=reference_mask,
+        compatibility_mode=compatibility_mode,
     )
     output_jacobian = (
         result.backward_jacobian_determinant
@@ -469,9 +499,16 @@ def register_tensor_nonlinear_nifti(
         else analytic_jacobian
     )
     warped_at = time.perf_counter()
+    output_tensor = result.tensor
+    output_valid_mask = result.valid_mask
+    if output_mask is not None:
+        # 原始 dwi2cond 在 vecreg 完成后、tensor_decomp 前应用 T1 brain mask。
+        output_tensor = result.tensor.copy()
+        output_tensor[~output_mask] = 0.0
+        output_valid_mask = result.valid_mask & output_mask
     derived = decompose_tensor6(
-        result.tensor,
-        result.valid_mask,
+        output_tensor,
+        output_valid_mask,
         requested=("FA", "V1"),
     )
     decomposed_at = time.perf_counter()
@@ -509,8 +546,8 @@ def register_tensor_nonlinear_nifti(
         nib.save(image, str(path))
 
     output_values = (
-        (result.tensor, paths["tensor"], np.dtype(np.float32)),
-        (result.valid_mask, paths["valid_mask"], np.dtype(np.uint8)),
+        (output_tensor, paths["tensor"], np.dtype(np.float32)),
+        (output_valid_mask, paths["valid_mask"], np.dtype(np.uint8)),
         (
             output_jacobian,
             paths["jacobian"],
@@ -536,15 +573,21 @@ def register_tensor_nonlinear_nifti(
         "jacobian_contract": jacobian_contract,
         "tensor_component_order": ["Dxx", "Dxy", "Dxz", "Dyy", "Dyz", "Dzz"],
         "reorientation": "FSL vecreg preservation-of-principal-direction",
+        "compatibility_mode": compatibility_mode,
+        "output_mask_contract": (
+            "none"
+            if output_mask is None
+            else "SimNIBS dwi2cond post-vecreg T1 brain mask"
+        ),
         "workers": int(workers),
         "input_shape": list(tensor_image.shape),
-        "output_shape": list(result.tensor.shape),
-        "valid_voxels": int(np.count_nonzero(result.valid_mask)),
+        "output_shape": list(output_tensor.shape),
+        "valid_voxels": int(np.count_nonzero(output_valid_mask)),
         "fold_voxels": int(np.count_nonzero(result.fold_mask)),
         "near_singular_voxels": int(np.count_nonzero(result.near_singular_mask)),
-        "low_fa_voxels": int(np.count_nonzero(result.low_fa_mask & result.valid_mask)),
+        "low_fa_voxels": int(np.count_nonzero(result.low_fa_mask & output_valid_mask)),
         "repeated_eigenvalue_voxels": int(
-            np.count_nonzero(result.repeated_eigenvalue_mask & result.valid_mask)
+            np.count_nonzero(result.repeated_eigenvalue_mask & output_valid_mask)
         ),
         "invalid_tensor_voxels": int(np.count_nonzero(result.invalid_tensor_mask)),
         "jacobian_determinant_min": (
@@ -579,7 +622,9 @@ def register_tensor_fnirt_nifti(
     affine_matrix_file: str | Path,
     output_directory: str | Path,
     *,
+    brain_mask_file: str | Path | None = None,
     workers: int = 8,
+    compatibility_mode: str = "strict-fsl",
     progress: Callable[[int, str, int, int, float | None], None] | None = None,
 ) -> dict[str, object]:
     """Estimate the fixed FNIRT warp and run the SimNIBS tensor branch."""
@@ -716,7 +761,9 @@ def register_tensor_fnirt_nifti(
         warp_kind="coefficients",
         affine_matrix_file=affine_matrix_file,
         knot_spacing=result.expansion.knot_spacing,
+        output_mask_file=brain_mask_file,
         workers=workers,
+        compatibility_mode=compatibility_mode,
         derivative_base="DTI_coregT1",
     )
     completed_at = time.perf_counter()
@@ -727,6 +774,7 @@ def register_tensor_fnirt_nifti(
         "mode": "nonlinear",
         "algorithm": "SimNIBS 4.6 fixed FNIRT plus FSL vecreg PPD",
         "fallback": "none",
+        "compatibility_mode": compatibility_mode,
         "workers": int(workers),
         "displacement_knot_spacing": list(result.expansion.knot_spacing),
         "levels": [

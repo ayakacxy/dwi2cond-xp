@@ -57,6 +57,49 @@ def test_grad_dev_matches_explicit_transformed_gradients():
     assert np.allclose(actual, expected, rtol=0, atol=1e-12)
 
 
+def test_design_matrix_normalizes_nonzero_bvecs_like_dtifit():
+    bvals = np.array([0.0, 1000.0, 1000.0])
+    unit = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    scaled = unit * np.array([[1.0], [0.8], [1.2]])
+    assert np.array_equal(
+        form_design_matrix(bvals, scaled), form_design_matrix(bvals, unit)
+    )
+
+
+def test_strict_fsl_fits_all_nonpositive_signals_like_dtifit():
+    bvals, bvecs = _gradient_fixture()
+    signals = -np.arange(1, bvals.size + 1, dtype=np.float64)[None, :]
+
+    tensor, s0, sse = fit_tensor_wls(
+        signals,
+        bvals,
+        bvecs,
+        compatibility_mode="strict-fsl",
+        return_metrics=True,
+    )
+
+    assert np.max(np.abs(tensor)) < 1.0e-15
+    assert s0[0] == pytest.approx(0.01, abs=1.0e-12)
+    assert sse[0] < 1.0e-24
+
+
+def test_strict_fsl_treats_nan_as_nonpositive_and_rejects_inf_abort_case():
+    bvals, bvecs = _gradient_fixture()
+    design = form_design_matrix(bvals, bvecs)
+    expected = np.array([1.4e-3, 8e-5, -4e-5, 7e-4, 6e-5, 4e-4])
+    signal = np.exp(-(design[:, :6] @ expected - np.log(1000.0)))
+    signal[3] = np.nan
+    tensor = fit_tensor_wls(signal[None], bvals, bvecs)
+    assert np.all(np.isfinite(tensor))
+    assert np.allclose(tensor[0], expected, rtol=3e-5, atol=3e-8)
+
+    signal[3] = np.inf
+    with pytest.raises(ValueError, match="FSL dtifit aborts"):
+        fit_tensor_wls(signal[None], bvals, bvecs)
+    with pytest.raises(ValueError, match="only NaN"):
+        fit_tensor_wls(np.full((1, bvals.size), np.nan), bvals, bvecs)
+
+
 def test_metrics_and_sse_paths_are_consistent():
     bvals, bvecs = _gradient_fixture()
     expected = np.array([1.5e-3, 1.0e-4, -5.0e-5, 7.0e-4, 8.0e-5, 4.0e-4])
@@ -78,13 +121,24 @@ def test_metrics_and_sse_paths_are_consistent():
         (np.ones((1, 3)), np.ones(3), np.ones((2, 3)), None, "bvecs must be"),
         (np.ones((1, 2)), np.ones(3), np.ones((3, 3)), None, "signal-volume"),
         (np.ones((1, 3)), np.ones(3), np.ones((3, 3)), np.zeros((2, 9)), "same number"),
-        (np.array([[1.0, np.nan, 1.0]]), np.ones(3), np.ones((3, 3)), None, "NaN or Inf"),
+        (np.array([[1.0, np.nan, 1.0]]), np.ones(3), np.ones((3, 3)), None, "finite signals"),
         (np.zeros((1, 3)), np.ones(3), np.ones((3, 3)), None, "no positive"),
     ],
 )
 def test_fit_rejects_invalid_contracts(signals, bvals, bvecs, grad, message):
     with pytest.raises(ValueError, match=message):
-        fit_tensor_wls(signals, bvals, bvecs, grad)
+        fit_tensor_wls(signals, bvals, bvecs, grad, compatibility_mode="robust")
+
+
+def test_fit_rejects_unknown_compatibility_mode():
+    bvals, bvecs = _gradient_fixture()
+    with pytest.raises(ValueError, match="compatibility_mode"):
+        fit_tensor_wls(
+            np.ones((1, bvals.size)),
+            bvals,
+            bvecs,
+            compatibility_mode="unknown",
+        )
 
 
 def test_design_and_solver_reject_invalid_shapes():

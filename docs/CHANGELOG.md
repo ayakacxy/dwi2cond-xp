@@ -5,6 +5,52 @@ versions follow semantic versioning.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-26
+
+### Fixed
+
+- Corrected the complete EDDY DAG to fit the registered
+  `corrected_dwi.nii.gz`, apply the all-volume output mask, and perform the
+  official final nonnegative threshold only after geometric correction.
+- Applied the T1 brain mask after nonlinear PPD reorientation and derived the
+  final tensor, FA, V1, and validity mask from the masked tensor.
+- Made the legacy GRE path consume the corrected fieldmap mask as an atomic
+  displacement/mask contract, including an end-to-end raw rad/s fieldmap path.
+- Restored the SimNIBS 4.6 DIR/MC zero-tensor ordering so zero support cannot
+  distort global conductivity intensity calibration.
+- Normalized nonzero b-vectors like FSL `dtifit`, separated `dtifit` and
+  `fslmaths -tensor_decomp` output semantics, and added strict FSL edge-case
+  behavior for nonpositive and NaN signals.
+- Added canonical raw storage reorientation to EDDY, TOPUP, and fieldmap
+  inputs; EDDY now accepts both b-vector layouts and x/y/z phase encoding when
+  TOPUP is not used.
+- Added the official reverse-PE 4-D preparation, TOPUP corrected-b0 BET mask,
+  and TOPUP-to-EDDY combined workflow.
+- Restored the full-volume legacy direct-b0 registration sequence, the FSL
+  EDDY b0 threshold of 100, the official legacy/nonlinear defaults, and
+  explicit rejection of multishell input at the strict fitting boundary.
+- Added pre-fitted tensor import, atomic publication to the standard m2m tensor
+  path with SHA-256 provenance, and stage-dependent CHARM/FEM input checks.
+- Split strict-FSL and robust failure semantics for fitting and nonlinear PPD;
+  neither mode silently changes or falls back to the other.
+
+### Added
+
+- Added `run-prefit-pipeline` and a complete reverse-PE `run-pipeline` branch.
+- Added a versioned v0.2.0 algorithm audit and a v0.3.0 remediation/equivalence
+  audit with an explicit supported-input boundary.
+- Added direct local FSL 6.0.4 regression tests for standard WLS,
+  gradient-nonlinearity, non-unit b-vectors, all-nonpositive signals, and NaN
+  inputs.
+
+### Changed
+
+- Repositioned v0.3.0 as a correctness and official-flow remediation release.
+  The previously planned acceleration cycle is deferred to v0.4.0 or later.
+- Clarified that the supported GRE input is already-unwrapped radians per
+  second. Wrapped phase/PRELUDE and interactive mesh QA are outside the fixed
+  runtime subset and are not presented as implemented.
+
 ### Documentation
 
 - Added clickable contents near the top of both README entry pages.

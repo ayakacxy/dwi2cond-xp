@@ -262,6 +262,7 @@ def _run_t1_registration_nifti_impl(
     sse_file: str | Path | None = None,
     degrees_of_freedom: int = 12,
     workers: int = 8,
+    register_tensor_output: bool = True,
     progress: ProgressCallback | None = None,
 ) -> dict[str, object]:
     """Run the SimNIBS 4.6 rigid/affine T1 registration and QA output pipeline."""
@@ -346,7 +347,13 @@ def _run_t1_registration_nifti_impl(
     np.savetxt(output / "FA2T1_QA.mat", qa_registration.matrix, fmt="%.10g")
 
     tensor_output = output / "DTI_coregT1_tensor.nii.gz"
-    tensor_metrics: dict[str, object] = {}
+    tensor_metrics: dict[str, object] = {
+        "decomposition_seconds": 0.0,
+        "derived_write_seconds": 0.0,
+        "eigenvalue_range": (None, None),
+        "valid_voxels": 0,
+        "finite_tensor_components": 0,
+    }
 
     def consume_registered_tensor(tensor: np.ndarray, valid: np.ndarray) -> None:
         """Decompose the same read-only memory array while the main tensor is compressed."""
@@ -394,26 +401,27 @@ def _run_t1_registration_nifti_impl(
             sse_file,
         )
         tensor_registration_started = time.perf_counter()
-        register_tensor_affine(
-            tensor_file,
-            prepared["t1_brain"],
-            tensor_output,
-            world_transform=primary_world,
-            source_mask_mode="fsl-vecreg",
-            reference_mask_file=prepared["brain_mask"],
-            output_valid_mask_file=output / "DTI_coregT1_valid_mask.nii.gz",
-            qa_file=output / "DTI_coregT1_tensor_registration_qa.json",
-            interpolation_order=1,
-            reorientation_transform=primary.matrix,
-            workers=workers,
-            alignment_assumption=f"automatic_flirt_{degrees_of_freedom}dof",
-            prepared_consumer=consume_registered_tensor,
-        )
+        if register_tensor_output:
+            register_tensor_affine(
+                tensor_file,
+                prepared["t1_brain"],
+                tensor_output,
+                world_transform=primary_world,
+                source_mask_mode="fsl-vecreg",
+                reference_mask_file=prepared["brain_mask"],
+                output_valid_mask_file=output / "DTI_coregT1_valid_mask.nii.gz",
+                qa_file=output / "DTI_coregT1_tensor_registration_qa.json",
+                interpolation_order=1,
+                reorientation_transform=primary.matrix,
+                workers=workers,
+                alignment_assumption=f"automatic_flirt_{degrees_of_freedom}dof",
+                prepared_consumer=consume_registered_tensor,
+            )
         tensor_registered_at = time.perf_counter()
         derived_saved_at = tensor_registered_at
         registered_fa, registered_sse, qa_resample_seconds = qa_images_future.result()
         qa_collected_at = time.perf_counter()
-    if progress is not None:
+    if progress is not None and register_tensor_output:
         progress("tensor", 1, 1)
 
     brain_mask = np.asarray(nib.load(str(prepared["brain_mask"])).dataobj) > 0
@@ -470,6 +478,7 @@ def _run_t1_registration_nifti_impl(
         "valid_voxels": tensor_metrics["valid_voxels"],
         "finite_tensor_components": tensor_metrics["finite_tensor_components"],
         "symmetric_tensor": True,
+        "tensor_output_written": register_tensor_output,
         "eigenvalue_min": tensor_metrics["eigenvalue_range"][0],
         "eigenvalue_max": tensor_metrics["eigenvalue_range"][1],
         "stage_seconds": {
@@ -507,6 +516,7 @@ def run_t1_registration_nifti(
     sse_file: str | Path | None = None,
     degrees_of_freedom: int = 12,
     workers: int = 8,
+    register_tensor_output: bool = True,
     progress: ProgressCallback | None = None,
 ) -> dict[str, object]:
     """Run the T1 registration pipeline with explicit candidate parallelism."""
@@ -523,5 +533,6 @@ def run_t1_registration_nifti(
         sse_file=sse_file,
         degrees_of_freedom=degrees_of_freedom,
         workers=int(workers),
+        register_tensor_output=register_tensor_output,
         progress=progress,
     )

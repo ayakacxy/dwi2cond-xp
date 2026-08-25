@@ -1,21 +1,23 @@
 # Roadmap
 
-This roadmap describes priorities after the completed `v0.2.0` release. It is
+This roadmap describes priorities after the correctness-focused `v0.3.0` release. It is
 not a promise that every item will ship unchanged or meet a predetermined speed
 ratio. Scientific correctness and explicit evidence remain release gates.
 
 ## Current release
 
-Version `0.2.0` implements the pure-Python fixed FSL subset required by SimNIBS
-4.6 `dwi2cond`, together with DTI fitting, tensor reorientation, anisotropic
-conductivity, fixed-montage FEM, QA, caching, and cross-platform packaging. FSL
-is optional and used only for local numerical-reference comparisons.
+Version `0.3.0` repairs the v0.2.0 workflow and numerical-contract defects found
+by the algorithm audit. The supported fixed subset now follows the official
+legacy/nonlinear defaults, corrected artifact lineage, mask ordering, strict
+single-shell fitting, TOPUP-to-EDDY closure, pre-fitted tensor import, and m2m
+publication contract. FSL remains optional and is used only for local numerical
+reference comparisons.
 
 The `main` branch contains current development. Stable code remains available
 through immutable tags and GitHub Releases; maintenance for an older release
 starts from its tag only when a backport is needed.
 
-## Planned `v0.3.0` priorities
+## Planned `v0.4.0` or later priorities
 
 1. Freeze same-input, same-output, eight-worker end-to-end benchmarks for the
    supported affine and nonlinear preprocessing branches, including explicit

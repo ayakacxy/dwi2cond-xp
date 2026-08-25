@@ -47,7 +47,7 @@ distribution.
 | Contract | Result | Evidence boundary |
 | --- | ---: | --- |
 | SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
-| Python test suite | **100.00% statement coverage** | 12,443/12,443 executable statements across unit tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
+| Python test suite | **100.00% statement coverage** | 12,826/12,826 executable statements across 568 passed tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
 | DTI tensor parity | **relative L2 4.18e-6** | Same HCP input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
 | DTI fitting wall time | **9.76 s vs 108.23 s · 11.09x** | Same server, input, worker/output boundary; not an end-to-end FEM claim |
 | Conductivity parity | **max abs 0 to 2.22e-16** | Synthetic mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
@@ -59,7 +59,7 @@ subject artifact is distributed. Full methods and evidence boundaries are in
 
 ## 🧭 Scope
 
-The `v0.2.0` preprocessing and conductivity path is:
+The `v0.3.0` correctness-remediated preprocessing and conductivity path is:
 
 ```text
 raw or preprocessed single-shell DWI, or a six-component diffusion tensor
@@ -71,13 +71,15 @@ raw or preprocessed single-shell DWI, or a six-component diffusion tensor
   -> vector E-field NIfTI and QA manifests
 ```
 
-Version `0.2.0` implements the SimNIBS 4.6 legacy motion/eddy path, the fixed GRE
+Version `0.3.0` implements the SimNIBS 4.6 legacy motion/eddy path, the fixed GRE
 fieldmap and TOPUP branches, and the fixed single-shell EDDY `--repol` subset
 with an optional TOPUP field. Automatic 6/12-DOF linear DTI-to-T1 registration
 and the fixed SimNIBS 4.6 FNIRT plus nonlinear PPD tensor branch are implemented.
 Unified QA, atomic DAG manifests, cache validation, and progress reporting are
-included. FSL is retained only as an optional local numerical reference; it is
-not called by the released preprocessing runtime.
+included. It also repairs the workflow lineage, masking, fitting semantics,
+TOPUP-to-EDDY closure, official defaults, pre-fitted tensor import, and m2m
+publication defects found by the v0.2.0 audit. FSL is retained only as an
+optional local numerical reference; it is not called by the released runtime.
 
 The pure-Python DTI and tensor-mapping core uses NumPy, SciPy, NiBabel, h5py,
 and tqdm. Mesh conductivity, FEM, and lead-field workflows require exactly
@@ -209,7 +211,7 @@ is intentionally frozen, install the wheel without dependency resolution:
 ```bash
 conda activate simnibs
 python -c "import simnibs; assert simnibs.__version__ == '4.6.0'"
-python -m pip install --no-deps dwi2cond_xp-0.2.0-py3-none-any.whl
+python -m pip install --no-deps dwi2cond_xp-0.3.0-py3-none-any.whl
 dwi2cond-xp --help
 ```
 
@@ -291,6 +293,33 @@ dwi2cond-xp register-t1 dti_outputs m2m_subject t1_registration_outputs \
 
 ## 🚀 Minimal workflow
 
+Run the official-default correctness path (`legacy + nonlinear`) and publish the
+final tensor atomically into the m2m directory:
+
+```bash
+dwi2cond-xp run-pipeline \
+  raw_dwi.nii.gz bvals bvecs m2m_subject workflow_outputs \
+  --workers 8
+```
+
+For reverse-PE acquisition, use the complete TOPUP-to-EDDY closure rather than
+manually joining standalone artifacts:
+
+```bash
+dwi2cond-xp run-pipeline \
+  raw_dwi.nii.gz bvals bvecs m2m_subject workflow_outputs \
+  --preprocessing-mode eddy \
+  --reverse-phase-encoding reverse_pe_4d.nii.gz \
+  --readout-seconds 0.05 --phase-encoding-direction y --workers 8
+```
+
+An official-style pre-fitted tensor enters the same T1, publication, and QA DAG:
+
+```bash
+dwi2cond-xp run-prefit-pipeline \
+  DTI_tensor.nii.gz m2m_subject workflow_outputs --workers 8
+```
+
 Run the FSL-free SimNIBS 4.6 `nomoco` raw-DWI path with eight workers:
 
 ```bash
@@ -327,7 +356,8 @@ dwi2cond-xp prepare-fieldmap \
   --dwell-ms 0.5 --phase-encoding-direction y- --workers 8
 dwi2cond-xp preprocess-legacy \
   raw_dwi.nii.gz bvals bvecs legacy_outputs \
-  --fieldmap-displacement fieldmap_out/displacement_world_mm.nii.gz --workers 8
+  --fieldmap-displacement fieldmap_out/displacement_world_mm.nii.gz \
+  --fieldmap-corrected-mask fieldmap_out/corrected_mask.nii.gz --workers 8
 ```
 
 Raw wrapped Siemens phase still requires PRELUDE and is rejected by this fixed
@@ -456,8 +486,8 @@ retain the HCP acknowledgment and are not a substitute for accepting the
 - Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso;
   all vector E-field NIfTIs were finite and strictly excluded tissues outside
   WM/GM/CSF.
-- The Linux release gate completed with `535 passed, 7 skipped` and strict
-  `100.00%` statement coverage over all `12,443/12,443` executable statements.
+- The local v0.3.0 release gate completed with `568 passed, 6 skipped` and strict
+  `100.00%` statement coverage over all `12,826/12,826` executable statements.
   Cross-platform CI enforces the same threshold; optional reference and
   integration tests are skipped only when their external prerequisites are
   unavailable.
@@ -468,11 +498,11 @@ Exact methods, timing boundaries, and limitations are in
 
 ## 🛣️ Roadmap
 
-Version `0.2.0` is the completed FSL-free preprocessing milestone. The current
-`main` branch remains the development branch, while released versions stay
-available through immutable tags and GitHub Releases.
+Version `0.3.0` is the correctness release produced from the v0.2.0 algorithm
+audit. It restores the supported SimNIBS 4.6/FSL 6.0.4 flow and calculation
+contracts; it is not the previously planned acceleration release.
 
-Planned priorities for `v0.3.0` are:
+Performance work is deferred to `v0.4.0` or later. Planned priorities are:
 
 - freeze same-input, same-output, eight-worker end-to-end benchmarks for the
   supported affine and nonlinear preprocessing branches;

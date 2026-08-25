@@ -152,6 +152,8 @@ def test_tensor_decomposition_validation_errors():
         decompose_tensor6(np.array(1.0))
     with pytest.raises(ValueError, match="validity mask"):
         decompose_tensor6(np.zeros((2, 2, 6)), np.ones((2, 3), dtype=bool))
+    with pytest.raises(ValueError, match="semantics"):
+        decompose_tensor6(np.zeros((2, 2, 6)), semantics="unknown")
     with pytest.raises(ValueError, match="Unknown tensor decomposition"):
         decompose_tensor6(np.zeros((2, 2, 6)), requested=("unknown",))
     tensor = np.zeros((1, 1, 1, 6))
