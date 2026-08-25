@@ -49,7 +49,6 @@ distribution.
 | SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
 | Python test suite | **100.00% statement coverage** | 12,826/12,826 executable statements across 568 passed tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
 | DTI tensor parity | **relative L2 4.18e-6** | Same HCP input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
-| DTI fitting wall time | **9.76 s vs 108.23 s · 11.09x** | Same server, input, worker/output boundary; not an end-to-end FEM claim |
 | Conductivity parity | **max abs 0 to 2.22e-16** | Synthetic mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
 | Fixed-montage FEM | **4/4 modes completed** | Real `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
 

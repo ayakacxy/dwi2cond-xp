@@ -46,7 +46,6 @@
 | SimNIBS 4.6 预处理子集 | **纯 Python · 运行时无 FSL** | `nomoco`、legacy、固定 GRE/TOPUP/EDDY、线性/FNIRT 配准和 PPD 张量重定向 |
 | Python 测试 | **100.00% statement coverage** | 12,826/12,826 条可执行语句，覆盖 568 个通过测试和真实合成 TOPUP/EDDY/FNIRT E2E |
 | DTI tensor 一致性 | **relative L2 4.18e-6** | 同一 HCP 输入、WLS 与 gradient-nonlinearity 合同，对照 FSL 6.0.4 |
-| DTI 拟合时间 | **9.76 s vs 108.23 s · 11.09x** | 同服务器、输入与输出边界，不代表完整 FEM 加速 |
 | 电导率一致性 | **max abs 0 至 2.22e-16** | synthetic mesh 对照 SimNIBS 4.6 的 `vn/dir/mc` |
 | 特定 montage FEM | **4/4 模式完成** | Pardiso 完成真实 `scalar/vn/dir/mc` C3→C4 仿真 |
 
