@@ -1098,6 +1098,25 @@ def test_simnibs_runtime_identity_records_missing_distribution(monkeypatch) -> N
     }
 
 
+def test_simnibs_runtime_identity_records_installed_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "simnibs_init.py"
+    module.write_text("__version__ = '4.6.0'\n", encoding="utf-8")
+    monkeypatch.setattr(workflow.importlib.metadata, "version", lambda _name: "4.6.0")
+    monkeypatch.setattr(
+        workflow.importlib.util,
+        "find_spec",
+        lambda _name: SimpleNamespace(origin=str(module)),
+    )
+
+    assert workflow._simnibs_runtime_identity() == {
+        "distribution_version": "4.6.0",
+        "module_path": str(module.resolve()),
+        "module_sha256": workflow._sha256(module),
+    }
+
+
 def test_tensor_publication_failure_restores_previous_valid_pair(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
