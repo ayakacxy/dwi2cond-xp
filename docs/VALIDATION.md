@@ -4,9 +4,10 @@ The post-re-audit `v0.3.0` correctness gate completed with `618 passed, 6 skippe
 and `13,204/13,204` executable statements covered (`100.00%`), including cold-cache
 synthetic TOPUP, EDDY, and FNIRT/PPD E2E paths plus direct FSL 6.0.4 `dtifit`
 comparisons. The six visible skips are optional FSL executable probes; the
-explicitly configured local FSL probes all passed. Cross-platform CI and the
-replacement tag-release results remain pending until this candidate is pushed
-and the tag workflow completes.
+explicitly configured local FSL probes all passed. Cross-platform CI enforces
+the same source, coverage, documentation, CLI, and package gates. A replacement
+tag is published only after main CI succeeds; the tag-triggered Release workflow
+then repeats the release gate before publishing assets, SBOM, and attestations.
 
 ## Automated contracts
 
