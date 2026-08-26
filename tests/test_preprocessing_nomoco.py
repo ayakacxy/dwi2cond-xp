@@ -54,6 +54,21 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     return dwi, bvals_file, bvecs_file, grad_dev
 
 
+def test_masked_brain_uses_fsl_strictly_positive_mask(tmp_path: Path) -> None:
+    source = tmp_path / "source.nii.gz"
+    mask = tmp_path / "mask.nii.gz"
+    output = tmp_path / "brain.nii.gz"
+    values = np.arange(8, dtype=np.float32).reshape(2, 2, 2) + 1.0
+    mask_values = np.array([0.0, 0.1, -0.1, 1.0, 0.0, 2.0, 0.0, 0.0]).reshape(2, 2, 2)
+    nib.save(nib.Nifti1Image(values, np.eye(4)), source)
+    nib.save(nib.Nifti1Image(mask_values, np.eye(4)), mask)
+
+    nomoco_module._write_masked_brain(source, mask, output)
+
+    expected = np.where(mask_values > 0.0, values, 0.0)
+    np.testing.assert_array_equal(np.asarray(nib.load(output).dataobj), expected)
+
+
 @pytest.mark.parametrize("direct_mmap", [False, True])
 def test_nomoco_pipeline_matches_existing_fit_and_emits_no_correction_artifacts(
     tmp_path: Path, monkeypatch, direct_mmap: bool

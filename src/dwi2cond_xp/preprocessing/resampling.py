@@ -208,9 +208,9 @@ def resample_image(
     """Resample a 3D or channel-last 4D image in one interpolation pass.
 
     ``world_transform`` maps moving-world points to reference-world points.
-    An optional displacement is defined on the reference grid in moving-world
-    millimetres and is added after the inverse affine map. This composes affine
-    and nonlinear pull coordinates before the sole interpolation operation.
+    An optional displacement is defined on the reference grid in reference-world
+    millimetres. It is added to the reference coordinate before the inverse affine
+    map, matching FSL ``applywarp --premat`` pull-coordinate composition.
     """
 
     values = np.asarray(moving)
@@ -255,9 +255,9 @@ def resample_image(
             axis=0,
         )
         reference_world = target_affine @ homogeneous
-        moving_world = inverse_world @ reference_world
         if displacement is not None:
-            moving_world[:3] += displacement[:, :, z0:z1].reshape(-1, 3).T
+            reference_world[:3] += displacement[:, :, z0:z1].reshape(-1, 3).T
+        moving_world = inverse_world @ reference_world
         coordinates = (inverse_source @ moving_world)[:3]
         for channel in range(channels):
             source = values if values.ndim == 3 else values[..., channel]

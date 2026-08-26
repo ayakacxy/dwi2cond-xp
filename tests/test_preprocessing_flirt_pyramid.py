@@ -99,6 +99,36 @@ def test_pyramid_reuses_active_scale_and_keeps_values_finite() -> None:
         assert np.all(np.isfinite(level.moving))
 
 
+def test_unweighted_pyramid_uses_background_padding_without_mask_normalization() -> None:
+    reference = _volume((9, 8, 7)) + np.float32(20.0)
+    moving = np.asarray(reference * np.float32(0.8), dtype=np.float32)
+    weights = np.ones_like(reference)
+    weights[0] = 0.0
+    sampling = np.eye(4)
+    unweighted = build_flirt_pyramid(
+        reference,
+        moving,
+        weights,
+        weights,
+        sampling,
+        sampling,
+        use_weights=False,
+    )
+    weighted = build_flirt_pyramid(
+        reference,
+        moving,
+        weights,
+        weights,
+        sampling,
+        sampling,
+        use_weights=True,
+    )
+    assert np.all(unweighted[8].reference_weight == 1.0)
+    assert np.all(unweighted[8].moving_weight == 1.0)
+    assert not np.array_equal(unweighted[8].reference, weighted[8].reference)
+    assert not np.array_equal(unweighted[8].moving, weighted[8].moving)
+
+
 def test_filter_helpers_cover_binary_and_nonbinary_weights() -> None:
     image = _volume((4, 4, 4))
     binary = np.ones_like(image)

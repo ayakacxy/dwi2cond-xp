@@ -70,6 +70,11 @@ def test_fsl_scalar_operations_and_mask_broadcasting() -> None:
         upper_threshold(values, 1.0),
         np.array([-2.0, 0.0, 1.0, 0.0], dtype=np.float32).reshape(2, 1, 2),
     )
+    nonfinite = np.array([np.nan, np.inf, -np.inf, 1.0], dtype=np.float32).reshape(2, 1, 2)
+    lower = lower_threshold(nonfinite, 0.0)
+    upper = upper_threshold(nonfinite, 2.0)
+    assert lower.ravel().tolist() == [0.0, np.inf, 0.0, 1.0]
+    assert upper.ravel().tolist() == [0.0, 0.0, -np.inf, 1.0]
     assert np.array_equal(
         binarize_positive(values),
         np.array([0.0, 0.0, 1.0, 1.0], dtype=np.float32).reshape(2, 1, 2),

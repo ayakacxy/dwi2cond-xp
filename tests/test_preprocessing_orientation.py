@@ -146,6 +146,14 @@ def test_tensor_decomposition_outputs_fsl_maps_and_respects_mask():
     suppressed = decompose_tensor6(nonpositive)
     assert all(np.count_nonzero(values) == 0 for values in suppressed.values())
 
+    low_amplitude = np.array(
+        [[[[1.0e-6, 0.0, 0.0, 5.0e-7, 0.0, 2.5e-7]]]], dtype=np.float32
+    )
+    fslmaths = decompose_tensor6(low_amplitude, semantics="fslmaths")
+    dtifit = decompose_tensor6(low_amplitude, semantics="dtifit")
+    assert fslmaths["FA"][0, 0, 0] == pytest.approx(0.5773502692, rel=1e-6)
+    assert dtifit["FA"][0, 0, 0] == 0.0
+
 
 def test_tensor_decomposition_validation_errors():
     with pytest.raises(ValueError, match="six components"):

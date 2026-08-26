@@ -291,6 +291,20 @@ def test_frozen_reference_assets_are_public_safe_and_structurally_complete() -> 
         if output["kind"] == "nifti":
             assert output["grid_ref"] in synthetic["grids"]
 
+    legacy_gate = manifests["synthetic_legacy_reference.json"]["release_gate"]
+    assert legacy_gate["scope"].startswith("post-audit v0.3.0")
+    assert len(legacy_gate["thresholds"]) == 16
+    assert {item["operator"] for item in legacy_gate["thresholds"]} == {
+        "<=",
+        ">=",
+        "==",
+    }
+    assert {
+        "final.corrected_dwi.relative_l2",
+        "final.final_matrix_max_abs",
+        "final.compat46_bvec_byte_exact",
+    }.issubset(item["metric"] for item in legacy_gate["thresholds"])
+
 
 def test_synthetic_preprocessing_generator_is_deterministic(tmp_path: Path) -> None:
     root = Path(__file__).parents[1]

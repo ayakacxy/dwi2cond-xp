@@ -316,8 +316,10 @@ def build_flirt_pyramid(
     moving_weight: np.ndarray,
     reference_sampling: np.ndarray,
     moving_sampling: np.ndarray,
+    *,
+    use_weights: bool = True,
 ) -> dict[int, FlirtPyramidLevel]:
-    """Build the weighted 8/4/2/minimum-scale pyramid used by default FLIRT."""
+    """Build the weighted or unweighted 8/4/2/minimum-scale FLIRT pyramid."""
 
     ref = _volume(reference, "reference")
     mov = _volume(moving, "moving")
@@ -335,35 +337,55 @@ def build_flirt_pyramid(
     mov_sizes = np.linalg.norm(mov_sampling[:3, :3], axis=0)
     minimum_scale = int(math.ceil(max(float(ref_sizes.min()), float(mov_sizes.min()))))
 
-    ref_binary = (ref_weight > np.float32(0.01)).astype(np.float32)
-    ref_numerator = np.asarray(ref * ref_binary, dtype=np.float32)
-    numerator_padding = 0.0
-    binary_padding = 0.0
-    numerator_blurred = flirt_blur(ref_numerator, ref_sizes, minimum_scale, padding=numerator_padding)
-    denominator_blurred = flirt_blur(ref_binary, ref_sizes, minimum_scale, padding=binary_padding)
-    ref_base, ref_base_sampling = isotropic_resample(
-        numerator_blurred, ref_sampling, minimum_scale, padding=numerator_padding
-    )
-    denominator, _ = isotropic_resample(
-        denominator_blurred, ref_sampling, minimum_scale, padding=binary_padding
-    )
-    ref_base = np.divide(ref_base, denominator, out=denominator.copy(), where=denominator != 0).astype(np.float32)
-    weight_padding = 0.0
-    blurred_support = denominator_blurred
-    blurred_weight = (
-        blurred_support
-        if np.array_equal(ref_weight, ref_binary)
-        else flirt_blur(ref_weight, ref_sizes, minimum_scale, padding=weight_padding)
-    )
-    ref_base_weight = (
-        denominator
-        if blurred_weight is blurred_support
-        else isotropic_resample(
-            blurred_weight, ref_sampling, minimum_scale, padding=weight_padding
-        )[0]
-    )
-    support = denominator
-    ref_base_weight = np.asarray(ref_base_weight * (support > np.float32(0.9)), dtype=np.float32)
+    if use_weights:
+        ref_binary = (ref_weight > np.float32(0.01)).astype(np.float32)
+        ref_numerator = np.asarray(ref * ref_binary, dtype=np.float32)
+        numerator_padding = 0.0
+        binary_padding = 0.0
+        numerator_blurred = flirt_blur(
+            ref_numerator, ref_sizes, minimum_scale, padding=numerator_padding
+        )
+        denominator_blurred = flirt_blur(
+            ref_binary, ref_sizes, minimum_scale, padding=binary_padding
+        )
+        ref_base, ref_base_sampling = isotropic_resample(
+            numerator_blurred, ref_sampling, minimum_scale, padding=numerator_padding
+        )
+        denominator, _ = isotropic_resample(
+            denominator_blurred, ref_sampling, minimum_scale, padding=binary_padding
+        )
+        ref_base = np.divide(
+            ref_base,
+            denominator,
+            out=denominator.copy(),
+            where=denominator != 0,
+        ).astype(np.float32)
+        weight_padding = 0.0
+        blurred_support = denominator_blurred
+        blurred_weight = (
+            blurred_support
+            if np.array_equal(ref_weight, ref_binary)
+            else flirt_blur(ref_weight, ref_sizes, minimum_scale, padding=weight_padding)
+        )
+        ref_base_weight = (
+            denominator
+            if blurred_weight is blurred_support
+            else isotropic_resample(
+                blurred_weight, ref_sampling, minimum_scale, padding=weight_padding
+            )[0]
+        )
+        ref_base_weight = np.asarray(
+            ref_base_weight * (denominator > np.float32(0.9)), dtype=np.float32
+        )
+    else:
+        ref_padding = float(_background_value(ref))
+        ref_blurred = flirt_blur(
+            ref, ref_sizes, minimum_scale, padding=ref_padding
+        )
+        ref_base, ref_base_sampling = isotropic_resample(
+            ref_blurred, ref_sampling, minimum_scale, padding=ref_padding
+        )
+        ref_base_weight = np.ones(ref_base.shape, dtype=np.float32)
 
     ref_base = np.asfortranarray(ref_base)
     ref_base_weight = np.asfortranarray(ref_base_weight)
@@ -375,9 +397,15 @@ def build_flirt_pyramid(
         if minimum_scale >= scale - 0.1:
             reference_levels[scale] = (current_image, current_weight, current_sampling)
             continue
-        current_image, current_weight = _subsample_image_and_weight(
-            current_image, current_weight
-        )
+        if use_weights:
+            current_image, current_weight = _subsample_image_and_weight(
+                current_image, current_weight
+            )
+        else:
+            current_image = _subsample_kernel(
+                current_image, np.float32(_background_value(current_image))
+            )
+            current_weight = np.ones(current_image.shape, dtype=np.float32)
         current_image = np.asfortranarray(current_image)
         current_weight = np.asfortranarray(current_weight)
         current_sampling = current_sampling @ np.diag([2.0, 2.0, 2.0, 1.0])
@@ -387,6 +415,7 @@ def build_flirt_pyramid(
     moving_weight_padding = 0.0
     moving_binary = (mov_weight > np.float32(0.01)).astype(np.float32)
     moving_product = np.asarray(mov * moving_binary, dtype=np.float32)
+    moving_padding = float(_background_value(mov))
     moving_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
     active_scale = 8
     for requested_scale in (8, 4, 2, 1):
@@ -394,29 +423,38 @@ def build_flirt_pyramid(
             active_scale = requested_scale
         reference_level = reference_levels[active_scale]
         if active_scale not in moving_cache:
-            moving_denominator = flirt_blur(
-                moving_binary, mov_sizes, active_scale, padding=0.0
-            )
-            moving_numerator = flirt_blur(
-                moving_product, mov_sizes, active_scale, padding=0.0
-            )
-            moving_level = np.divide(
-                moving_numerator,
-                moving_denominator,
-                out=moving_denominator.copy(),
-                where=moving_denominator != 0,
-            ).astype(np.float32)
-            moving_level_weight = (
-                moving_denominator
-                if np.array_equal(mov_weight, moving_binary)
-                else flirt_blur(
-                    mov_weight, mov_sizes, active_scale, padding=moving_weight_padding
+            if use_weights:
+                moving_denominator = flirt_blur(
+                    moving_binary, mov_sizes, active_scale, padding=0.0
                 )
-            )
-            moving_level_weight = np.asarray(
-                moving_level_weight * (moving_denominator > np.float32(0.9)),
-                dtype=np.float32,
-            )
+                moving_numerator = flirt_blur(
+                    moving_product, mov_sizes, active_scale, padding=0.0
+                )
+                moving_level = np.divide(
+                    moving_numerator,
+                    moving_denominator,
+                    out=moving_denominator.copy(),
+                    where=moving_denominator != 0,
+                ).astype(np.float32)
+                moving_level_weight = (
+                    moving_denominator
+                    if np.array_equal(mov_weight, moving_binary)
+                    else flirt_blur(
+                        mov_weight,
+                        mov_sizes,
+                        active_scale,
+                        padding=moving_weight_padding,
+                    )
+                )
+                moving_level_weight = np.asarray(
+                    moving_level_weight * (moving_denominator > np.float32(0.9)),
+                    dtype=np.float32,
+                )
+            else:
+                moving_level = flirt_blur(
+                    mov, mov_sizes, active_scale, padding=moving_padding
+                )
+                moving_level_weight = np.ones(mov.shape, dtype=np.float32)
             moving_level = np.asfortranarray(moving_level)
             moving_level_weight = np.asfortranarray(moving_level_weight)
             moving_cache[active_scale] = (moving_level, moving_level_weight)

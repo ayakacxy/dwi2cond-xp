@@ -240,7 +240,7 @@ def _build_parser() -> argparse.ArgumentParser:
     eddy.add_argument("--readout-seconds", type=float, required=True)
     eddy.add_argument(
         "--phase-encoding-direction",
-        choices=("x", "x-", "y", "y-"),
+        choices=("x", "x-", "y", "y-", "z", "z-"),
         required=True,
     )
     eddy.add_argument("--susceptibility-field")
@@ -291,7 +291,7 @@ def _build_parser() -> argparse.ArgumentParser:
     nonlinear.add_argument("reference")
     nonlinear.add_argument("affine_matrix")
     nonlinear.add_argument("output_directory")
-    nonlinear.add_argument("--brain-mask")
+    nonlinear.add_argument("--brain-mask", required=True)
     nonlinear.add_argument("--workers", type=int, default=8)
     nonlinear.add_argument(
         "--compatibility-mode",
@@ -315,6 +315,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pipeline_qa.add_argument("--corrected-dwi")
     pipeline_qa.add_argument("--rotated-bvecs")
     pipeline_qa.add_argument("--sse")
+    pipeline_qa.add_argument("--raw-registered-fa")
+    pipeline_qa.add_argument("--raw-registered-sse")
     pipeline_qa.add_argument("--t1")
     pipeline_qa.add_argument("--registered-fa")
     pipeline_qa.add_argument("--v1")
@@ -1008,6 +1010,16 @@ def main(argv: list[str] | None = None) -> int:
                         None if args.rotated_bvecs is None else Path(args.rotated_bvecs)
                     ),
                     sse=None if args.sse is None else Path(args.sse),
+                    raw_registered_fa=(
+                        None
+                        if args.raw_registered_fa is None
+                        else Path(args.raw_registered_fa)
+                    ),
+                    raw_registered_sse=(
+                        None
+                        if args.raw_registered_sse is None
+                        else Path(args.raw_registered_sse)
+                    ),
                     t1=None if args.t1 is None else Path(args.t1),
                     registered_fa=(
                         None if args.registered_fa is None else Path(args.registered_fa)
@@ -1041,6 +1053,8 @@ def main(argv: list[str] | None = None) -> int:
         workflow_module = import_module(".preprocessing.workflow", __package__)
         is_prefit = args.command == "run-prefit-pipeline"
         expected_stages = 3
+        if not is_prefit:
+            expected_stages += 1
         if not is_prefit and args.preprocessing_mode == "eddy":
             expected_stages += 1
         if args.t1_mode == "nonlinear":

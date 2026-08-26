@@ -1,10 +1,12 @@
 # Validation
 
-The local `v0.3.0` correctness gate completed with `568 passed, 6 skipped` and
-`12,826/12,826` executable statements covered (`100.00%`), including cold-cache
+The replacement `v0.3.0` correctness gate completed with `579 passed, 5 skipped`
+and `12,935/12,935` executable statements covered (`100.00%`), including cold-cache
 synthetic TOPUP, EDDY, and FNIRT/PPD E2E paths plus direct FSL 6.0.4 `dtifit`
-comparisons. Cross-platform CI and tag-release results remain pending until the
-v0.3.0 commit is pushed and the immutable tag workflow completes.
+comparisons. The five visible skips are optional FSL executable probes; the
+explicitly configured local FSL batch completed without skips. Cross-platform
+CI and replacement tag-release results remain pending until the candidate is
+pushed and the tag workflow completes.
 
 ## Automated contracts
 
@@ -29,6 +31,19 @@ their SHA-256 values, isolated wheel import/CLI, and GitHub build provenance wer
 verified independently.
 
 ## Numerical references
+
+The post-audit public legacy gate now executes candidate stages and compares
+them with the same-input FSL 6.0.4 reference. Corrected-DWI and corrected-mean
+relative L2 are `0.00544438` and `0.00773141`; final matrix max-absolute error
+is `0.0442867 mm`, and mask Dice is `0.9931947`. All 16 frozen stage/final
+thresholds pass. The near-zero tensor and SSE relative errors on this sharp
+synthetic fixture are retained as regression indicators, not as whole-grid
+tensor equivalence claims. Full details are in the
+[v0.3.0 audit remediation report](V0.3.0_AUDIT_REMEDIATION_REPORT_2026-08-26.md).
+
+A non-identity 90-degree premat plus one-voxel GRE shift was also compared with
+real FSL `convertwarp` and `applywarp`; the corrected Python trilinear result is
+array-exact on the `9x9x3` fixture.
 
 A synthetic DTI fixture was compared with FSL 6.0.4 `dtifit --wls
 --gradnonlin`; tensor maximum and mean absolute differences were `1.16e-10` and

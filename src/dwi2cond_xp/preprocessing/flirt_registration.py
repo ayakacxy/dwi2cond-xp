@@ -376,12 +376,59 @@ def _search(
     workers: int,
     progress: Callable[[str, int, int], None] | None,
     cost_function: str = "correlation_ratio",
+    nosearch: bool = False,
 ) -> tuple[list[_Candidate], list[_Candidate], int]:
     evaluator = _level_evaluator(level, 8.0, cost_function)
     center = flirt_intensity_cog(level.moving, level.moving_sampling)
     reference_center = flirt_intensity_cog(level.reference, level.reference_sampling)
     transformed_center = initial_matrix @ np.r_[center, 1.0]
     translation = reference_center - transformed_center[:3]
+    if nosearch:
+        dof = min(maximum_dof, 7)
+        reduced_count = 4 if dof > 6 else 3
+        reduced_tolerance = (
+            np.array([0.016, 1.6, 1.6, 1.6], dtype=np.float64)
+            if dof > 6
+            else np.full(3, 1.6, dtype=np.float64)
+        )
+        parameters = np.array(
+            [0.0, 0.0, 0.0, *translation, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+            dtype=np.float64,
+        )
+
+        def reduced_matrix(values: np.ndarray) -> np.ndarray:
+            candidate = parameters.copy()
+            if dof > 6:
+                candidate[6:9] += values[:1]
+                candidate[3:6] += values[1:4]
+            else:
+                candidate[3:6] += values
+            return affine_matrix(candidate[:dof], center)
+
+        reduced = flirt_brent_optimize(
+            np.zeros(reduced_count, dtype=np.float64),
+            reduced_tolerance,
+            lambda values: evaluator(reduced_matrix(values) @ initial_matrix),
+            parameter_count=reduced_count,
+            major_iterations=4,
+        )
+        pre_matrix = reduced_matrix(reduced.parameters)
+        optimized, count = _parallel_optimize(
+            evaluator,
+            initial_matrix,
+            [pre_matrix],
+            dof,
+            level.requested_scale,
+            4,
+            workers,
+            center=center,
+        )
+        pre_cost = float(evaluator(pre_matrix @ initial_matrix))
+        evaluations = reduced.evaluations + count + 1
+        if progress:
+            progress("search", 1, 1)
+        return optimized, [_Candidate(pre_cost, pre_matrix)], evaluations
+
     coarse = np.linspace(-math.pi / 2.0, math.pi / 2.0, 4, dtype=np.float64)
     fine = np.linspace(-math.pi / 2.0, math.pi / 2.0, 11, dtype=np.float64)
     dof = min(maximum_dof, 7)
@@ -557,6 +604,9 @@ def register_flirt_affine(
     qsform_matrix: np.ndarray | None = None,
     workers: int = 8,
     cost_function: str = "correlation_ratio",
+    search_cost_function: str | None = None,
+    nosearch: bool = False,
+    use_weights: bool = True,
     progress: Callable[[str, int, int], None] | None = None,
 ) -> FlirtRegistrationResult:
     """Run FSL's default 3D FLIRT schedule with the specified upstream cost."""
@@ -568,6 +618,11 @@ def register_flirt_affine(
     if cost_function not in ("correlation_ratio", "mutual_information"):
         raise ValueError(
             "cost_function must be correlation_ratio or mutual_information"
+        )
+    search_cost = cost_function if search_cost_function is None else search_cost_function
+    if search_cost not in ("correlation_ratio", "mutual_information"):
+        raise ValueError(
+            "search_cost_function must be correlation_ratio or mutual_information"
         )
     initial = np.eye(4) if initial_matrix is None else np.asarray(initial_matrix, dtype=np.float64)
     qsform = np.eye(4) if qsform_matrix is None else np.asarray(qsform_matrix, dtype=np.float64)
@@ -592,6 +647,7 @@ def register_flirt_affine(
         moving_weight,
         internal_reference_sampling,
         internal_moving_sampling,
+        use_weights=use_weights,
     )
     optimized_search, preoptimized_search, evaluations = _search(
         levels[8],
@@ -599,7 +655,8 @@ def register_flirt_affine(
         degrees_of_freedom,
         workers,
         progress,
-        cost_function,
+        search_cost,
+        nosearch,
     )
     evaluator4 = _level_evaluator(levels[4], 4.0, cost_function)
     center4 = flirt_intensity_cog(levels[4].moving, levels[4].moving_sampling)
@@ -628,13 +685,22 @@ def register_flirt_affine(
     candidates.sort(key=lambda item: item.cost)
     anchors = candidates[:4]
     expanded = list(anchors)
-    delta = np.array([math.radians(9.0)] * 3 + [0.05] * 3 + [0.1] * 3 + [0.05] * 3)
+    # With ``-nosearch`` the fine angular grids have one sample, so
+    # ``set_perturbations`` uses three times the scale-adjusted 0.005 radian
+    # rotation tolerance at the 4 mm level: 0.06 radians.
+    rotation_delta = 3.0 * 0.005 * 4.0 if nosearch else math.radians(9.0)
+    delta = np.array(
+        [rotation_delta] * 3 + [0.05] * 3 + [0.1] * 3 + [0.05] * 3
+    )
     perturbations = [
         (np.array([sign if axis == index else 0.0 for axis in range(12)]), True)
         for index in range(3)
         for sign in (1.0, -1.0)
     ] + [
-        (np.array([0.0] * 6 + [value] * 3 + [0.0] * 3), False)
+        # The seven-parameter schedule supplies only parameter 7.  FLIRT first
+        # builds that anisotropically perturbed 12-parameter matrix and then
+        # decomposes it for the following 7-DOF optimisation.
+        (np.array([0.0] * 6 + [value] + [0.0] * 5), False)
         for value in (0.1, -0.1, 0.2, -0.2)
     ]
     perturbed_starts: list[np.ndarray] = []
@@ -755,65 +821,21 @@ def register_flirt_nosearch_mutual_information(
         or abs(np.linalg.det(initial[:3, :3])) < 1e-12
     ):
         raise ValueError("initial_matrix must be a finite invertible 4x4 matrix")
-    base_scale = _base_scale(reference_sampling, moving_sampling)
-    coordinate_scale = np.diag([1.0 / base_scale] * 3 + [1.0])
-    inverse_coordinate_scale = np.diag([base_scale] * 3 + [1.0])
-    internal_initial = coordinate_scale @ initial @ inverse_coordinate_scale
-    reference_sampling_internal = coordinate_scale @ np.asarray(reference_sampling, dtype=np.float64)
-    moving_sampling_internal = coordinate_scale @ np.asarray(moving_sampling, dtype=np.float64)
     unit_reference = np.ones(np.asarray(reference).shape, dtype=np.float32)
     unit_moving = np.ones(np.asarray(moving).shape, dtype=np.float32)
-    levels = build_flirt_pyramid(
+    return register_flirt_affine(
         reference,
         moving,
         unit_reference,
         unit_moving,
-        reference_sampling_internal,
-        moving_sampling_internal,
-    )
-
-    def evaluator(scale: int) -> FlirtWeightedMutualInformation:
-        level = levels[scale]
-        return FlirtWeightedMutualInformation(
-            level.reference,
-            level.moving,
-            level.reference_weight,
-            level.moving_weight,
-            level.reference_sampling,
-            level.moving_sampling,
-            bins=level.bins,
-            smooth_size=float(scale),
-        )
-
-    stages = [
-        (4, min(degrees_of_freedom, 7), 4, (10.0, 1.0)),
-        (2, min(degrees_of_freedom, 7), 4, (10.0, 1.0)),
-    ]
-    if degrees_of_freedom > 7:
-        stages.append((2, min(degrees_of_freedom, 9), 1, (1.0,)))
-    if degrees_of_freedom > 9:
-        stages.append((2, degrees_of_freedom, 2, (1.0,)))
-    stages.append((1, degrees_of_freedom, 1, (1.0,)))
-    evaluations = 0
-    current = [_Candidate(float("inf"), np.eye(4))]
-    for scale, dof, iterations, bounds in stages:
-        level = levels[scale]
-        block, count = _parallel_optimize(
-            evaluator(scale),
-            internal_initial,
-            [current[0].matrix],
-            dof,
-            level.requested_scale,
-            iterations,
-            workers,
-            bounds,
-        )
-        current = block
-        evaluations += count
-    best = current[0]
-    return FlirtRegistrationResult(
-        inverse_coordinate_scale @ best.matrix @ internal_initial @ coordinate_scale,
-        best.cost,
-        evaluations,
-        1,
+        reference_sampling,
+        moving_sampling,
+        degrees_of_freedom=degrees_of_freedom,
+        initial_matrix=initial,
+        qsform_matrix=np.eye(4),
+        workers=workers,
+        cost_function="mutual_information",
+        search_cost_function="correlation_ratio",
+        nosearch=True,
+        use_weights=False,
     )

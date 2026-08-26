@@ -970,6 +970,17 @@ def test_eddy_iteration_and_complete_runner_validation_paths() -> None:
         with pytest.raises(ValueError):
             eddy.run_simnibs46_eddy(**{**complete, **changes})
 
+    accepted = {**complete, "bvals": np.asarray([0.0, 900.0, 999.999])}
+    rejected_equal = {**complete, "bvals": np.asarray([0.0, 900.0, 1000.0])}
+    rejected_above = {**complete, "bvals": np.asarray([0.0, 900.0, 1000.001])}
+    assert eddy._same_diffusion_shell(accepted["bvals"][1:])
+    assert not eddy._same_diffusion_shell(rejected_equal["bvals"][1:])
+    assert not eddy._same_diffusion_shell(rejected_above["bvals"][1:])
+    with pytest.raises(ValueError, match="one diffusion shell"):
+        eddy.run_simnibs46_eddy(**rejected_equal)
+    with pytest.raises(ValueError, match="one diffusion shell"):
+        eddy.run_simnibs46_eddy(**rejected_above)
+
 
 def test_complete_eddy_runner_covers_single_b0_serial_and_pe_alignment(
     monkeypatch: pytest.MonkeyPatch,

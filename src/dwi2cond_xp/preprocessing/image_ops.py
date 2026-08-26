@@ -36,7 +36,7 @@ def lower_threshold(values: np.ndarray, threshold: float) -> np.ndarray:
     """Zero values below the inclusive FSL ``-thr`` boundary."""
 
     result = _as_fsl_float(values).copy()
-    result[result < np.float32(threshold)] = 0.0
+    result[np.isnan(result) | (result < np.float32(threshold))] = 0.0
     return result
 
 
@@ -44,7 +44,7 @@ def upper_threshold(values: np.ndarray, threshold: float) -> np.ndarray:
     """Zero values above the inclusive FSL ``-uthr`` boundary."""
 
     result = _as_fsl_float(values).copy()
-    result[result > np.float32(threshold)] = 0.0
+    result[np.isnan(result) | (result > np.float32(threshold))] = 0.0
     return result
 
 

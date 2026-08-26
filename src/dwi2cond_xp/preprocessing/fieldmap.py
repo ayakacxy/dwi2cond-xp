@@ -159,7 +159,8 @@ def extrapolate_field_holes(
         return values.copy()
     extrapolated = values.copy()
     maximum_radius = min(size - 1 for size in values.shape)
-    default = np.float32(np.median(values))
+    ordered = np.sort(values.reshape(-1))
+    default = np.float32(ordered[int(np.floor(ordered.size * 0.5))])
     for xindex, yindex, zindex in np.argwhere(holes):
         found = False
         for radius in range(1, maximum_radius):

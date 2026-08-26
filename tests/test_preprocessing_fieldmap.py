@@ -82,11 +82,12 @@ def test_fill_extrapolate_and_regularize_holes() -> None:
     unchanged = extrapolate_field_holes(field, filled, filled)
     assert np.array_equal(unchanged, field)
     defaulted = extrapolate_field_holes(
-        np.full((2, 2, 2), 3.0, np.float32),
+        np.arange(8, dtype=np.float32).reshape(2, 2, 2),
         np.zeros((2, 2, 2), np.uint8),
         np.ones((2, 2, 2), np.uint8),
     )
     assert np.all(defaulted > 0)
+    assert defaulted[0, 0, 0] > 3.5
     regularized, regularized_mask = regularize_voxel_shift(field, mask, "y-")
     assert regularized_mask[3, 3, 3] == 1
     assert np.all(np.isfinite(regularized))

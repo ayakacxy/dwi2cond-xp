@@ -66,6 +66,8 @@ def test_build_pipeline_qa_covers_all_formal_sections(tmp_path: Path) -> None:
     _save(tmp_path / "jac.nii.gz", np.ones(shape, dtype=np.float32))
     _save(tmp_path / "t1.nii.gz", np.arange(np.prod(shape), dtype=np.float32).reshape(shape))
     _save(tmp_path / "registered_fa.nii.gz", np.full(shape, 0.6, dtype=np.float32))
+    _save(tmp_path / "raw_registered_fa.nii.gz", np.full(shape, 0.5, dtype=np.float32))
+    _save(tmp_path / "raw_registered_sse.nii.gz", np.full(shape, 0.75, dtype=np.float32))
     v1 = np.zeros(shape + (3,), dtype=np.float32)
     v1[..., 0] = 1.0
     _save(tmp_path / "v1.nii.gz", v1)
@@ -110,6 +112,8 @@ def test_build_pipeline_qa_covers_all_formal_sections(tmp_path: Path) -> None:
         sse=tmp_path / "sse.nii.gz",
         t1=tmp_path / "t1.nii.gz",
         registered_fa=tmp_path / "registered_fa.nii.gz",
+        raw_registered_fa=tmp_path / "raw_registered_fa.nii.gz",
+        raw_registered_sse=tmp_path / "raw_registered_sse.nii.gz",
         v1=tmp_path / "v1.nii.gz",
         field_hz=tmp_path / "field.nii.gz",
         jacobian=tmp_path / "jac.nii.gz",
@@ -131,6 +135,9 @@ def test_build_pipeline_qa_covers_all_formal_sections(tmp_path: Path) -> None:
     assert report["susceptibility"]["nonpositive_jacobian_voxels"] == 0
     assert report["tensor"]["valid_voxels"] == np.prod(shape)
     assert report["tensor"]["eigenvalue_min"] == 0.5
+    assert report["raw_fit"]["status"] == "available"
+    assert report["raw_fit"]["fa"]["mean"] == 0.5
+    assert report["raw_fit"]["sse"]["mean"] == 0.75
     assert all(report["fem_smoke"][mode]["completed"] for mode in fem_manifests)
     assert all(
         report["fem_smoke"][mode]["subject_volumes"][0][
@@ -157,7 +164,29 @@ def test_build_pipeline_qa_marks_mode_specific_inputs_as_unavailable(
     assert report["susceptibility"]["status"] == "not_provided"
     assert report["registration_overlay"]["status"] == "not_provided"
     assert report["sse"]["status"] == "not_provided"
+    assert report["raw_fit"]["status"] == "not_provided"
     assert report["fem_smoke"]["scalar"]["status"] == "not_provided"
+
+
+def test_raw_fit_qa_requires_a_paired_common_grid(tmp_path: Path) -> None:
+    core = _core_inputs(tmp_path)
+    _save(tmp_path / "raw-fa.nii.gz", np.ones((4, 5, 6), dtype=np.float32))
+    with pytest.raises(ValueError, match="must be provided together"):
+        build_pipeline_qa(
+            replace(core, raw_registered_fa=tmp_path / "raw-fa.nii.gz"),
+            tmp_path / "qa-unpaired",
+        )
+
+    _save(tmp_path / "raw-sse.nii.gz", np.ones((3, 3, 3), dtype=np.float32))
+    with pytest.raises(ValueError, match="must share one grid"):
+        build_pipeline_qa(
+            replace(
+                core,
+                raw_registered_fa=tmp_path / "raw-fa.nii.gz",
+                raw_registered_sse=tmp_path / "raw-sse.nii.gz",
+            ),
+            tmp_path / "qa-grid",
+        )
 
 
 def test_pipeline_qa_cli_writes_report_without_loading_unrelated_routes(

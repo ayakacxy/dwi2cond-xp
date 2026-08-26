@@ -96,8 +96,8 @@ def test_strict_fsl_treats_nan_as_nonpositive_and_rejects_inf_abort_case():
     signal[3] = np.inf
     with pytest.raises(ValueError, match="FSL dtifit aborts"):
         fit_tensor_wls(signal[None], bvals, bvecs)
-    with pytest.raises(ValueError, match="only NaN"):
-        fit_tensor_wls(np.full((1, bvals.size), np.nan), bvals, bvecs)
+    all_nan = fit_tensor_wls(np.full((1, bvals.size), np.nan), bvals, bvecs)
+    assert np.max(np.abs(all_nan)) < 1.0e-15
 
 
 def test_metrics_and_sse_paths_are_consistent():

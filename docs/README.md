@@ -31,7 +31,14 @@
 - [v0.2.0 algorithm audit](V0.2.0_ALGORITHM_AUDIT_REPORT_2026-08-25.md):
   workflow and numerical defects that motivated the v0.3.0 correctness release.
 - [v0.3.0 remediation audit](V0.3.0_ALGORITHM_EQUIVALENCE_AUDIT_2026-08-26.md):
-  issue-by-issue disposition, supported subset, numerical checks, and release boundary.
+  the release-time remediation record; its end-to-end equivalence conclusion is
+  superseded by the independent post-release audit below.
+- [v0.3.0 independent algorithm audit](V0.3.0_INDEPENDENT_ALGORITHM_AUDIT_REPORT_2026-08-26.md):
+  official workflow comparison, confirmed computational defects, current FSL A/B,
+  evidence gaps, and the ordered remediation/acceptance plan.
+- [v0.3.0 audit remediation](V0.3.0_AUDIT_REMEDIATION_REPORT_2026-08-26.md):
+  issue-by-issue fixes, executable FSL gates, current numerical results, and
+  remaining non-equivalence boundaries for the replacement release.
 - [FSL subset reimplementation plan](FSL_SUBSET_REIMPLEMENTATION_PLAN.md): the
   completed P0--P11 implementation and acceptance ledger.
 - [Changelog](CHANGELOG.md): released and unreleased user-visible changes.

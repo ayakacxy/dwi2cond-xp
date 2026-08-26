@@ -84,6 +84,11 @@ BET fraction, and passes the complete TOPUP products into EDDY. Because FSL
 6.0.4 TOPUP rejects z phase encoding, this combined branch remains limited to
 x/y directions even though no-TOPUP EDDY accepts z.
 
+Without reverse PE, `run-pipeline --preprocessing-mode eddy` constructs the
+canonical exact-b0 aligned nodif and BET `f=0.2` mask inside the raw-DWI DAG.
+An explicitly supplied `--dwi-brain-mask` remains an extension and its source
+is recorded in the stage manifest; it is never silently substituted.
+
 ## Preprocessed DWI
 
 The DWI must already have motion, eddy-current, and susceptibility/EPI
@@ -136,7 +141,8 @@ the caller may explicitly pass `--assume-aligned`.
 
 `register-t1-nonlinear <fa> <tensor> <reference> <affine_matrix>
 <output_directory>` runs the fixed SimNIBS 4.6 FNIRT subset and nonlinear PPD
-tensor reorientation. It writes the spline coefficients, dense deformation,
+tensor reorientation. `--brain-mask` is mandatory and is applied after PPD,
+matching the official T1 support contract. The command writes the spline coefficients, dense deformation,
 local Jacobians, registered tensor/FA/V1, validity mask, and QA. Folded or
 near-singular regions are reported explicitly, and failure never falls back to
 an affine result. Do not use `--assume-aligned` merely because DWI and T1 belong

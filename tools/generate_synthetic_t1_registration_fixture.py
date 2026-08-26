@@ -52,6 +52,7 @@ def main() -> int:
     )
     labels = np.zeros(shape, dtype=np.int16)
     labels[reference > np.float32(0.01)] = 2
+    brain_mask = (labels > 0).astype(np.uint8)
     tensor = np.zeros(shape + (6,), dtype=np.float32)
     tensor[..., 0] = np.float32(1.5e-3) + moving * np.float32(1.5e-7)
     tensor[..., 3] = np.float32(0.6e-3) + moving * np.float32(0.6e-7)
@@ -63,6 +64,7 @@ def main() -> int:
         ("DTI_sse.nii.gz", sse),
         ("T1.nii.gz", reference),
         ("T1_bias_corrected.nii.gz", reference),
+        ("T1_brain_mask.nii.gz", brain_mask),
         ("labeling.nii.gz", labels),
         ("final_tissues.nii.gz", labels),
     ):

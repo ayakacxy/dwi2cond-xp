@@ -149,8 +149,6 @@ def fit_tensor_wls(
     if compatibility_mode == "strict-fsl":
         if np.any(np.isinf(signals)):
             raise ValueError("strict-fsl rejects Inf because FSL dtifit aborts")
-        if np.any(np.all(np.isnan(signals), axis=1)):
-            raise ValueError("strict-fsl cannot fit a voxel containing only NaN")
     elif not np.all(np.isfinite(signals)):
         raise ValueError("robust fitting requires finite signals")
     if compatibility_mode == "robust" and np.any(np.max(signals, axis=1) <= 0):
@@ -164,10 +162,17 @@ def fit_tensor_wls(
     initial = _solve_wls(design, weights, initial_log)
 
     if compatibility_mode == "strict-fsl":
-        # NEWMAT 的 MaximumAbsoluteValue/Sum 会跳过 NaN；dtifit 随后把该次测量
-        # 当作非正信号，赋权 1 并用 0.01*S0 替换。
-        max_signal = np.nanmax(np.abs(signals), axis=1)
-        mean_signal = np.nanmean(signals, axis=1)
+        # NEWMAT MaximumAbsoluteValue and Sum skip NaN. All-NaN rows therefore
+        # start at zero and are subsequently replaced by the 0.01*S0 floor.
+        finite = np.isfinite(signals)
+        max_signal = np.max(np.where(finite, np.abs(signals), 0.0), axis=1)
+        finite_count = np.count_nonzero(finite, axis=1)
+        mean_signal = np.divide(
+            np.sum(np.where(finite, signals, 0.0), axis=1),
+            finite_count,
+            out=np.zeros(signals.shape[0], dtype=np.float64),
+            where=finite_count != 0,
+        )
     else:
         max_signal = np.max(np.abs(signals), axis=1)
         mean_signal = np.mean(signals, axis=1)

@@ -166,6 +166,8 @@ def test_strict_mode_matches_fsl_nonpositive_and_nan_edge_cases(tmp_path):
         compatibility_mode="strict-fsl",
         workers=1,
     )
+    ours_qa = json.loads((tmp_path / "ours-edge_qa.json").read_text())
+    assert ours_qa["valid_fitted_voxels"] == 3
 
     fsl_prefix = tmp_path / "fsl-edge"
     environment = os.environ.copy()

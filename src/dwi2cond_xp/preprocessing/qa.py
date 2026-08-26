@@ -30,6 +30,8 @@ class PipelineQaInputs:
     dwi_brain_mask: Path | None = None
     raw_dwi: Path | None = None
     corrected_dwi: Path | None = None
+    raw_registered_fa: Path | None = None
+    raw_registered_sse: Path | None = None
     rotated_bvecs: Path | None = None
     sse: Path | None = None
     t1: Path | None = None
@@ -458,6 +460,22 @@ def build_pipeline_qa(
             raise ValueError("SSE and brain mask must share one grid")
         sse_qa = {"status": "available", "stats": _masked_stats(sse_values, valid)}
 
+    raw_fit_qa: dict[str, object] = {"status": "not_provided"}
+    if inputs.raw_registered_fa is not None or inputs.raw_registered_sse is not None:
+        if inputs.raw_registered_fa is None or inputs.raw_registered_sse is None:
+            raise ValueError("raw registered FA and SSE must be provided together")
+        _, raw_fa_values = _load_finite(inputs.raw_registered_fa, ndim=3)
+        _, raw_sse_values = _load_finite(inputs.raw_registered_sse, ndim=3)
+        if raw_fa_values.shape != spatial_shape or raw_sse_values.shape != spatial_shape:
+            raise ValueError("raw registered FA, SSE, and brain mask must share one grid")
+        raw_fit_qa = {
+            "status": "available",
+            "fa": _masked_stats(raw_fa_values, mask),
+            "sse": _masked_stats(raw_sse_values, mask),
+            "fa_path": str(inputs.raw_registered_fa.resolve()),
+            "sse_path": str(inputs.raw_registered_sse.resolve()),
+        }
+
     fem: dict[str, object] = {}
     tissue_cache: dict[Path, tuple[nib.Nifti1Image, np.ndarray]] = {}
     for mode in ("scalar", "vn", "dir", "mc"):
@@ -485,6 +503,7 @@ def build_pipeline_qa(
         "dwi": dwi_artifacts,
         "fa": _masked_stats(fa_values, valid),
         "sse": sse_qa,
+        "raw_fit": raw_fit_qa,
         "motion_eddy": parameter_qa,
         "bvec_rotation": rotated_bvec_qa,
         "susceptibility": field_qa,

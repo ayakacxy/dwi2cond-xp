@@ -135,8 +135,6 @@ def _fit_z_block(
     if compatibility_mode == "strict-fsl":
         if np.any(np.isinf(signals)):
             raise ValueError("strict-fsl rejects Inf because FSL dtifit aborts")
-        if np.any(np.all(np.isnan(signals), axis=1)):
-            raise ValueError("strict-fsl cannot fit a voxel containing only NaN")
         valid = np.ones(masked_count, dtype=bool)
     elif compatibility_mode == "robust":
         valid = finite & has_positive
@@ -369,7 +367,7 @@ def fit_dti_nifti(
     qa_path.parent.mkdir(parents=True, exist_ok=True)
     qa = {
         "masked_voxels": total_masked,
-        "valid_fitted_voxels": total_masked - nonfinite_voxels - all_nonpositive_voxels,
+        "valid_fitted_voxels": int(np.count_nonzero(valid_output)),
         "nonfinite_voxels": nonfinite_voxels,
         "all_nonpositive_voxels": all_nonpositive_voxels,
         "nonpositive_measurements": nonpositive_measurements,
@@ -423,8 +421,6 @@ def _fit_dti_nifti_serial(
         if compatibility_mode == "strict-fsl":
             if np.any(np.isinf(signals)):
                 raise ValueError("strict-fsl rejects Inf because FSL dtifit aborts")
-            if np.any(np.all(np.isnan(signals), axis=1)):
-                raise ValueError("strict-fsl cannot fit a voxel containing only NaN")
             valid = np.ones(masked_count, dtype=bool)
         else:
             valid = finite & has_positive

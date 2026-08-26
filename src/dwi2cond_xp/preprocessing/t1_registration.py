@@ -260,6 +260,8 @@ def _run_t1_registration_nifti_impl(
     output_directory: str | Path,
     *,
     sse_file: str | Path | None = None,
+    raw_fa_file: str | Path | None = None,
+    raw_sse_file: str | Path | None = None,
     degrees_of_freedom: int = 12,
     workers: int = 8,
     register_tensor_output: bool = True,
@@ -269,6 +271,8 @@ def _run_t1_registration_nifti_impl(
 
     if degrees_of_freedom not in (6, 12):
         raise ValueError("degrees_of_freedom must be 6 or 12")
+    if (raw_fa_file is None) != (raw_sse_file is None):
+        raise ValueError("raw_fa_file and raw_sse_file must be provided together")
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
@@ -454,6 +458,66 @@ def _run_t1_registration_nifti_impl(
         for future in output_futures:
             future.result()
     qa_saved_at = time.perf_counter()
+    raw_qa_report: dict[str, object] = {"status": "not_provided"}
+    raw_qa_seconds = 0.0
+    if raw_fa_file is not None and raw_sse_file is not None:
+        raw_started = time.perf_counter()
+        raw_image, raw_fa = _load_finite_3d(raw_fa_file, "raw DWI FA")
+        raw_arguments = (
+            reference_image,
+            reference,
+            reference_weight,
+            raw_image,
+            raw_fa,
+        )
+        raw_registration = _estimate(
+            *raw_arguments,
+            degrees_of_freedom=6,
+            workers=workers,
+            progress=None,
+        )
+        raw_world = fsl_matrix_to_world(
+            raw_registration.matrix,
+            raw_fa.shape,
+            raw_image.affine,
+            reference.shape,
+            reference_image.affine,
+        )
+        np.savetxt(output / "FA2T1_raw_QA.mat", raw_registration.matrix, fmt="%.10g")
+        raw_registered_fa, raw_registered_sse, _ = _resample_qa_images(
+            raw_fa,
+            raw_image,
+            reference.shape,
+            reference_image.affine,
+            raw_world,
+            raw_sse_file,
+        )
+        raw_registered_fa[~brain_mask] = 0.0
+        if raw_registered_sse is None:
+            raise RuntimeError("raw SSE resampling did not produce an output")
+        raw_registered_sse[~brain_mask] = 0.0
+        _save_like(
+            raw_registered_fa,
+            reference_image,
+            output / "DTIraw_FA_6dof_QA.nii.gz",
+            np.float32,
+        )
+        _save_like(
+            raw_registered_sse,
+            reference_image,
+            output / "DTIraw_SSE_6dof_QA.nii.gz",
+            np.float32,
+        )
+        raw_qa_seconds = time.perf_counter() - raw_started
+        raw_qa_report = {
+            "status": "available",
+            "fsl_scaled_mm_matrix": raw_registration.matrix.tolist(),
+            "world_matrix": raw_world.tolist(),
+            "cost": raw_registration.cost,
+            "evaluations": raw_registration.evaluations,
+            "candidate_count": raw_registration.candidate_count,
+        }
+    completed_at = time.perf_counter()
     if progress is not None:
         progress("qa", 1, 1)
 
@@ -474,6 +538,7 @@ def _run_t1_registration_nifti_impl(
             "cost": qa_registration.cost,
             "evaluations": qa_registration.evaluations,
         },
+        "raw_qa_6dof": raw_qa_report,
         "output_grid_shape": list(reference.shape),
         "valid_voxels": tensor_metrics["valid_voxels"],
         "finite_tensor_components": tensor_metrics["finite_tensor_components"],
@@ -492,9 +557,10 @@ def _run_t1_registration_nifti_impl(
             "qa_resampling_parallel_branch": qa_resample_seconds,
             "qa_branch_tail_wait": qa_collected_at - derived_saved_at,
             "qa_mask_and_gzip_write": qa_saved_at - qa_collected_at,
-            "postprocess_critical_path": qa_saved_at - postprocess_started,
+            "raw_qa_registration_and_resampling": raw_qa_seconds,
+            "postprocess_critical_path": completed_at - postprocess_started,
         },
-        "wall_seconds": qa_saved_at - started,
+        "wall_seconds": completed_at - started,
         "fallback": "none",
     }
     temporary = output / ".t1_registration_qa.json.tmp"
@@ -514,6 +580,8 @@ def run_t1_registration_nifti(
     output_directory: str | Path,
     *,
     sse_file: str | Path | None = None,
+    raw_fa_file: str | Path | None = None,
+    raw_sse_file: str | Path | None = None,
     degrees_of_freedom: int = 12,
     workers: int = 8,
     register_tensor_output: bool = True,
@@ -531,6 +599,8 @@ def run_t1_registration_nifti(
         bias_corrected_file,
         output_directory,
         sse_file=sse_file,
+        raw_fa_file=raw_fa_file,
+        raw_sse_file=raw_sse_file,
         degrees_of_freedom=degrees_of_freedom,
         workers=int(workers),
         register_tensor_output=register_tensor_output,

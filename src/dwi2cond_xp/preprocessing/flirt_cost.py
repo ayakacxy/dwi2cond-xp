@@ -105,22 +105,6 @@ def _find_range_x(
         return 1, 0
     xmin = int(math.ceil(float(xmin0)))
     xmax = int(math.floor(float(xmax0)))
-    xcoord = np.float32(o1 + np.float32(xmin) * a11)
-    ycoord = np.float32(o2 + np.float32(xmin) * a21)
-    zcoord = np.float32(o3 + np.float32(xmin) * a31)
-    for xindex in range(xmin, xmax + 1):
-        in_bounds = (
-            np.float32(0.0) <= xcoord <= xb2
-            and np.float32(0.0) <= ycoord <= yb2
-            and np.float32(0.0) <= zcoord <= zb2
-        )
-        if xindex == xmin and not in_bounds:
-            xmin += 1
-        elif not in_bounds:
-            return xmin, xindex - 1
-        xcoord = np.float32(xcoord + a11)
-        ycoord = np.float32(ycoord + a21)
-        zcoord = np.float32(zcoord + a31)
     return xmin, xmax
 
 

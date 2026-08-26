@@ -202,7 +202,9 @@ def test_run_legacy_pipeline_contract(tmp_path, monkeypatch, bvec_mode) -> None:
 
     def mask(nodif, target, **_kwargs):
         image = nib.load(nodif)
-        legacy._save_nifti(np.ones(image.shape, dtype=np.float32), image, Path(target))
+        values = np.ones(image.shape, dtype=np.float32)
+        values[0, 0, 0] = 0.0
+        legacy._save_nifti(values, image, Path(target))
         return object()
 
     monkeypatch.setattr(legacy, "write_aligned_b0_mean", aligned)
@@ -250,6 +252,10 @@ def test_run_legacy_pipeline_contract(tmp_path, monkeypatch, bvec_mode) -> None:
         legacy._save_nifti(_volume(10.0), template, radians)
 
         def fake_fieldmap(_magnitude, _radians, _b0, target, **_kwargs):
+            assert Path(_b0).name == "nodif_brain.nii.gz"
+            brain = np.asarray(nib.load(_b0).dataobj)
+            assert brain[0, 0, 0] == 0.0
+            assert np.any(brain != 0.0)
             target = Path(target)
             target.mkdir(parents=True, exist_ok=True)
             legacy._save_nifti(

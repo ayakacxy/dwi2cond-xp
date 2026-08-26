@@ -183,23 +183,25 @@ def test_fit_z_block_covers_invalid_and_empty_blocks(tmp_path: Path) -> None:
     assert empty[6:] == (0, 0, 0, 0)
 
 
-def test_strict_block_and_serial_paths_reject_fsl_abort_domains(tmp_path: Path) -> None:
+def test_strict_block_and_serial_paths_match_fsl_nonfinite_domains(tmp_path: Path) -> None:
     paths, bvals, bvecs = _write_fixture(tmp_path)
     selected = np.arange(bvals.size)
 
-    with pytest.raises(ValueError, match="only NaN"):
-        _fit_z_block(
-            str(paths["data"]),
-            str(paths["mask"]),
-            None,
-            selected,
-            bvals,
-            bvecs,
-            0,
-            1,
-            1,
-            "strict-fsl",
-        )
+    all_nan = _fit_z_block(
+        str(paths["data"]),
+        str(paths["mask"]),
+        None,
+        selected,
+        bvals,
+        bvecs,
+        0,
+        1,
+        1,
+        "strict-fsl",
+    )
+    assert all_nan[6] == 2
+    assert np.all(np.isfinite(all_nan[2]))
+    assert all_nan[3][1, 0, 0] == pytest.approx(0.01, rel=1e-5)
     with pytest.raises(ValueError, match="compatibility_mode"):
         _fit_z_block(
             str(paths["data"]),
@@ -260,16 +262,19 @@ def test_strict_block_and_serial_paths_reject_fsl_abort_domains(tmp_path: Path) 
     values.fill(1.0)
     values[0, 0, 0, :] = np.nan
     nib.save(nib.Nifti1Image(values, image.affine, image.header), paths["data"])
-    with pytest.raises(ValueError, match="only NaN"):
-        fit_dti_nifti(
-            paths["data"],
-            paths["bvals"],
-            paths["bvecs"],
-            paths["mask"],
-            tmp_path / "nan-tensor.nii.gz",
-            compatibility_mode="strict-fsl",
-            workers=1,
-        )
+    nan_output = tmp_path / "nan-tensor.nii.gz"
+    fit_dti_nifti(
+        paths["data"],
+        paths["bvals"],
+        paths["bvecs"],
+        paths["mask"],
+        nan_output,
+        compatibility_mode="strict-fsl",
+        workers=1,
+    )
+    assert np.all(np.isfinite(np.asarray(nib.load(nan_output).dataobj)))
+    nan_qa = json.loads((tmp_path / "nan-tensor_qa.json").read_text())
+    assert nan_qa["valid_fitted_voxels"] == 2
 
 
 def test_nifti_fit_rejects_unknown_compatibility_mode(tmp_path: Path) -> None:

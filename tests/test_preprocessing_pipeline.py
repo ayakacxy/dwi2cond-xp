@@ -66,6 +66,7 @@ def test_pipeline_manifest_records_contract_and_uses_valid_cache(tmp_path: Path)
     assert manifest["metrics"]["cpu_seconds"] >= 0.0
     assert "peak_rss_bytes" in manifest["metrics"]
     assert manifest["artifacts"][0]["shape"] == [3, 4, 5]
+    assert manifest["artifacts"][0]["sha256"] == fingerprint_file(output)["sha256"]
 
     second_runner = PipelineRunner(
         tmp_path / "manifests", progress=record_progress
@@ -102,6 +103,63 @@ def test_pipeline_reexecutes_when_cached_artifact_is_structurally_invalid(
     assert result.status == "completed"
     assert len(calls) == 2
     assert json.loads(output.read_text(encoding="utf-8"))["status"] == "ok"
+
+
+def test_pipeline_reexecutes_when_cached_artifact_content_is_replaced(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "input.txt"
+    source.write_text("source\n", encoding="utf-8")
+    output = tmp_path / "output.nii.gz"
+    calls: list[int] = []
+
+    def action() -> None:
+        calls.append(1)
+        _write_nifti(output, 1.0)
+
+    stage = StageDefinition(
+        "fit",
+        action,
+        inputs=(source,),
+        outputs=(ArtifactContract(output, "nifti", ndim=3),),
+    )
+    PipelineRunner(tmp_path / "manifests").run((stage,))
+    _write_nifti(output, 0.0)
+
+    result = PipelineRunner(tmp_path / "manifests").run((stage,))[0]
+
+    assert result.status == "completed"
+    assert calls == [1, 1]
+    np.testing.assert_array_equal(np.asarray(nib.load(output).dataobj), 1.0)
+
+
+def test_directory_hash_covers_topology_files_and_rejects_unknown_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "artifact"
+    nested = directory / "nested"
+    nested.mkdir(parents=True)
+    (nested / "value.txt").write_text("one\n", encoding="utf-8")
+    first = pipeline._sha256_directory(directory)
+    (nested / "value.txt").write_text("two\n", encoding="utf-8")
+    assert pipeline._sha256_directory(directory) != first
+
+    unsupported = directory / "unsupported"
+    unsupported.write_text("entry\n", encoding="utf-8")
+    original_is_dir = Path.is_dir
+    original_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path,
+        "is_dir",
+        lambda path: False if path == unsupported else original_is_dir(path),
+    )
+    monkeypatch.setattr(
+        Path,
+        "is_file",
+        lambda path: False if path == unsupported else original_is_file(path),
+    )
+    with pytest.raises(ValueError, match="unsupported entry"):
+        pipeline._sha256_directory(directory)
 
 
 def test_pipeline_source_digest_invalidates_development_cache(tmp_path: Path) -> None:

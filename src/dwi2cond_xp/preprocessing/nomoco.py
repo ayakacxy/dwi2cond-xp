@@ -96,7 +96,7 @@ def _write_masked_brain(
     image = nib.load(str(image_file))
     mask = nib.load(str(mask_file))
     values = np.asarray(image.dataobj, dtype=np.float32)
-    mask_values = np.asarray(mask.dataobj) >= 0.5
+    mask_values = np.asarray(mask.dataobj) > 0.0
     output_values = np.where(mask_values, values, 0.0).astype(np.float32)
     header = image.header.copy()
     header.set_data_dtype(np.float32)

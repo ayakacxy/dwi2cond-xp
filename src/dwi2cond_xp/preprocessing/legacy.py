@@ -439,7 +439,7 @@ def run_legacy_nifti(
         fieldmap_report = run_fieldmap_nifti(
             fieldmap_magnitude_file,
             fieldmap_radians_per_second_file,
-            paths["nodif"],
+            paths["brain"],
             fieldmap_output,
             dwell_milliseconds=float(fieldmap_dwell_milliseconds),
             phase_encoding_direction=str(fieldmap_phase_encoding_direction),

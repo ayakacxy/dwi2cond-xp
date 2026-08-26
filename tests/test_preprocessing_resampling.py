@@ -1,3 +1,8 @@
+import os
+from pathlib import Path
+import subprocess
+
+import nibabel as nib
 import numpy as np
 import pytest
 
@@ -7,6 +12,7 @@ from dwi2cond_xp.preprocessing.resampling import (
     resample_image,
     resample_mask,
 )
+from dwi2cond_xp.preprocessing.transforms import fsl_matrix_to_world
 
 
 def test_optimized_sinc_is_bitwise_equal_to_reference():
@@ -63,6 +69,104 @@ def test_affine_displacement_and_channel_resampling():
     )
     np.testing.assert_array_equal(displaced[:-1], image[1:])
     np.testing.assert_array_equal(displaced[-1], 0)
+
+
+def test_displacement_is_composed_before_inverse_affine():
+    image = np.indices((9, 3, 2), dtype=np.float32)[0]
+    transform = np.diag([2.0, 1.0, 1.0, 1.0])
+    displacement = np.zeros(image.shape + (3,), dtype=np.float64)
+    displacement[..., 0] = 2.0
+
+    actual = resample_image(
+        image,
+        np.eye(4),
+        image.shape,
+        np.eye(4),
+        transform,
+        reference_to_moving_displacement=displacement,
+        interpolation="linear",
+        linear_extrapolation="constant",
+    )
+
+    expected_x = np.arange(image.shape[0], dtype=np.float32) / 2.0 + 1.0
+    np.testing.assert_allclose(actual[:, 1, 1], expected_x, rtol=0.0, atol=1e-6)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("FSL_CONVERTWARP") or not os.environ.get("FSL_APPLYWARP"),
+    reason="FSL GRE composition reference is not configured",
+)
+def test_affine_displacement_composition_matches_real_fsl(tmp_path: Path) -> None:
+    shape = (9, 9, 3)
+    grid = np.indices(shape, dtype=np.float32)
+    values = np.asarray(
+        100.0 * grid[0] + grid[1] + 0.01 * grid[2], dtype=np.float32
+    )
+    affine = np.eye(4)
+    for name, data in (
+        ("input.nii.gz", values),
+        ("reference.nii.gz", np.zeros(shape, dtype=np.float32)),
+        ("shift.nii.gz", np.ones(shape, dtype=np.float32)),
+    ):
+        image = nib.Nifti1Image(data, affine)
+        image.set_qform(affine, 1)
+        image.set_sform(affine, 1)
+        nib.save(image, tmp_path / name)
+    premat = np.array(
+        [[0.0, -1.0, 0.0, 8.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+    )
+    np.savetxt(tmp_path / "premat.mat", premat, fmt="%.17g")
+    environment = os.environ.copy()
+    environment.setdefault("FSLOUTPUTTYPE", "NIFTI_GZ")
+    subprocess.run(
+        [
+            os.environ["FSL_CONVERTWARP"],
+            "-s",
+            str(tmp_path / "shift.nii.gz"),
+            "-o",
+            str(tmp_path / "warp.nii.gz"),
+            "-r",
+            str(tmp_path / "reference.nii.gz"),
+            "--shiftdir=y",
+        ],
+        check=True,
+        env=environment,
+    )
+    subprocess.run(
+        [
+            os.environ["FSL_APPLYWARP"],
+            "-i",
+            str(tmp_path / "input.nii.gz"),
+            "-r",
+            str(tmp_path / "reference.nii.gz"),
+            "-o",
+            str(tmp_path / "fsl.nii.gz"),
+            "-w",
+            str(tmp_path / "warp.nii.gz"),
+            "--abs",
+            f"--premat={tmp_path / 'premat.mat'}",
+            "--interp=trilinear",
+        ],
+        check=True,
+        env=environment,
+    )
+    world_transform = fsl_matrix_to_world(
+        premat, shape, affine, shape, affine
+    )
+    displacement = np.zeros(shape + (3,), dtype=np.float64)
+    displacement[..., 1] = 1.0
+    candidate = resample_image(
+        values,
+        affine,
+        shape,
+        affine,
+        world_transform,
+        reference_to_moving_displacement=displacement,
+        interpolation="linear",
+        linear_extrapolation="fsl",
+    )
+    reference = np.asarray(nib.load(tmp_path / "fsl.nii.gz").dataobj)
+    np.testing.assert_array_equal(candidate, reference)
 
 
 def test_mask_is_binary_and_nearest_only():

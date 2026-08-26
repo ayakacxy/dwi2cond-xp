@@ -38,5 +38,42 @@
     "optimized_normcorr_reference_bitwise_equal": true,
     "optimized_outputs_preoptimization_bitwise_equal": true
   },
+  "release_gate": {
+    "scope": "post-audit v0.3.0 same-input stage and final-output regression gate",
+    "thresholds": [
+      {"metric": "nodif.relative_l2", "operator": "<=", "value": 0.00011},
+      {"metric": "raw_mean.relative_l2", "operator": "<=", "value": 0.000001},
+      {"metric": "pass1_series.relative_l2", "operator": "<=", "value": 0.0007},
+      {"metric": "pass1_mean.relative_l2", "operator": "<=", "value": 0.0006},
+      {"metric": "pass2_series.relative_l2", "operator": "<=", "value": 0.0011},
+      {"metric": "pass2_mean.relative_l2", "operator": "<=", "value": 0.0009},
+      {"metric": "mean_matrix_max_abs", "operator": "<=", "value": 0.04},
+      {"metric": "direct_b0_matrix_max_abs", "operator": "<=", "value": 0.004},
+      {"metric": "final.corrected_dwi.relative_l2", "operator": "<=", "value": 0.006},
+      {"metric": "final.corrected_mean.relative_l2", "operator": "<=", "value": 0.0085},
+      {"metric": "final.mask_dice", "operator": ">=", "value": 0.99},
+      {"metric": "final.final_matrix_max_abs", "operator": "<=", "value": 0.05},
+      {"metric": "final.common_mask_tensor.relative_l2", "operator": "<=", "value": 0.8},
+      {"metric": "final.common_mask_fa.relative_l2", "operator": "<=", "value": 0.04},
+      {"metric": "final.common_mask_sse.relative_l2", "operator": "<=", "value": 1.1},
+      {"metric": "final.compat46_bvec_byte_exact", "operator": "==", "value": true}
+    ],
+    "observed_2026_08_26": {
+      "nodif_relative_l2": 0.00009488467684849382,
+      "pass1_series_relative_l2": 0.0005975492623685062,
+      "pass2_series_relative_l2": 0.0010206094525814769,
+      "mean_matrix_max_abs": 0.026943148956053875,
+      "direct_b0_matrix_max_abs": 0.003270166603609681,
+      "corrected_dwi_relative_l2": 0.005444380701122924,
+      "corrected_mean_relative_l2": 0.00773141039057943,
+      "mask_dice": 0.9931947069943289,
+      "final_matrix_max_abs": 0.04428670800000001,
+      "common_mask_tensor_relative_l2": 0.772599922307528,
+      "common_mask_fa_relative_l2": 0.03009021967176708,
+      "common_mask_sse_relative_l2": 1.0676177695709832,
+      "compat46_bvec_byte_exact": true
+    },
+    "interpretation": "These bounds prevent regression on the public sharp synthetic fixture. Near-zero tensor and SSE relative errors are ill-conditioned and do not establish whole-grid tensor equivalence."
+  },
   "notes": "The noiseless sharp synthetic fixture makes tensor and SSE relative errors unstable near the BET boundary. Matrix/corner, corrected-DWI, fixed-matrix resampling, FA, absolute error, and eroded-interior checks remain separate evidence; no whole-grid tensor exactness claim is made."
 }

@@ -50,12 +50,13 @@ def decompose_tensor6(
     mean = np.mean(eigenvalues, axis=1)
     denominator = np.sum(eigenvalues * eigenvalues, axis=1)
     numerator = 1.5 * np.sum((eigenvalues - mean[:, None]) ** 2, axis=1)
+    fa_denominator_threshold = 0.0 if semantics == "fslmaths" else 1e-10
     fa_values = np.sqrt(
         np.divide(
             numerator,
             denominator,
             out=np.zeros_like(numerator),
-            where=denominator > 1e-10,
+            where=denominator > fa_denominator_threshold,
         )
     )
     outputs: dict[str, np.ndarray] = {}

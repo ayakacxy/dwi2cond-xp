@@ -79,6 +79,23 @@ def _sha256_file(path: Path, chunk_bytes: int = 8 * 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+def _sha256_directory(path: Path) -> str:
+    """Hash directory topology and every regular file in stable relative-path order."""
+
+    digest = hashlib.sha256()
+    for entry in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix()):
+        relative = entry.relative_to(path).as_posix().encode("utf-8")
+        if entry.is_dir():
+            digest.update(b"directory\0" + relative + b"\0")
+        elif entry.is_file():
+            digest.update(b"file\0" + relative + b"\0")
+            digest.update(_sha256_file(entry).encode("ascii"))
+            digest.update(b"\0")
+        else:
+            raise ValueError(f"Output directory contains an unsupported entry: {entry}")
+    return digest.hexdigest()
+
+
 def fingerprint_file(path: str | Path) -> dict[str, object]:
     """Return a file's strong content fingerprint and structural metadata."""
 
@@ -107,7 +124,12 @@ def _artifact_metadata(
         entries = sum(1 for _ in path.iterdir())
         if entries == 0 and not contract.allow_empty:
             raise ValueError(f"Output directory is empty: {path}")
-        return {"path": str(path), "kind": contract.kind, "entries": entries}
+        return {
+            "path": str(path),
+            "kind": contract.kind,
+            "entries": entries,
+            "sha256": _sha256_directory(path),
+        }
 
     if not path.is_file():
         raise FileNotFoundError(f"Missing output artifact: {path}")
@@ -118,6 +140,7 @@ def _artifact_metadata(
         "path": str(path),
         "kind": contract.kind,
         "size_bytes": size,
+        "sha256": _sha256_file(path),
     }
     if contract.kind == "json":
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -260,7 +283,9 @@ class PipelineRunner:
                 or manifest.get("fingerprint") != fingerprint
             ):
                 return None
-            validate_artifacts(stage.outputs, numerical=False)
+            current_artifacts = validate_artifacts(stage.outputs, numerical=False)
+            if manifest.get("artifacts") != current_artifacts:
+                return None
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return None
         metrics = dict(manifest.get("metrics", {}))

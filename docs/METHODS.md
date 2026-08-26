@@ -48,7 +48,7 @@ identity alignment.
 ## Workflow and provenance
 
 The workflow DAG fingerprints input content with SHA-256, writes stage outputs
-and manifests atomically, validates cached structure before reuse, and records
+and manifests atomically, validates cached structure and current content hashes before reuse, and records
 parameters, versions, backend, timing, resource use, and QA. A cache hit is
 reported as reuse rather than fresh computation. Reference and optimized
 backends remain explicit so numerical A/B can be repeated after an optimization.

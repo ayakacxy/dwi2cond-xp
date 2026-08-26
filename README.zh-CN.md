@@ -44,7 +44,7 @@
 | 合同 | 结果 | 证据边界 |
 | --- | ---: | --- |
 | SimNIBS 4.6 预处理子集 | **纯 Python · 运行时无 FSL** | `nomoco`、legacy、固定 GRE/TOPUP/EDDY、线性/FNIRT 配准和 PPD 张量重定向 |
-| Python 测试 | **100.00% statement coverage** | 12,826/12,826 条可执行语句，覆盖 568 个通过测试和真实合成 TOPUP/EDDY/FNIRT E2E |
+| Python 测试 | **100.00% statement coverage** | 12,935/12,935 条可执行语句，覆盖 579 个通过测试和真实合成 TOPUP/EDDY/FNIRT E2E |
 | DTI tensor 一致性 | **relative L2 4.18e-6** | 同一 HCP 输入、WLS 与 gradient-nonlinearity 合同，对照 FSL 6.0.4 |
 | 电导率一致性 | **max abs 0 至 2.22e-16** | synthetic mesh 对照 SimNIBS 4.6 的 `vn/dir/mc` |
 | 特定 montage FEM | **4/4 模式完成** | Pardiso 完成真实 `scalar/vn/dir/mc` C3→C4 仿真 |
@@ -71,6 +71,9 @@ GRE/FUGUE分支、固定TOPUP分支，以及支持可选TOPUP场的单壳EDDY `-
 本版本还修复了 v0.2.0 审计发现的产物流向、mask、拟合语义、TOPUP→EDDY 闭环、
 官方默认值、预拟合 tensor 导入和 m2m 发布问题。FSL 仅作为可选的本地数值
 reference 保留，不会被正式预处理运行路径调用。
+独立 v0.3.0 审计确认的 14 项缺陷已在替换版中关闭；这不等于所有 FSL optimizer
+逐位一致，也不冒充新的真实被试完整官方 A/B。当前数值边界见
+[审计整改报告](docs/V0.3.0_AUDIT_REMEDIATION_REPORT_2026-08-26.md)。
 
 纯 Python DTI/tensor 映射核心依赖 NumPy、SciPy、NiBabel、h5py 和 tqdm。Mesh
 电导率、FEM 与 lead field 固定要求 `SimNIBS 4.6.0 + Python 3.11`；完整流程的平台
@@ -357,14 +360,15 @@ panel 共用对称色标；切片只由 brain mask 最大面积决定，不根�
 预处理、配准、建模或 FEM。全电极 lead-field 接口和数据合同已支持并测试，但当前
 发布证据不包含真实被试的全电极完整运行。
 
-本地 v0.3.0 release 门禁为 `568 passed, 6 skipped`，全部 `12,826/12,826` 个可执行语句
+替换版 v0.3.0 本地 release 门禁为 `579 passed, 5 skipped`，全部 `12,935/12,935` 个可执行语句
 严格达到 `100.00%` 覆盖率；跨平台 CI 同样强制该门槛。只有外部 reference 或集成
 前置条件不可用时才跳过对应可选测试。
 
 ## 🛣️ 后续路线图
 
-`v0.3.0` 是根据 v0.2.0 算法审计形成的正确性修复版，用于恢复受支持范围内的
-SimNIBS 4.6/FSL 6.0.4 官方流程和计算合同；它不再是原先规划的加速版本。
+`v0.3.0` 是根据 v0.2.0 审计和后续独立 v0.3.0 审计形成的正确性修复版，用于关闭
+已确认的流程和计算合同缺陷；它不宣称所有完整 optimizer 与 FSL 逐位一致，也不再是
+原先规划的加速版本。
 
 性能工作顺延到 `v0.4.0` 或更高版本，计划重点是：
 

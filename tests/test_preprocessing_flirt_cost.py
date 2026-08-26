@@ -358,19 +358,6 @@ def test_interpolation_and_range_helpers_follow_fsl_edges() -> None:
         np.float32(2.9999),
     )
     assert empty == (1, 0)
-    guarded = flirt_cost_module._find_range_x.py_func(
-        np.float32(np.nan),
-        np.float32(0.0),
-        np.float32(0.0),
-        np.float32(1.0),
-        np.float32(0.0),
-        np.float32(0.0),
-        3,
-        np.float32(2.9999),
-        np.float32(2.9999),
-        np.float32(2.9999),
-    )
-    assert guarded == (4, 3)
     rounded_endpoint = flirt_cost_module._find_range_x.py_func(
         np.float32(45.633274),
         np.float32(0.0),
@@ -383,7 +370,7 @@ def test_interpolation_and_range_helpers_follow_fsl_edges() -> None:
         np.float32(2.9999),
         np.float32(2.9999),
     )
-    assert rounded_endpoint == (0, 9)
+    assert rounded_endpoint == (0, 10)
 
 
 @pytest.mark.parametrize(

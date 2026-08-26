@@ -92,11 +92,13 @@ def test_t1_registration_writes_complete_grid_and_qa(
         paths["corrected"],
         output,
         sse_file=paths["sse"],
+        raw_fa_file=paths["fa"],
+        raw_sse_file=paths["sse"],
         degrees_of_freedom=degrees_of_freedom,
         workers=8,
         progress=lambda phase, done, total: progress.append((phase, done, total)),
     )
-    assert calls == ([6] if degrees_of_freedom == 6 else [12, 6])
+    assert calls == ([6, 6] if degrees_of_freedom == 6 else [12, 6, 6])
     assert report["fallback"] == "none"
     assert report["mode"] == ("rigid" if degrees_of_freedom == 6 else "affine")
     assert report["valid_voxels"] > 0
@@ -109,6 +111,9 @@ def test_t1_registration_writes_complete_grid_and_qa(
         "DTI_coregT1_V1.nii.gz",
         "DTI_FA_6dof_QA.nii.gz",
         "DTI_SSE_6dof_QA.nii.gz",
+        "DTIraw_FA_6dof_QA.nii.gz",
+        "DTIraw_SSE_6dof_QA.nii.gz",
+        "FA2T1_raw_QA.mat",
         "T1_brainrim_QA.nii.gz",
         "t1_registration_qa.json",
     ):
@@ -122,6 +127,7 @@ def test_t1_registration_writes_complete_grid_and_qa(
     assert np.all(tensor[~expected_mask] == 0)
     assert np.all(np.isfinite(tensor))
     assert json.loads((output / "t1_registration_qa.json").read_text())["workers"] == 8
+    assert report["raw_qa_6dof"]["status"] == "available"
 
 
 def test_t1_registration_has_no_alignment_fallback(tmp_path, monkeypatch):
@@ -154,11 +160,47 @@ def test_t1_registration_validates_inputs(tmp_path):
             paths["tensor"], paths["fa"], paths["t1"], paths["labels"],
             paths["corrected"], tmp_path / "output", workers=0
         )
+    with pytest.raises(ValueError, match="provided together"):
+        run_t1_registration_nifti(
+            paths["tensor"],
+            paths["fa"],
+            paths["t1"],
+            paths["labels"],
+            paths["corrected"],
+            tmp_path / "raw-pair",
+            raw_fa_file=paths["fa"],
+        )
     bad_t1 = tmp_path / "bad_t1.nii.gz"
     _save(bad_t1, np.ones((2, 2, 2), dtype=np.float32))
     with pytest.raises(ValueError, match="same spatial grid"):
         prepare_charm_t1_inputs(
             bad_t1, paths["labels"], paths["corrected"], tmp_path / "prepared"
+        )
+
+
+def test_raw_sse_resampling_must_return_an_image(tmp_path, monkeypatch):
+    paths, _ = _fixture(tmp_path)
+    monkeypatch.setattr(
+        t1_module,
+        "_estimate",
+        lambda *_args, **_kwargs: FlirtRegistrationResult(np.eye(4), 0.0, 1, 1),
+    )
+    monkeypatch.setattr(
+        t1_module,
+        "_resample_qa_images",
+        lambda moving, *_args, **_kwargs: (np.zeros_like(moving), None, 0.0),
+    )
+    with pytest.raises(RuntimeError, match="raw SSE resampling"):
+        run_t1_registration_nifti(
+            paths["tensor"],
+            paths["fa"],
+            paths["t1"],
+            paths["labels"],
+            paths["corrected"],
+            tmp_path / "raw-sse-output",
+            raw_fa_file=paths["fa"],
+            raw_sse_file=paths["sse"],
+            register_tensor_output=False,
         )
 
 

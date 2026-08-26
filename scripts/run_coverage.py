@@ -194,6 +194,8 @@ def _collect_e2e_coverage(
             str(fnirt_fixture / "T1.nii.gz"),
             str(affine),
             str(workspace / "fnirt-output"),
+            "--brain-mask",
+            str(fnirt_fixture / "T1_brain_mask.nii.gz"),
             "--workers",
             "8",
             "--progress",

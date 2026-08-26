@@ -2974,6 +2974,16 @@ def run_eddy_dwi_iterations(
     )
 
 
+def _same_diffusion_shell(bvals: np.ndarray) -> bool:
+    """Return FSL's strict pairwise ``abs(b1-b2) < 100`` shell predicate."""
+
+    values = np.asarray(bvals, dtype=np.float64).reshape(-1)
+    return bool(
+        values.size > 0
+        and np.all(np.abs(values[:, None] - values[None, :]) < 100.0)
+    )
+
+
 def run_simnibs46_eddy(
     scans: np.ndarray,
     bvals: np.ndarray,
@@ -3016,7 +3026,7 @@ def run_simnibs46_eddy(
     if b0_indices.size == 0 or dwi_indices.size < 2:
         raise ValueError("the fixed subset requires at least one b0 and two DWI scans")
     positive_bvals = shell_values[dwi_indices]
-    if np.max(positive_bvals) - np.min(positive_bvals) > 100.0:
+    if not _same_diffusion_shell(positive_bvals):
         raise ValueError("the fixed EDDY subset supports one diffusion shell")
     first_b0 = values[..., int(b0_indices[0])]
     mask_values = mask != 0

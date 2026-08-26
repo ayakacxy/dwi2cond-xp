@@ -7,7 +7,7 @@ The primary full-pipeline installation may use an existing, verified SimNIBS
 
 ```bash
 conda activate simnibs
-python -m pip install --no-deps dwi2cond_xp-0.2.0-py3-none-any.whl
+python -m pip install --no-deps dwi2cond_xp-0.3.0-py3-none-any.whl
 python -c "import simnibs, dwi2cond_xp; assert simnibs.__version__ == '4.6.0'"
 ```
 

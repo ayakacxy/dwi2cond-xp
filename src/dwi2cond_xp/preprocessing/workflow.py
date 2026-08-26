@@ -15,6 +15,7 @@ import numpy as np
 from .. import __version__
 from ..nifti_fit import fit_dti_nifti
 from ..simulation import run_tdcs
+from .brain_mask import write_bet_brain_mask
 from .eddy import run_eddy_nifti
 from .legacy import run_legacy_nifti
 from .nomoco import run_nomoco_nifti
@@ -22,6 +23,7 @@ from .nonlinear import register_tensor_fnirt_nifti
 from .orientation import write_fsl_reoriented
 from .pipeline import ArtifactContract, PipelineRunner, StageDefinition, StageRunResult
 from .qa import PipelineQaInputs, build_pipeline_qa
+from .rigid import write_aligned_b0_mean
 from .t1_registration import run_t1_registration_nifti
 from .tensor_ops import decompose_tensor6
 from .topup_eddy import run_topup_eddy_nifti
@@ -143,11 +145,17 @@ def _validate_config(config: Dwi2CondPipelineConfig) -> dict[str, Path]:
         for path in (config.data, config.bvals, config.bvecs):
             if path is None or not path.is_file():
                 raise FileNotFoundError(f"Missing pipeline input: {path}")
+        if config.preprocessing_mode != "eddy" and config.reverse_phase_encoding is not None:
+            raise ValueError("reverse phase-encoding input requires eddy preprocessing")
+        if config.preprocessing_mode != "eddy" and config.dwi_brain_mask is not None:
+            raise ValueError("an external DWI brain mask is only consumed by eddy preprocessing")
+        if config.preprocessing_mode != "eddy" and config.readout_seconds is not None:
+            raise ValueError("readout_seconds is only consumed by eddy preprocessing")
     if config.preprocessing_mode == "eddy":
         if config.reverse_phase_encoding is None:
-            if config.dwi_brain_mask is None or not config.dwi_brain_mask.is_file():
-                raise ValueError(
-                    "eddy mode requires dwi_brain_mask unless reverse PE is provided"
+            if config.dwi_brain_mask is not None and not config.dwi_brain_mask.is_file():
+                raise FileNotFoundError(
+                    f"Missing external EDDY brain mask: {config.dwi_brain_mask}"
                 )
         elif not config.reverse_phase_encoding.is_file():
             raise FileNotFoundError(
@@ -156,6 +164,10 @@ def _validate_config(config: Dwi2CondPipelineConfig) -> dict[str, Path]:
         if config.readout_seconds is None or config.phase_encoding_direction is None:
             raise ValueError("eddy mode requires readout_seconds and PE direction")
         if config.reverse_phase_encoding is not None:
+            if config.dwi_brain_mask is not None:
+                raise ValueError(
+                    "reverse PE TOPUP generates its own mask and cannot use an external DWI mask"
+                )
             if config.susceptibility_field is not None:
                 raise ValueError(
                     "reverse PE TOPUP and an external susceptibility field are mutually exclusive"
@@ -198,6 +210,10 @@ def _validate_config(config: Dwi2CondPipelineConfig) -> dict[str, Path]:
         for path in (config.fieldmap_magnitude, config.fieldmap_radians_per_second):
             if path is None or not path.is_file():
                 raise FileNotFoundError(f"Missing raw fieldmap input: {path}")
+    elif config.preprocessing_mode == "legacy" and config.phase_encoding_direction is not None:
+        raise ValueError("legacy PE direction is only consumed by raw fieldmap correction")
+    if config.preprocessing_mode == "nomoco" and config.phase_encoding_direction is not None:
+        raise ValueError("phase_encoding_direction is not consumed by nomoco preprocessing")
     if config.fieldmap_corrected_mask is not None:
         if config.preprocessing_mode != "legacy" or config.susceptibility_field is None:
             raise ValueError(
@@ -247,13 +263,17 @@ def _publish_tensor_to_m2m(source: Path, m2m: Path, version: str) -> dict[str, o
     shutil.copyfile(source, temporary)
     temporary.replace(destination)
     provenance = m2m / "DTI_coregT1_tensor.provenance.json"
+    source_sha256 = _sha256(source)
+    destination_sha256 = _sha256(destination)
+    if source_sha256 != destination_sha256:
+        raise RuntimeError("published tensor does not match its source SHA-256")
     payload: dict[str, object] = {
         "status": "completed",
         "implementation": "dwi2cond-xp",
         "version": version,
         "source": str(source.resolve()),
         "destination": str(destination.resolve()),
-        "sha256": _sha256(destination),
+        "sha256": destination_sha256,
     }
     temporary_json = m2m / ".DTI_coregT1_tensor.provenance.json.tmp"
     temporary_json.write_text(
@@ -261,6 +281,9 @@ def _publish_tensor_to_m2m(source: Path, m2m: Path, version: str) -> dict[str, o
         encoding="utf-8",
     )
     temporary_json.replace(provenance)
+    recorded = json.loads(provenance.read_text(encoding="utf-8"))
+    if recorded.get("sha256") != source_sha256 or _sha256(destination) != source_sha256:
+        raise RuntimeError("published tensor provenance SHA-256 is inconsistent")
     return payload
 
 
@@ -392,6 +415,8 @@ def run_dwi2cond_pipeline(
             ArtifactContract(preprocess / "DTI_valid_mask.nii.gz", "nifti", ndim=3),
             ArtifactContract(preprocess / "nodif_brain_mask.nii.gz", "nifti", ndim=3),
             ArtifactContract(preprocess / "nomoco_qa.json", "json"),
+            ArtifactContract(preprocess / "DWIbvals", "text"),
+            ArtifactContract(preprocess / "DWIbvecs", "text"),
         )
         corrected_dwi = config.data
         fit_bvals = preprocess / "DWIbvals"
@@ -427,6 +452,8 @@ def run_dwi2cond_pipeline(
             ArtifactContract(preprocess / "DTI_valid_mask.nii.gz", "nifti", ndim=3),
             ArtifactContract(preprocess / "nodif_brain_mask.nii.gz", "nifti", ndim=3),
             ArtifactContract(preprocess / "legacy_qa.json", "json"),
+            ArtifactContract(preprocess / "DWIbvals", "text"),
+            ArtifactContract(preprocess / "DWIbvecs", "text"),
         )
         if config.fieldmap_magnitude is not None:
             preprocess_outputs += (
@@ -456,6 +483,7 @@ def run_dwi2cond_pipeline(
             else "preprocess_eddy"
         )
         eddy_directory = preprocess / "eddy"
+        eddy_mask_preparation = preprocess / "eddy_mask_preparation"
         dti_directory = preprocess / "dti"
 
         def run_preprocess() -> dict[str, object]:
@@ -473,11 +501,42 @@ def run_dwi2cond_pipeline(
                     progress=subprogress(preprocess_name),
                 )
             else:
+                eddy_input = config.data
+                eddy_mask = config.dwi_brain_mask
+                if eddy_mask is None:
+                    eddy_mask_preparation.mkdir(parents=True, exist_ok=True)
+                    eddy_input = write_fsl_reoriented(
+                        config.data,
+                        eddy_mask_preparation / "DWIraw.nii",
+                        float32=True,
+                        nonnegative=False,
+                    )
+                    b0_mean = write_aligned_b0_mean(
+                        eddy_input,
+                        config.bvals,
+                        eddy_mask_preparation / "nodif.nii.gz",
+                        b0_threshold=0.0,
+                        workers=config.workers,
+                        progress=(
+                            None
+                            if progress is None
+                            else lambda done, total: progress(
+                                f"{preprocess_name}:align_b0", done, total, "running"
+                            )
+                        ),
+                    )
+                    eddy_mask = eddy_mask_preparation / "nodif_brain_mask.nii.gz"
+                    write_bet_brain_mask(
+                        b0_mean,
+                        eddy_mask,
+                        fractional_threshold=0.2,
+                        workers=config.workers,
+                    )
                 report = run_eddy_nifti(
-                    config.data,
+                    eddy_input,
                     config.bvals,
                     config.bvecs,
-                    config.dwi_brain_mask,
+                    eddy_mask,
                     eddy_directory,
                     readout_seconds=float(config.readout_seconds),
                     phase_encoding_direction=str(config.phase_encoding_direction),
@@ -506,6 +565,25 @@ def run_dwi2cond_pipeline(
                     eddy_directory / "susceptibility_field_hz.nii.gz",
                     "nifti",
                     ndim=3,
+                )
+            )
+        if (
+            config.reverse_phase_encoding is None
+            and config.dwi_brain_mask is None
+        ):
+            eddy_outputs.extend(
+                (
+                    ArtifactContract(
+                        eddy_mask_preparation / "DWIraw.nii", "nifti", ndim=4
+                    ),
+                    ArtifactContract(
+                        eddy_mask_preparation / "nodif.nii.gz", "nifti", ndim=3
+                    ),
+                    ArtifactContract(
+                        eddy_mask_preparation / "nodif_brain_mask.nii.gz",
+                        "nifti",
+                        ndim=3,
+                    ),
                 )
             )
         if config.reverse_phase_encoding is not None:
@@ -592,6 +670,13 @@ def run_dwi2cond_pipeline(
                 "fieldmap_corrected_mask": config.fieldmap_corrected_mask is not None,
                 "raw_fieldmap": config.fieldmap_magnitude is not None,
                 "fieldmap_dwell_milliseconds": config.fieldmap_dwell_milliseconds,
+                "eddy_mask_source": (
+                    "topup-corrected-b0-bet"
+                    if config.reverse_phase_encoding is not None
+                    else "external-extension"
+                    if config.dwi_brain_mask is not None
+                    else "official-exact-b0-alignment-bet-0.2"
+                ),
             },
             implementation_version=version,
         )
@@ -632,6 +717,83 @@ def run_dwi2cond_pipeline(
         dti = preprocess
         fit_dependency = preprocess_name
 
+    raw_fit_dependency: str | None = None
+    raw_dti_directory: Path | None = None
+    if config.preprocessing_mode != "prefit":
+        raw_dti_directory = preprocess / "raw_dti_qa"
+        raw_dwi = raw_dti_directory / "DWIraw.nii"
+        raw_grad_dev = (
+            None if config.grad_dev is None else raw_dti_directory / "grad_dev.nii"
+        )
+
+        def run_raw_fit() -> dict[str, object]:
+            raw_dti_directory.mkdir(parents=True, exist_ok=True)
+            write_fsl_reoriented(
+                config.data,
+                raw_dwi,
+                float32=True,
+                nonnegative=False,
+            )
+            if config.grad_dev is not None and raw_grad_dev is not None:
+                write_fsl_reoriented(
+                    config.grad_dev,
+                    raw_grad_dev,
+                    float32=True,
+                )
+            fit_dti_nifti(
+                raw_dwi,
+                config.bvals,
+                config.bvecs,
+                dwi_mask,
+                raw_dti_directory / "DTI.nii.gz",
+                grad_dev_file=raw_grad_dev,
+                workers=config.workers,
+                compatibility_mode=config.fit_compatibility_mode,
+                valid_mask_file=raw_dti_directory / "DTI_valid_mask.nii.gz",
+                qa_file=raw_dti_directory / "DTI_qa.json",
+            )
+            (raw_dti_directory / "DTI.nii.gz").replace(
+                raw_dti_directory / "DTI_tensor.nii.gz"
+            )
+            return {"status": "completed", "fit": "raw-pre-correction"}
+
+        raw_outputs = [
+            ArtifactContract(raw_dwi, "nifti", ndim=4),
+            ArtifactContract(
+                raw_dti_directory / "DTI_tensor.nii.gz",
+                "nifti",
+                ndim=4,
+                final_axis=6,
+            ),
+            ArtifactContract(raw_dti_directory / "DTI_FA.nii.gz", "nifti", ndim=3),
+            ArtifactContract(raw_dti_directory / "DTI_sse.nii.gz", "nifti", ndim=3),
+            ArtifactContract(
+                raw_dti_directory / "DTI_valid_mask.nii.gz", "nifti", ndim=3
+            ),
+            ArtifactContract(raw_dti_directory / "DTI_qa.json", "json"),
+        ]
+        raw_inputs = [config.data, config.bvals, config.bvecs, dwi_mask]
+        if config.grad_dev is not None and raw_grad_dev is not None:
+            raw_inputs.append(config.grad_dev)
+            raw_outputs.append(
+                ArtifactContract(raw_grad_dev, "nifti", ndim=4, final_axis=9)
+            )
+        stages.append(
+            StageDefinition(
+                "fit_raw_dti_qa",
+                run_raw_fit,
+                inputs=tuple(raw_inputs),
+                outputs=tuple(raw_outputs),
+                dependencies=(preprocess_name,),
+                parameters={
+                    "workers": config.workers,
+                    "fit": "official-pre-correction-FSL-WLS",
+                },
+                implementation_version=version,
+            )
+        )
+        raw_fit_dependency = "fit_raw_dti_qa"
+
     def run_registration() -> dict[str, object]:
         sse_file = (
             None
@@ -646,6 +808,16 @@ def run_dwi2cond_pipeline(
             m2m["bias_corrected"],
             registration,
             sse_file=sse_file,
+            raw_fa_file=(
+                None
+                if raw_dti_directory is None
+                else raw_dti_directory / "DTI_FA.nii.gz"
+            ),
+            raw_sse_file=(
+                None
+                if raw_dti_directory is None
+                else raw_dti_directory / "DTI_sse.nii.gz"
+            ),
             degrees_of_freedom=6 if config.t1_mode == "rigid" else 12,
             workers=config.workers,
             register_tensor_output=config.t1_mode != "nonlinear",
@@ -658,6 +830,7 @@ def run_dwi2cond_pipeline(
         ArtifactContract(registration / "T1_brain.nii.gz", "nifti", ndim=3),
         ArtifactContract(registration / "T1_brainmask.nii.gz", "nifti", ndim=3),
         ArtifactContract(registration / "t1_registration_qa.json", "json"),
+        ArtifactContract(registration / "DTI_FA_6dof_QA.nii.gz", "nifti", ndim=3),
     ]
     if config.t1_mode != "nonlinear":
         registration_outputs.extend(
@@ -677,13 +850,40 @@ def run_dwi2cond_pipeline(
     ]
     if config.preprocessing_mode != "prefit":
         registration_inputs.insert(2, dti / "DTI_sse.nii.gz")
+        registration_inputs.extend(
+            (
+                raw_dti_directory / "DTI_FA.nii.gz",
+                raw_dti_directory / "DTI_sse.nii.gz",
+            )
+        )
+        registration_outputs.extend(
+            (
+                ArtifactContract(
+                    registration / "DTI_SSE_6dof_QA.nii.gz", "nifti", ndim=3
+                ),
+                ArtifactContract(
+                    registration / "DTIraw_FA_6dof_QA.nii.gz", "nifti", ndim=3
+                ),
+                ArtifactContract(
+                    registration / "DTIraw_SSE_6dof_QA.nii.gz", "nifti", ndim=3
+                ),
+                ArtifactContract(registration / "FA2T1_raw_QA.mat", "text"),
+            )
+        )
+    registration_dependencies = tuple(
+        dict.fromkeys(
+            dependency
+            for dependency in (fit_dependency, raw_fit_dependency)
+            if dependency is not None
+        )
+    )
     stages.append(
         StageDefinition(
             "register_t1",
             run_registration,
             inputs=tuple(registration_inputs),
             outputs=tuple(registration_outputs),
-            dependencies=(fit_dependency,),
+            dependencies=registration_dependencies,
             parameters={
                 "mode": "rigid" if config.t1_mode == "rigid" else "affine",
                 "workers": config.workers,
@@ -864,11 +1064,14 @@ def run_dwi2cond_pipeline(
                 valid_mask=final_directory / "DTI_coregT1_valid_mask.nii.gz",
                 raw_dwi=config.data,
                 corrected_dwi=corrected_dwi,
+                raw_registered_fa=registration / "DTIraw_FA_6dof_QA.nii.gz",
+                raw_registered_sse=registration / "DTIraw_SSE_6dof_QA.nii.gz",
                 rotated_bvecs=(
                     fit_bvecs if config.preprocessing_mode in ("legacy", "eddy") else None
                 ),
                 t1=m2m["t1"],
                 registered_fa=final_directory / "DTI_coregT1_FA.nii.gz",
+                sse=registration / "DTI_SSE_6dof_QA.nii.gz",
                 v1=final_directory / "DTI_coregT1_V1.nii.gz",
                 field_hz=(
                     (
@@ -929,6 +1132,10 @@ def run_dwi2cond_pipeline(
             final_directory / "DTI_coregT1_valid_mask.nii.gz",
             config.data,
             corrected_dwi,
+            registration / "DTI_FA_6dof_QA.nii.gz",
+            registration / "DTI_SSE_6dof_QA.nii.gz",
+            registration / "DTIraw_FA_6dof_QA.nii.gz",
+            registration / "DTIraw_SSE_6dof_QA.nii.gz",
             m2m["t1"],
             final_directory / "DTI_coregT1_V1.nii.gz",
             *fem_manifests.values(),
@@ -969,9 +1176,15 @@ def run_dwi2cond_pipeline(
         implementation_files=implementation_files,
     )
     results = runner.run(stages)
-    # Aggregated QA has already read and validated upstream values; validate only
-    # the final published artifacts here to avoid decoding the large DWI again.
-    runner.validate_final_outputs(stages[-1:])
+    # Aggregated QA has already read upstream values. Revalidate the publication
+    # stage explicitly so source, published tensor, provenance, and cache lineage
+    # cannot diverge while avoiding another decode of the large corrected DWI.
+    final_validation_stages = [stages[-1]]
+    if publish_dependency is not None:
+        final_validation_stages.insert(
+            0, next(stage for stage in stages if stage.name == publish_dependency)
+        )
+    runner.validate_final_outputs(final_validation_stages)
     return Dwi2CondPipelineResult(
         stages=results,
         final_tensor=final_tensor,

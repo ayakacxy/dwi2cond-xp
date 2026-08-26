@@ -215,6 +215,39 @@ def test_fieldmap_route_preserves_units_direction_and_worker_contract(
     assert "fieldmap_qa.json" in capsys.readouterr().out
 
 
+def test_standalone_eddy_accepts_z_phase_encoding(monkeypatch, capsys) -> None:
+    calls: dict[str, object] = {}
+
+    def fake_eddy(*args, progress, **kwargs):
+        calls["call"] = (args, kwargs)
+        progress("complete", 1, 1)
+        return {"status": "completed"}
+
+    monkeypatch.setattr(cli, "run_eddy_nifti", fake_eddy)
+    monkeypatch.setattr(cli, "tqdm", _Progress)
+
+    status = cli.main(
+        [
+            "prepare-eddy",
+            "dwi",
+            "bvals",
+            "bvecs",
+            "mask",
+            "output",
+            "--readout-seconds",
+            "0.05",
+            "--phase-encoding-direction",
+            "z-",
+            "--progress",
+            "off",
+        ]
+    )
+
+    assert status == 0
+    assert calls["call"][1]["phase_encoding_direction"] == "z-"
+    assert "eddy_qa.json" in capsys.readouterr().out
+
+
 def test_registration_and_mesh_routes(monkeypatch, tmp_path: Path) -> None:
     calls: dict[str, object] = {}
 
@@ -362,6 +395,8 @@ def test_nonlinear_t1_registration_route_uses_fixed_contract(
                 "T1_brain.nii.gz",
                 "FA2T1.mat",
                 str(output),
+                "--brain-mask",
+                "T1_brainmask.nii.gz",
                 "--workers",
                 "8",
             ]
@@ -377,7 +412,7 @@ def test_nonlinear_t1_registration_route_uses_fixed_contract(
             str(output),
         ),
             {
-                "brain_mask_file": None,
+                "brain_mask_file": "T1_brainmask.nii.gz",
                 "workers": 8,
                 "compatibility_mode": "strict-fsl",
             },
@@ -416,6 +451,8 @@ def test_nonlinear_progress_closes_replaced_and_failed_detail_bars(
                 "T1_brain.nii.gz",
                 "FA2T1.mat",
                 str(tmp_path / "nonlinear"),
+                "--brain-mask",
+                "T1_brainmask.nii.gz",
             ]
         )
     created = _Progress.instances[first_progress:]

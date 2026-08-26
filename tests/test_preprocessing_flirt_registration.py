@@ -202,6 +202,11 @@ def test_batched_request_guard_rejects_missing_result() -> None:
         ("workers", 0, "positive integer"),
         ("workers", 1.5, "positive integer"),
         ("cost_function", "unsupported", "correlation_ratio or mutual_information"),
+        (
+            "search_cost_function",
+            "unsupported",
+            "correlation_ratio or mutual_information",
+        ),
         ("initial_matrix", np.eye(3), "finite invertible 4x4"),
         ("initial_matrix", np.diag([0.0, 1.0, 1.0, 1.0]), "finite invertible 4x4"),
         ("qsform_matrix", np.full((4, 4), np.nan), "finite invertible 4x4"),
@@ -222,46 +227,88 @@ def test_registration_rejects_invalid_options(keyword: str, value: object, messa
         register_flirt_affine(**arguments)
 
 
-@pytest.mark.parametrize(
-    ("degrees_of_freedom", "expected_dofs"),
-    [(6, [6, 6, 6]), (8, [7, 7, 8, 8]), (12, [7, 7, 9, 12, 12])],
-)
-def test_nosearch_mutual_information_schedule(
-    monkeypatch, degrees_of_freedom: int, expected_dofs: list[int]
-) -> None:
-    level = SimpleNamespace(
-        reference=np.ones((3, 3, 3), dtype=np.float32),
-        moving=np.ones((3, 3, 3), dtype=np.float32),
-        reference_weight=np.ones((3, 3, 3), dtype=np.float32),
-        moving_weight=np.ones((3, 3, 3), dtype=np.float32),
-        reference_sampling=np.eye(4),
-        moving_sampling=np.eye(4),
-        bins=16,
-        requested_scale=1.0,
-    )
-    monkeypatch.setattr(
-        registration_module, "build_flirt_pyramid", lambda *_args: {1: level, 2: level, 4: level}
-    )
-    monkeypatch.setattr(registration_module, "FlirtWeightedMutualInformation", lambda *_args, **_kwargs: object())
-    dofs = []
+def test_nosearch_mutual_information_uses_full_default_schedule(monkeypatch) -> None:
+    volume = np.ones((3, 3, 3), dtype=np.float32)
+    captured = {}
 
-    def optimize(_evaluator, _initial, matrices, dof, *_args, **_kwargs):
-        dofs.append(dof)
-        return [registration_module._Candidate(float(dof), matrices[0])], 2
+    def register(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return registration_module.FlirtRegistrationResult(np.eye(4), 0.0, 1, 1)
 
-    monkeypatch.setattr(registration_module, "_parallel_optimize", optimize)
+    monkeypatch.setattr(registration_module, "register_flirt_affine", register)
     result = register_flirt_nosearch_mutual_information(
-        level.reference,
-        level.moving,
+        volume,
+        volume,
         np.eye(4),
         np.eye(4),
-        degrees_of_freedom=degrees_of_freedom,
+        degrees_of_freedom=12,
         initial_matrix=np.eye(4),
         workers=2,
     )
-    assert dofs == expected_dofs
-    assert result.evaluations == 2 * len(expected_dofs)
+    assert captured["kwargs"]["degrees_of_freedom"] == 12
+    assert captured["kwargs"]["workers"] == 2
+    assert captured["kwargs"]["cost_function"] == "mutual_information"
+    assert captured["kwargs"]["search_cost_function"] == "correlation_ratio"
+    assert captured["kwargs"]["nosearch"] is True
+    assert captured["kwargs"]["use_weights"] is False
+    np.testing.assert_array_equal(captured["args"][2], np.ones_like(volume))
+    np.testing.assert_array_equal(captured["args"][3], np.ones_like(volume))
     assert np.array_equal(result.matrix, np.eye(4))
+
+
+@pytest.mark.parametrize("maximum_dof", [6, 7])
+def test_nosearch_executes_reduced_translation_and_scale_schedule(
+    monkeypatch: pytest.MonkeyPatch, maximum_dof: int
+) -> None:
+    volume = np.ones((3, 3, 3), dtype=np.float32)
+    level = SimpleNamespace(
+        moving=volume,
+        reference=volume,
+        moving_sampling=np.eye(4),
+        reference_sampling=np.eye(4),
+        requested_scale=8.0,
+    )
+    progress: list[tuple[str, int, int]] = []
+    monkeypatch.setattr(
+        registration_module,
+        "_level_evaluator",
+        lambda *_args, **_kwargs: lambda matrix: float(np.sum(matrix)),
+    )
+    monkeypatch.setattr(
+        registration_module,
+        "flirt_intensity_cog",
+        lambda *_args: np.zeros(3, dtype=np.float64),
+    )
+    monkeypatch.setattr(
+        registration_module,
+        "flirt_brent_optimize",
+        lambda parameters, *_args, **_kwargs: SimpleNamespace(
+            parameters=np.ones_like(parameters), evaluations=2
+        ),
+    )
+
+    def optimize(_evaluator, _initial, matrices, *_args, **_kwargs):
+        return [registration_module._Candidate(0.0, matrices[0])], 3
+
+    monkeypatch.setattr(registration_module, "_parallel_optimize", optimize)
+    optimized, preoptimized, evaluations = registration_module._search(
+        level,
+        np.eye(4),
+        maximum_dof,
+        1,
+        lambda *event: progress.append(event),
+        "correlation_ratio",
+        True,
+    )
+
+    assert len(optimized) == len(preoptimized) == 1
+    assert evaluations == 6
+    assert progress == [("search", 1, 1)]
+    if maximum_dof == 7:
+        np.testing.assert_allclose(np.diag(preoptimized[0].matrix)[:3], 2.0)
+    else:
+        np.testing.assert_allclose(np.diag(preoptimized[0].matrix)[:3], 1.0)
 
 
 @pytest.mark.parametrize(

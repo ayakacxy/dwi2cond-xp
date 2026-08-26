@@ -9,6 +9,26 @@ versions follow semantic versioning.
 
 ### Fixed
 
+- Corrected GRE displacement/premat coordinate composition and made raw GRE
+  registration consume the brain-masked nodif image; a non-identity real-FSL
+  `applywarp` regression now locks the composition order.
+- Made cache reuse verify current file and directory SHA-256 values, and made
+  m2m publication require source, destination, and provenance hashes to agree.
+- Made the no-TOPUP EDDY workflow construct its exact-b0 aligned nodif and BET
+  0.2 mask internally while retaining an explicitly labelled external-mask
+  extension.
+- Restored the full FLIRT `-nosearch` default schedule, unweighted pyramid,
+  correlation-ratio search cost, and FSL perturbation/range semantics; added a
+  failing same-input stage/final-output FSL regression gate.
+- Separated the `fslmaths -tensor_decomp` positive-eigenvalue rule from the
+  `dtifit` threshold, restored strict EDDY shell distance `<100`, and aligned
+  NaN, threshold, upper-median, and mask-multiply edge semantics with FSL.
+- Rejected ignored reverse-PE/mask/readout combinations, enabled standalone
+  EDDY z/z- phase encoding, and required the T1 brain mask for standalone
+  nonlinear PPD.
+- Added pre-correction raw FA/SSE fitting and 6-DOF T1 QA to every raw-DWI
+  branch, corrected strict validity accounting, and declared bvals/bvecs in
+  nomoco and legacy producer contracts.
 - Corrected the complete EDDY DAG to fit the registered
   `corrected_dwi.nii.gz`, apply the all-volume output mask, and perform the
   official final nonnegative threshold only after geometric correction.
@@ -36,6 +56,8 @@ versions follow semantic versioning.
 
 ### Added
 
+- Added the independent v0.3.0 audit, its issue-by-issue remediation report,
+  and a 16-threshold executable legacy/FSL stage and final-output comparison.
 - Added `run-prefit-pipeline` and a complete reverse-PE `run-pipeline` branch.
 - Added a versioned v0.2.0 algorithm audit and a v0.3.0 remediation/equivalence
   audit with an explicit supported-input boundary.
@@ -45,6 +67,10 @@ versions follow semantic versioning.
 
 ### Changed
 
+- Replaced the original v0.3.0 release after the independent audit while
+  retaining the version number. Claims now distinguish confirmed defect
+  closure and frozen synthetic tolerances from whole-optimizer or real-subject
+  bitwise equivalence.
 - Repositioned v0.3.0 as a correctness and official-flow remediation release.
   The previously planned acceleration cycle is deferred to v0.4.0 or later.
 - Clarified that the supported GRE input is already-unwrapped radians per
