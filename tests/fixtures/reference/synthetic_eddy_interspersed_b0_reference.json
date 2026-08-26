@@ -37,6 +37,33 @@
       "bvecs": "d3af84265c447d520dc15717fd33b7a55d942464749ef0003264c5b446906aba",
       "acqp.txt": "e06a0a33b6a2ad8821925fb86f1d13967c4194fe1f2597023df61b93f31fc149",
       "index.txt": "d0c6b7f89430f4d72b2245e115987f0f639a90d48bda4a5f2c6d0f330f040ddc"
+    },
+    "dwi_numeric_contract": {
+      "exact_hash_platform": "Linux x86_64 reference used for the FSL 6.0.4 A/B",
+      "shape": [26, 26, 18, 26],
+      "dtype": "float32",
+      "affine": [
+        [-2.0, 0.0, 0.0, 25.0],
+        [0.0, 2.0, 0.0, -25.0],
+        [0.0, 0.0, 2.0, -17.0],
+        [0.0, 0.0, 0.0, 1.0]
+      ],
+      "finite_count": 316368,
+      "nonzero_count": 305185,
+      "sum": 42268459.30198251,
+      "l2_squared": 22754804556.814472,
+      "min": -264.8589172363281,
+      "max": 1268.0537109375,
+      "center_samples": [
+        871.144775390625,
+        546.6719360351562,
+        23.64036750793457,
+        875.8335571289062,
+        503.8999938964844,
+        547.9653930664062,
+        870.2289428710938
+      ],
+      "weak_slice_nonzero_count": 676
     }
   },
   "commands": {

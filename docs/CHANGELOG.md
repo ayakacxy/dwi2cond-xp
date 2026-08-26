@@ -9,6 +9,10 @@ versions follow semantic versioning.
 
 ### Fixed
 
+- Made the interspersed-b0 EDDY fixture gate portable across CPU architectures:
+  the Linux x86_64 input hash remains frozen as FSL A/B provenance, while the
+  generated DWI is also checked by affine, dtype, numerical summaries, samples,
+  and injected-slice semantics instead of requiring cross-platform byte identity.
 - Closed the post-remediation re-audit findings `D2C-030-015..041`, including
   EDDY interspersed-b0 initialization, post-PEAS final repol, no-repol
   estimation semantics, FSL shell grouping, TOPUP common output scaling, and
