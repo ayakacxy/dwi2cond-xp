@@ -235,7 +235,8 @@ def _intensity_center_scaled_mm(
 def _sample_smoothed_linear_kernel(
     moving: np.ndarray,
     inverse_scaled: np.ndarray,
-    spacing_mm: np.ndarray,
+    reference_spacing_mm: np.ndarray,
+    moving_spacing_mm: np.ndarray,
     smooth_voxels: np.ndarray,
     upper: np.ndarray,
     full_weights: np.ndarray,
@@ -246,29 +247,29 @@ def _sample_smoothed_linear_kernel(
     nx, ny, nz = full_weights.shape
     valid_count = 0
     for x in range(nx):
-        x_mm = x * spacing_mm[0]
+        x_mm = x * reference_spacing_mm[0]
         for y in range(ny):
-            y_mm = y * spacing_mm[1]
+            y_mm = y * reference_spacing_mm[1]
             for z in range(nz):
-                z_mm = z * spacing_mm[2]
+                z_mm = z * reference_spacing_mm[2]
                 coordinate_x = (
                     inverse_scaled[0, 0] * x_mm
                     + inverse_scaled[0, 1] * y_mm
                     + inverse_scaled[0, 2] * z_mm
                     + inverse_scaled[0, 3]
-                ) / spacing_mm[0]
+                ) / moving_spacing_mm[0]
                 coordinate_y = (
                     inverse_scaled[1, 0] * x_mm
                     + inverse_scaled[1, 1] * y_mm
                     + inverse_scaled[1, 2] * z_mm
                     + inverse_scaled[1, 3]
-                ) / spacing_mm[1]
+                ) / moving_spacing_mm[1]
                 coordinate_z = (
                     inverse_scaled[2, 0] * x_mm
                     + inverse_scaled[2, 1] * y_mm
                     + inverse_scaled[2, 2] * z_mm
                     + inverse_scaled[2, 3]
-                ) / spacing_mm[2]
+                ) / moving_spacing_mm[2]
                 if (
                     coordinate_x < 0.0
                     or coordinate_y < 0.0
@@ -324,10 +325,16 @@ def _sample_smoothed_linear(
     upper: np.ndarray,
     full_weights: np.ndarray,
     full_moving: np.ndarray,
+    moving_spacing_mm: float | Sequence[float] | None = None,
 ) -> int:
     """Sample one volume on a scalar or anisotropic physical grid."""
 
     spacing = _spacing_vector(spacing_mm)
+    moving_spacing = (
+        spacing
+        if moving_spacing_mm is None
+        else _spacing_vector(moving_spacing_mm)
+    )
     smoothing = np.asarray(smooth_voxels, dtype=np.float64)
     if smoothing.ndim == 0:
         smoothing = np.repeat(smoothing, 3)
@@ -339,6 +346,7 @@ def _sample_smoothed_linear(
         moving,
         inverse_scaled,
         spacing,
+        moving_spacing,
         smoothing,
         upper,
         full_weights,
@@ -523,13 +531,19 @@ class _SmoothedNormCorr:
         center: np.ndarray,
         degrees_of_freedom: int = 6,
         smooth_mm: float = 1.0,
+        moving_spacing_mm: float | Sequence[float] | None = None,
     ) -> None:
         self.reference = reference.astype(np.float32, copy=False)
         self.moving = moving.astype(np.float32, copy=False)
         self.spacing_mm = _spacing_vector(spacing_mm)
+        self.moving_spacing_mm = (
+            self.spacing_mm
+            if moving_spacing_mm is None
+            else _spacing_vector(moving_spacing_mm)
+        )
         self.center = center
         self.degrees_of_freedom = degrees_of_freedom
-        self.smooth_voxels = smooth_mm / self.spacing_mm
+        self.smooth_voxels = smooth_mm / self.moving_spacing_mm
         self.upper = np.asarray(self.moving.shape, dtype=np.float64) - 1.0001
         self.full_weights = np.zeros(self.reference.shape, dtype=np.float32)
         self.full_moving = np.zeros(self.reference.shape, dtype=np.float32)
@@ -556,6 +570,7 @@ class _SmoothedNormCorr:
             self.upper,
             self.full_weights,
             self.full_moving,
+            self.moving_spacing_mm,
         )
         if valid_count < 3:
             return 1.0
@@ -724,9 +739,13 @@ def _optimize_one_stage(
     degrees_of_freedom: int = 6,
     parameter_axes: Sequence[int] | None = None,
     smooth_mm: float = 1.0,
+    moving_spacing_mm: float | Sequence[float] | None = None,
 ) -> tuple[np.ndarray, float, int]:
+    moving_spacing = spacing_mm if moving_spacing_mm is None else moving_spacing_mm
     center = (
-        _intensity_center_scaled_mm(moving, spacing_mm) if center is None else center
+        _intensity_center_scaled_mm(moving, moving_spacing)
+        if center is None
+        else center
     )
     parameters = (
         _rigid_parameters(initial_transform, center)
@@ -740,6 +759,7 @@ def _optimize_one_stage(
         center,
         degrees_of_freedom,
         smooth_mm=smooth_mm,
+        moving_spacing_mm=moving_spacing,
     )
     tolerances = np.array(
         [0.005] * 3 + [0.2] * 3 + [0.002] * 3 + [0.001] * 3,

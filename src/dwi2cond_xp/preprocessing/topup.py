@@ -2470,12 +2470,12 @@ def run_simnibs46_topup(
         raise ValueError("the SimNIBS fixed subset requires two finite 3D scans")
     rows = validate_acquisition_parameters(acquisition_parameters, number_of_volumes=2)
     scaled = np.ascontiguousarray(values.copy())
-    input_means = np.empty(2, dtype=np.float32)
+    input_means = np.empty(2, dtype=np.float64)
     for index in range(2):
-        mean = float(np.mean(scaled[..., index], dtype=np.float32))
+        mean = float(np.mean(scaled[..., index], dtype=np.float64))
         if mean == 0.0:
             raise ValueError("TOPUP cannot scale an input volume with zero mean")
-        input_means[index] = np.float32(mean)
+        input_means[index] = mean
         scaled[..., index] *= np.float32(100.0 / mean)
 
     regridded_scans: list[np.ndarray] = []
@@ -2591,7 +2591,7 @@ def run_simnibs46_topup(
         coefficients, values.shape[:3], previous_spacing
     ).astype(np.float32)
     corrected_scans = final_state.corrected_scans.copy()
-    common_mean = np.mean(input_means, dtype=np.float32)
+    common_mean = np.mean(input_means, dtype=np.float64)
     corrected_scans *= np.float32(common_mean / 100.0)
     return TopupRunResult(
         coefficients,

@@ -48,7 +48,7 @@ def test_float32_mean_and_validation() -> None:
         legacy._float32_mean(volumes, np.array([], dtype=int))
 
     position, matrix, cost, count = legacy._optimize_stage_payload(
-        (0, volumes[0], volumes[0], 4.0, np.eye(4), 0.8, np.zeros(3), 6)
+        (0, volumes[0], volumes[0], 4.0, 4.0, np.eye(4), 0.8, np.zeros(3), 6)
     )
     assert position == 0
     assert matrix.shape == (4, 4)
@@ -78,7 +78,7 @@ def test_register_series_contract_and_progress(monkeypatch) -> None:
         lambda _value, _spacing: np.zeros(3),
     )
 
-    def optimize(_ref, _mov, _spacing, initial, _tol, _center, dof):
+    def optimize(_ref, _mov, _spacing, initial, _tol, _center, dof, **_kwargs):
         result = initial.copy()
         result[0, 3] += dof / 100.0
         return result, float(dof), 3
@@ -197,9 +197,45 @@ def test_mcflirt_thin_volume_uses_official_fix2d_contract(monkeypatch) -> None:
     assert all(spacing[-1] == 5.0 for _shape, spacing in captured_grids)
     assert len(captured_optimizations) == 4
     for fixed_shape, moving_shape, spacing, kwargs in captured_optimizations:
-        assert fixed_shape == moving_shape == volume.shape[:2] + (4,)
+        assert fixed_shape == volume.shape[:2] + (6,)
+        assert moving_shape == volume.shape[:2] + (4,)
         assert spacing == (4.0, 4.0, 8.0)
-        assert kwargs == {"parameter_axes": (2, 3, 4), "smooth_mm": 0.1}
+        assert kwargs["parameter_axes"] == (2, 3, 4)
+        assert kwargs["smooth_mm"] == 0.1
+        assert tuple(kwargs["moving_spacing_mm"]) == (1.0, 1.0, 8.0)
+
+
+@pytest.mark.parametrize(
+    ("slice_spacing", "expected_fix_2d", "expected_reference_z"),
+    ((4.0, True, 6), (4.2, True, 6), (4.8, False, 3)),
+)
+def test_mcflirt_fix2d_uses_first_resampled_reference_fov(
+    monkeypatch,
+    slice_spacing: float,
+    expected_fix_2d: bool,
+    expected_reference_z: int,
+) -> None:
+    volume = np.repeat(_volume(1.0)[..., :1], 5, axis=2)
+    captured: list[tuple[tuple[int, ...], tuple[int, ...], dict[str, object]]] = []
+
+    def optimize(fixed, moving, _spacing, initial, *_args, **kwargs):
+        captured.append((fixed.shape, moving.shape, kwargs))
+        return initial.copy(), 0.0, 1
+
+    monkeypatch.setattr(legacy, "_optimize_one_stage", optimize)
+    legacy._register_mcflirt_series(
+        [volume],
+        volume,
+        np.diag((1.0, 1.0, slice_spacing, 1.0)),
+        degrees_of_freedom=6,
+        workers=1,
+        stages_mm=(8.0,),
+    )
+
+    fixed_shape, moving_shape, kwargs = captured[0]
+    assert fixed_shape[2] == expected_reference_z
+    assert moving_shape[2] == (7 if expected_fix_2d else 5)
+    assert ("parameter_axes" in kwargs) is expected_fix_2d
 
 
 @pytest.mark.skipif(

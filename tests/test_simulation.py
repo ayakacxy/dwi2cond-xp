@@ -60,7 +60,15 @@ def test_scalar_dry_run_does_not_require_tensor(tmp_path: Path) -> None:
     assert manifest["status"] == "planned"
     assert manifest["input"]["tensor"] is None
     assert manifest["map_to_subject_volume"] is True
-    assert (tmp_path / "simulation/scalar/dwi2cond_xp_simulation.json").is_file()
+    assert (
+        tmp_path / "simulation/dry-run/scalar/dwi2cond_xp_simulation.json"
+    ).is_file()
+
+
+def test_scalar_mode_rejects_unused_tensor(tmp_path: Path) -> None:
+    subpath, tensor = _make_subject(tmp_path)
+    with pytest.raises(ValueError, match="must not be provided"):
+        validate_simulation_inputs(subpath, mode="scalar", tensor_file=tensor)
 
 
 def test_anisotropic_mode_requires_tensor(tmp_path: Path) -> None:
@@ -341,6 +349,37 @@ def test_run_tdcs_rejects_cpu_count(tmp_path: Path) -> None:
         run_tdcs(tmp_path, tmp_path / "out", mode="scalar", cpus=0)
 
 
+def test_dry_run_validates_static_montage_before_writing(tmp_path: Path) -> None:
+    subpath, _ = _make_subject(tmp_path)
+    output = tmp_path / "out"
+    with pytest.raises(ValueError, match="must be positive"):
+        run_tdcs(
+            subpath,
+            output,
+            mode="scalar",
+            current_ma=0.0,
+            dry_run=True,
+        )
+    assert not output.exists()
+    with pytest.raises(ValueError, match="distinct nonempty"):
+        run_tdcs(
+            subpath,
+            output,
+            mode="scalar",
+            anode="C3",
+            cathode="C3",
+            dry_run=True,
+        )
+    with pytest.raises(ValueError, match="at least one SimNIBS output field"):
+        run_tdcs(
+            subpath,
+            output,
+            mode="scalar",
+            fields="",
+            dry_run=True,
+        )
+
+
 def test_run_tdcs_completes_and_masks_outputs(monkeypatch, tmp_path: Path) -> None:
     subpath, tensor = _make_subject(tmp_path)
     tissues = np.array([1, 2, 3, 5] * 15, dtype=np.uint8).reshape(3, 4, 5)
@@ -348,11 +387,14 @@ def test_run_tdcs_completes_and_masks_outputs(monkeypatch, tmp_path: Path) -> No
 
     def runner(session, cpus):
         assert cpus == 2
-        output = Path(session.pathfem) / "subject_volumes"
+        root = Path(session.pathfem)
+        mesh = root / "mesh.msh"
+        mesh.write_text("mesh\n", encoding="utf-8")
+        output = root / "subject_volumes"
         output.mkdir(parents=True)
         data = np.ones((3, 4, 5, 3), dtype=np.float32)
         nib.save(nib.Nifti1Image(data, np.eye(4)), output / "field_E.nii.gz")
-        return [Path("mesh.msh"), np.int64(2)]
+        return [mesh]
 
     _install_simnibs(monkeypatch, runner=runner)
     stale = tmp_path / "out/vn/stale.txt"
@@ -362,7 +404,7 @@ def test_run_tdcs_completes_and_masks_outputs(monkeypatch, tmp_path: Path) -> No
         subpath, tmp_path / "out", mode="vn", tensor_file=tensor, cpus=2
     )
     assert result["status"] == "completed"
-    assert result["outputs"] == ["mesh.msh", 2]
+    assert result["outputs"] == [str(tmp_path / "out/vn/mesh.msh")]
     assert result["artifacts"]
     assert not stale.exists()
     assert all("sha256" in artifact for artifact in result["artifacts"])
@@ -425,3 +467,57 @@ def test_run_tdcs_records_build_and_postprocess_failures(monkeypatch, tmp_path: 
     )
     assert post_manifest["status"] == "failed"
     assert post_manifest["failed_phase"] == "postprocess_subject_volumes"
+
+    monkeypatch.undo()
+    subpath, _ = _make_subject(tmp_path / "empty")
+
+    def empty_volume_runner(session, cpus):
+        assert cpus == 8
+        mesh = Path(session.pathfem) / "result.msh"
+        mesh.write_text("mesh\n", encoding="utf-8")
+        return [str(mesh)]
+
+    _install_simnibs(monkeypatch, runner=empty_volume_runner)
+    with pytest.raises(ValueError, match="no subject-volume output"):
+        run_tdcs(subpath, tmp_path / "empty-output", mode="scalar")
+
+
+def test_run_tdcs_records_completed_manifest_serialization_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    subpath, _ = _make_subject(tmp_path)
+
+    def runner(session, cpus):
+        assert cpus == 8
+        root = Path(session.pathfem)
+        mesh = root / "result.msh"
+        mesh.write_text("mesh\n", encoding="utf-8")
+        subject_volumes = root / "subject_volumes"
+        subject_volumes.mkdir()
+        nib.save(
+            nib.Nifti1Image(
+                np.ones((3, 4, 5, 3), dtype=np.float32), np.eye(4)
+            ),
+            subject_volumes / "field_E.nii.gz",
+        )
+        return [str(mesh)]
+
+    _install_simnibs(monkeypatch, runner=runner)
+    original_write = simulation._write_manifest
+    failed_once = False
+
+    def fail_completed(path, payload):
+        nonlocal failed_once
+        if payload.get("status") == "completed" and not failed_once:
+            failed_once = True
+            raise OSError("injected completed manifest failure")
+        original_write(path, payload)
+
+    monkeypatch.setattr(simulation, "_write_manifest", fail_completed)
+    with pytest.raises(OSError, match="completed manifest"):
+        run_tdcs(subpath, tmp_path / "out", mode="scalar")
+    manifest = json.loads(
+        (tmp_path / "out/scalar/dwi2cond_xp_simulation.json").read_text()
+    )
+    assert manifest["status"] == "failed"
+    assert manifest["failed_phase"] == "write_completed_manifest"

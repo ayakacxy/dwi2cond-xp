@@ -23,7 +23,16 @@ def _nifti(path: Path, shape: tuple[int, ...], value: float = 1.0) -> None:
 
 
 def _json(path: Path) -> None:
-    path.write_text('{"status":"completed"}\n', encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "artifacts": {"report": "producer-artifact.nii.gz"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _fixture(tmp_path: Path) -> workflow.Dwi2CondPipelineConfig:
@@ -313,18 +322,32 @@ def _install_common_workflow_stubs(
             ("DTI_coregT1_FA.nii.gz", (3, 3, 3)),
             ("DTI_coregT1_V1.nii.gz", (3, 3, 3, 3)),
             ("DTI_coregT1_valid_mask.nii.gz", (3, 3, 3)),
+            ("DTI_FA_nonlin.nii.gz", (3, 3, 3)),
+            ("DTI_coregT1_jacobian.nii.gz", (3, 3, 3)),
         ):
             _nifti(output / name, shape)
+        _json(output / "DTI_coregT1_nonlinear_qa.json")
         _json(output / "nonlinear_registration_qa.json")
         if kwargs.get("progress") is not None:
             kwargs["progress"](1, "complete", 1, 1, 0.0)
         return {"status": "completed", "mode": "nonlinear"}
 
     def fake_fem(m2m, output, *, mode, **kwargs):
-        manifest = Path(output) / mode / "dwi2cond_xp_simulation.json"
+        root = Path(output) / "dry-run" if kwargs.get("dry_run") else Path(output)
+        manifest = root / mode / "dwi2cond_xp_simulation.json"
         manifest.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text(
-            json.dumps({"status": "planned", "mode": mode}) + "\n",
+            json.dumps(
+                {
+                    "status": "planned",
+                    "mode": mode,
+                    "output_directory": str(manifest.parent),
+                    "outputs": [],
+                    "masked_subject_volumes": [],
+                    "artifacts": [],
+                }
+            )
+            + "\n",
             encoding="utf-8",
         )
         return {"status": "planned", "mode": mode}
@@ -443,9 +466,9 @@ def test_eddy_nonlinear_and_all_fem_modes_form_one_explicit_dag(
     result = workflow.run_dwi2cond_pipeline(complete, progress=lambda *args: events.append(args))
 
     assert [stage.name for stage in result.stages] == [
+        "fit_raw_dti_qa",
         "preprocess_eddy",
         "fit_dti",
-        "fit_raw_dti_qa",
         "register_t1",
         "register_nonlinear",
         "publish_tensor",
@@ -459,6 +482,20 @@ def test_eddy_nonlinear_and_all_fem_modes_form_one_explicit_dag(
     assert any(name.startswith("preprocess_eddy:") for name, *_ in events)
     assert any(name.startswith("register_nonlinear:") for name, *_ in events)
     assert any(name.startswith("pipeline_qa:") for name, *_ in events)
+    qa_manifest = json.loads(
+        (complete.output_directory / "manifests/pipeline_qa.json").read_text()
+    )
+    qa_input_paths = {Path(item["path"]) for item in qa_manifest["inputs"]}
+    assert {
+        complete.output_directory / "preprocess/raw_dti_qa/DWIraw.nii",
+        complete.output_directory
+        / "preprocess/raw_dti_qa/nodif_brain_mask.nii.gz",
+        complete.output_directory / "preprocess/eddy/rotated_bvecs",
+        complete.output_directory / "preprocess/eddy/eddy_parameters.txt",
+        complete.output_directory / "preprocess/eddy/outlier_map.txt",
+        complete.output_directory / "nonlinear/FA2T1_jacobian.nii.gz",
+        field,
+    } <= qa_input_paths
     preprocess_manifest = json.loads(
         (config.output_directory / "manifests" / "preprocess_eddy.json").read_text()
     )
@@ -514,7 +551,8 @@ def test_legacy_rigid_mode_forwards_optional_inputs(
     )
     result = workflow.run_dwi2cond_pipeline(complete, progress=lambda *_args: None)
 
-    assert result.stages[0].name == "preprocess_legacy"
+    assert result.stages[0].name == "fit_raw_dti_qa"
+    assert result.stages[1].name == "preprocess_legacy"
     assert seen["grad_dev_file"] == grad
     assert seen["fieldmap_displacement_file"] == field
     assert seen["fieldmap_corrected_mask_file"] == corrected_mask
@@ -718,7 +756,8 @@ def test_reverse_pe_workflow_and_grad_dev_form_one_complete_contract(
 
     result = workflow.run_dwi2cond_pipeline(complete)
 
-    assert result.stages[0].name == "preprocess_topup_eddy"
+    assert result.stages[0].name == "fit_raw_dti_qa"
+    assert result.stages[1].name == "preprocess_topup_eddy"
     assert (complete.output_directory / "preprocess/dti/grad_dev.nii").is_file()
     assert all(stage.status == "completed" for stage in result.stages)
 
@@ -752,6 +791,19 @@ def test_workflow_covers_all_new_input_contract_failures(tmp_path: Path) -> None
 
     cases = (
         ({"fit_compatibility_mode": "bad"}, ValueError, "fit_compatibility_mode"),
+        ({"solver": "mumps"}, ValueError, "solver is only consumed"),
+        (
+            {
+                "preprocessing_mode": "prefit",
+                "prefit_tensor": tensor,
+                "data": None,
+                "bvals": None,
+                "bvecs": None,
+                "fit_compatibility_mode": "robust",
+            },
+            ValueError,
+            "not consumed by prefit",
+        ),
         (
             {"preprocessing_mode": "nomoco", "prefit_tensor": tensor},
             ValueError,
@@ -844,6 +896,16 @@ def test_workflow_covers_all_new_input_contract_failures(tmp_path: Path) -> None
             },
             ValueError,
             "mutually exclusive",
+        ),
+        (
+            {
+                "preprocessing_mode": "eddy",
+                "reverse_phase_encoding": reverse,
+                "readout_seconds": 0.001,
+                "phase_encoding_direction": "y",
+            },
+            ValueError,
+            "within \\[0.01, 0.2\\]",
         ),
         (
             {
@@ -1015,3 +1077,50 @@ def test_tensor_publication_rejects_copy_and_provenance_hash_mismatch(
     monkeypatch.setattr(workflow, "_sha256", lambda _path: next(hashes))
     with pytest.raises(RuntimeError, match="provenance SHA-256 is inconsistent"):
         workflow._publish_tensor_to_m2m(source, m2m, "0.3.0")
+
+    monkeypatch.setattr(workflow, "_sha256", lambda _path: "same")
+    monkeypatch.setattr(workflow.json, "loads", lambda _text: {"sha256": "changed"})
+    with pytest.raises(RuntimeError, match="provenance SHA-256 is inconsistent"):
+        workflow._publish_tensor_to_m2m(source, m2m, "0.3.0")
+
+
+def test_simnibs_runtime_identity_records_missing_distribution(monkeypatch) -> None:
+    monkeypatch.setattr(
+        workflow.importlib.metadata,
+        "version",
+        lambda _name: (_ for _ in ()).throw(
+            workflow.importlib.metadata.PackageNotFoundError("simnibs")
+        ),
+    )
+    assert workflow._simnibs_runtime_identity() == {
+        "distribution_version": "not-installed",
+        "module_sha256": None,
+    }
+
+
+def test_tensor_publication_failure_restores_previous_valid_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "new-tensor.nii.gz"
+    source.write_bytes(b"new-tensor")
+    m2m = tmp_path / "m2m"
+    m2m.mkdir()
+    tensor = m2m / "DTI_coregT1_tensor.nii.gz"
+    provenance = m2m / "DTI_coregT1_tensor.provenance.json"
+    tensor.write_bytes(b"old-tensor")
+    provenance.write_text('{"sha256":"old"}\n', encoding="utf-8")
+    original_replace = Path.replace
+
+    def fail_provenance_commit(path: Path, target: Path):
+        if path.name.startswith(".DTI_coregT1_tensor.provenance.json") and path.name.endswith(
+            ".tmp"
+        ):
+            raise OSError("injected provenance commit failure")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", fail_provenance_commit)
+    with pytest.raises(OSError, match="injected provenance"):
+        workflow._publish_tensor_to_m2m(source, m2m, "0.3.0")
+
+    assert tensor.read_bytes() == b"old-tensor"
+    assert provenance.read_text(encoding="utf-8") == '{"sha256":"old"}\n'

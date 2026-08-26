@@ -3,10 +3,18 @@ import pytest
 
 from dwi2cond_xp.conductivity import (
     _adjust_excentricity,
+    _anisotropic_intensity_scale,
     _fix_eigenvalues,
     correct_fsl_tensor_basis,
     tensors_to_conductivity,
 )
+
+
+def test_anisotropic_intensity_scale_rejects_degenerate_aggregates():
+    with pytest.raises(ValueError, match="denominator"):
+        _anisotropic_intensity_scale({}, {})
+    with pytest.raises(ValueError, match="intensity scale"):
+        _anisotropic_intensity_scale({1: 1.0}, {1: np.inf})
 
 
 def test_fsl_basis_correction_flips_x_cross_terms_for_las():
@@ -187,3 +195,15 @@ def test_dir_mc_zero_tensor_follows_post_reconstruction_fix(mode):
     )
     assert np.array_equal(conductivity[0], np.eye(3) * 0.126)
     assert report["intensity_scale"] == pytest.approx(163.106112448201, rel=1e-12)
+
+
+@pytest.mark.parametrize("mode", ["dir", "mc"])
+def test_dir_mc_reject_all_zero_anisotropic_tissue_explicitly(mode):
+    with pytest.raises(ValueError, match="no positive finite mean determinant"):
+        tensors_to_conductivity(
+            np.zeros((3, 3, 3), dtype=np.float64),
+            np.ones(3, dtype=int),
+            {1: 0.126},
+            mode=mode,
+            anisotropic_tissues=(1,),
+        )

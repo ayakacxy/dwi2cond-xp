@@ -147,6 +147,8 @@ def test_pipeline_reexecutes_when_dynamic_fem_artifact_changes(tmp_path: Path) -
             json.dumps(
                 {
                     "status": "completed",
+                    "output_directory": str(tmp_path),
+                    "outputs": [str(field.resolve())],
                     "artifacts": [
                         {
                             "path": str(field.resolve()),
@@ -166,7 +168,7 @@ def test_pipeline_reexecutes_when_dynamic_fem_artifact_changes(tmp_path: Path) -
         "fem",
         action,
         inputs=(source,),
-        outputs=(ArtifactContract(output, "json"),),
+        outputs=(ArtifactContract(output, "json", dynamic_inventory=True),),
     )
     PipelineRunner(tmp_path / "manifests").run((stage,))
     field.write_text("tampered-field\n", encoding="utf-8")
@@ -250,15 +252,27 @@ def test_pipeline_numerical_runtime_identity_invalidates_cache(
     assert calls == [1, 1]
 
 
-def test_dynamic_artifact_manifest_rejects_all_invalid_forms(tmp_path: Path) -> None:
+def test_dynamic_artifact_manifest_rejects_all_invalid_forms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     manifest = tmp_path / "simulation.json"
-    contract = ArtifactContract(manifest, "json")
+    contract = ArtifactContract(manifest, "json", dynamic_inventory=True)
 
     for payload, message in (
-        ({"artifacts": {}}, "contain a list"),
-        ({"artifacts": ["bad"]}, "Invalid dynamic artifact entry"),
         (
-            {"artifacts": [{"path": str(tmp_path / "missing.msh")}]},
+            {"output_directory": str(tmp_path), "artifacts": {}},
+            "contain a list",
+        ),
+        (
+            {"output_directory": str(tmp_path), "artifacts": ["bad"]},
+            "Invalid dynamic artifact entry",
+        ),
+        ({"artifacts": []}, "declare output_directory"),
+        (
+            {
+                "output_directory": str(tmp_path),
+                "artifacts": [{"path": str(tmp_path / "missing.msh")}],
+            },
             "Missing dynamic output artifact",
         ),
     ):
@@ -279,9 +293,113 @@ def test_dynamic_artifact_manifest_rejects_all_invalid_forms(tmp_path: Path) -> 
         "affine": image.affine.tolist(),
         "dtype": str(image.get_data_dtype()),
     }
-    manifest.write_text(json.dumps({"artifacts": [entry]}), encoding="utf-8")
+    manifest.write_text(
+        json.dumps({"output_directory": str(tmp_path), "artifacts": [entry]}),
+        encoding="utf-8",
+    )
     metadata = validate_artifacts((contract,), numerical=False)[0]
     assert metadata["dynamic_artifacts"] == [entry]
+
+    invalid_payloads = (
+        (
+            {
+                "status": "completed",
+                "output_directory": str(tmp_path),
+                "artifacts": [],
+            },
+            "must not be empty",
+        ),
+        (
+            {
+                "output_directory": str(tmp_path / "nested"),
+                "artifacts": [entry],
+            },
+            "outside output_directory",
+        ),
+        (
+            {
+                "output_directory": str(tmp_path),
+                "artifacts": [entry, entry],
+            },
+            "listed more than once",
+        ),
+        (
+            {
+                "output_directory": str(tmp_path),
+                "outputs": {},
+                "artifacts": [entry],
+            },
+            "must be a list",
+        ),
+        (
+            {
+                "output_directory": str(tmp_path),
+                "outputs": [3],
+                "artifacts": [entry],
+            },
+            "artifact paths only",
+        ),
+        (
+            {
+                "output_directory": str(tmp_path),
+                "outputs": [str(tmp_path / "missing-output.msh")],
+                "artifacts": [entry],
+            },
+            "missing from dynamic inventory",
+        ),
+        (
+            {
+                "output_directory": str(tmp_path),
+                "artifacts": [{**entry, "shape": [99, 99, 99]}],
+            },
+            "changed after publication",
+        ),
+    )
+    for payload, message in invalid_payloads:
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            validate_artifacts((contract,), numerical=False)
+
+    manifest.write_text(
+        json.dumps(
+            {
+                "output_directory": str(tmp_path),
+                "outputs": [image_path.name],
+                "artifacts": [entry],
+            }
+        ),
+        encoding="utf-8",
+    )
+    validate_artifacts((contract,), numerical=False)
+
+    class InvalidAffineImage:
+        shape = (2, 2, 2)
+        affine = np.full((4, 4), np.nan)
+
+        @staticmethod
+        def get_data_dtype():
+            return np.dtype(np.float32)
+
+    monkeypatch.setattr(pipeline.nib, "load", lambda *_args, **_kwargs: InvalidAffineImage())
+    manifest.write_text(
+        json.dumps({"output_directory": str(tmp_path), "artifacts": [entry]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="affine is not finite"):
+        validate_artifacts((contract,), numerical=False)
+
+
+def test_regular_json_artifacts_mapping_is_not_a_dynamic_inventory(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "legacy_qa.json"
+    report.write_text(
+        json.dumps({"status": "completed", "artifacts": {"tensor": "DTI.nii.gz"}}),
+        encoding="utf-8",
+    )
+    metadata = validate_artifacts((ArtifactContract(report, "json"),))[0]
+    assert metadata["keys"] == ["artifacts", "status"]
+    assert "dynamic_artifacts" not in metadata
 
 
 def test_output_cleanup_removes_declared_directory(tmp_path: Path) -> None:
@@ -292,6 +410,29 @@ def test_output_cleanup_removes_declared_directory(tmp_path: Path) -> None:
     pipeline._remove_declared_outputs((ArtifactContract(output, "directory"),))
 
     assert not output.exists()
+
+
+def test_failure_transaction_stage_preserves_previous_declared_outputs(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "input.txt"
+    output = tmp_path / "published.txt"
+    source.write_text("source\n", encoding="utf-8")
+    output.write_text("previous\n", encoding="utf-8")
+
+    def fail() -> None:
+        raise RuntimeError("transaction failed")
+
+    stage = StageDefinition(
+        "publish",
+        fail,
+        inputs=(source,),
+        outputs=(ArtifactContract(output, "text"),),
+        preserve_outputs_on_attempt=True,
+    )
+    with pytest.raises(RuntimeError, match="transaction failed"):
+        PipelineRunner(tmp_path / "manifests").run((stage,))
+    assert output.read_text(encoding="utf-8") == "previous\n"
 
 
 def test_numerical_runtime_identity_covers_unavailable_dependencies(
@@ -334,6 +475,7 @@ def test_numerical_runtime_identity_covers_unavailable_dependencies(
     monkeypatch.setattr(builtins, "__import__", missing_numba)
     missing = pipeline._numerical_runtime_identity()
     assert missing["distributions"]["scipy"] == "not-installed"
+    assert "simnibs" in missing["distributions"]
     assert missing["numba"] == {"status": "not-installed"}
 
     monkeypatch.setattr(builtins, "__import__", real_import)

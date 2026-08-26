@@ -311,6 +311,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pipeline_qa.add_argument("valid_mask")
     pipeline_qa.add_argument("output_directory")
     pipeline_qa.add_argument("--dwi-brain-mask")
+    pipeline_qa.add_argument("--raw-dwi-brain-mask")
+    pipeline_qa.add_argument("--corrected-dwi-brain-mask")
     pipeline_qa.add_argument("--raw-dwi")
     pipeline_qa.add_argument("--corrected-dwi")
     pipeline_qa.add_argument("--rotated-bvecs")
@@ -325,7 +327,7 @@ def _build_parser() -> argparse.ArgumentParser:
     pipeline_qa.add_argument("--eddy-parameters")
     pipeline_qa.add_argument("--outlier-map")
     pipeline_qa.add_argument("--readout-seconds", type=float)
-    pipeline_qa.add_argument("--b0-threshold", type=float, default=50.0)
+    pipeline_qa.add_argument("--b0-threshold", type=float, default=0.0)
     pipeline_qa.add_argument(
         "--fem-manifest",
         action="append",
@@ -1001,6 +1003,16 @@ def main(argv: list[str] | None = None) -> int:
                         None
                         if args.dwi_brain_mask is None
                         else Path(args.dwi_brain_mask)
+                    ),
+                    raw_dwi_brain_mask=(
+                        None
+                        if args.raw_dwi_brain_mask is None
+                        else Path(args.raw_dwi_brain_mask)
+                    ),
+                    corrected_dwi_brain_mask=(
+                        None
+                        if args.corrected_dwi_brain_mask is None
+                        else Path(args.corrected_dwi_brain_mask)
                     ),
                     raw_dwi=None if args.raw_dwi is None else Path(args.raw_dwi),
                     corrected_dwi=(

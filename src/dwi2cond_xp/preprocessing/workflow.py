@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import importlib.metadata
+import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 from collections.abc import Callable
@@ -119,11 +122,17 @@ def _validate_config(config: Dwi2CondPipelineConfig) -> dict[str, Path]:
         raise ValueError("workers must be positive")
     if config.fit_compatibility_mode not in ("strict-fsl", "robust"):
         raise ValueError("fit_compatibility_mode must be strict-fsl or robust")
+    if config.fem_smoke == "none" and config.solver != "pardiso":
+        raise ValueError("solver is only consumed when FEM smoke execution is enabled")
     if config.preprocessing_mode != "prefit" and config.prefit_tensor is not None:
         raise ValueError("prefit_tensor is only consumed by prefit mode")
     if config.preprocessing_mode != "eddy" and config.random_seed != 1:
         raise ValueError("random_seed is only consumed by eddy preprocessing")
     if config.preprocessing_mode == "prefit":
+        if config.fit_compatibility_mode != "strict-fsl":
+            raise ValueError(
+                "fit_compatibility_mode is not consumed by prefit preprocessing"
+            )
         if config.prefit_tensor is None or not config.prefit_tensor.is_file():
             raise FileNotFoundError(f"Missing pre-fitted tensor: {config.prefit_tensor}")
         if any(
@@ -167,6 +176,11 @@ def _validate_config(config: Dwi2CondPipelineConfig) -> dict[str, Path]:
             )
         if config.readout_seconds is None or config.phase_encoding_direction is None:
             raise ValueError("eddy mode requires readout_seconds and PE direction")
+        if (
+            not np.isfinite(config.readout_seconds)
+            or not 0.01 <= config.readout_seconds <= 0.2
+        ):
+            raise ValueError("readout seconds must be finite and within [0.01, 0.2]")
         if config.reverse_phase_encoding is not None:
             if config.dwi_brain_mask is not None:
                 raise ValueError(
@@ -259,35 +273,92 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _simnibs_runtime_identity() -> dict[str, object]:
+    """记录 FEM cache 实际绑定的 SimNIBS 版本与入口模块哈希。"""
+
+    try:
+        version = importlib.metadata.version("simnibs")
+    except importlib.metadata.PackageNotFoundError:
+        return {"distribution_version": "not-installed", "module_sha256": None}
+    specification = importlib.util.find_spec("simnibs")
+    origin = None if specification is None else specification.origin
+    module_path = None if origin is None else Path(origin).resolve()
+    return {
+        "distribution_version": version,
+        "module_path": None if module_path is None else str(module_path),
+        "module_sha256": (
+            None
+            if module_path is None or not module_path.is_file()
+            else _sha256(module_path)
+        ),
+    }
+
+
 def _publish_tensor_to_m2m(source: Path, m2m: Path, version: str) -> dict[str, object]:
-    """原子发布官方默认发现路径，并写入来源与哈希。"""
+    """以失败可回滚事务发布官方张量及其来源记录。"""
 
     destination = m2m / "DTI_coregT1_tensor.nii.gz"
-    temporary = m2m / ".DTI_coregT1_tensor.nii.gz.tmp"
-    shutil.copyfile(source, temporary)
-    temporary.replace(destination)
     provenance = m2m / "DTI_coregT1_tensor.provenance.json"
-    source_sha256 = _sha256(source)
-    destination_sha256 = _sha256(destination)
-    if source_sha256 != destination_sha256:
-        raise RuntimeError("published tensor does not match its source SHA-256")
+    suffix = f".{os.getpid()}.tmp"
+    temporary = m2m / f".DTI_coregT1_tensor.nii.gz{suffix}"
+    temporary_json = m2m / f".DTI_coregT1_tensor.provenance.json{suffix}"
+    tensor_backup = m2m / f".DTI_coregT1_tensor.nii.gz.{os.getpid()}.backup"
+    provenance_backup = (
+        m2m / f".DTI_coregT1_tensor.provenance.json.{os.getpid()}.backup"
+    )
     payload: dict[str, object] = {
         "status": "completed",
         "implementation": "dwi2cond-xp",
         "version": version,
         "source": str(source.resolve()),
         "destination": str(destination.resolve()),
-        "sha256": destination_sha256,
+        "sha256": "",
     }
-    temporary_json = m2m / ".DTI_coregT1_tensor.provenance.json.tmp"
-    temporary_json.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    temporary_json.replace(provenance)
-    recorded = json.loads(provenance.read_text(encoding="utf-8"))
-    if recorded.get("sha256") != source_sha256 or _sha256(destination) != source_sha256:
-        raise RuntimeError("published tensor provenance SHA-256 is inconsistent")
+    had_tensor = destination.is_file()
+    had_provenance = provenance.is_file()
+    tensor_replaced = False
+    provenance_replaced = False
+    try:
+        source_sha256 = _sha256(source)
+        payload["sha256"] = source_sha256
+        shutil.copyfile(source, temporary)
+        if source_sha256 != _sha256(temporary):
+            raise RuntimeError("published tensor does not match its source SHA-256")
+        temporary_json.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        staged_record = json.loads(temporary_json.read_text(encoding="utf-8"))
+        if staged_record.get("sha256") != source_sha256:
+            raise RuntimeError("published tensor provenance SHA-256 is inconsistent")
+        if had_tensor:
+            shutil.copyfile(destination, tensor_backup)
+        if had_provenance:
+            shutil.copyfile(provenance, provenance_backup)
+        temporary.replace(destination)
+        tensor_replaced = True
+        temporary_json.replace(provenance)
+        provenance_replaced = True
+        recorded = json.loads(provenance.read_text(encoding="utf-8"))
+        if (
+            recorded.get("sha256") != source_sha256
+            or _sha256(destination) != source_sha256
+        ):
+            raise RuntimeError("published tensor provenance SHA-256 is inconsistent")
+    except Exception:
+        if had_tensor and tensor_backup.is_file():
+            tensor_backup.replace(destination)
+        elif tensor_replaced and destination.exists():
+            destination.unlink()
+        if had_provenance and provenance_backup.is_file():
+            provenance_backup.replace(provenance)
+        elif provenance_replaced and provenance.exists():
+            provenance.unlink()
+        raise
+    finally:
+        for path in (temporary, temporary_json, tensor_backup, provenance_backup):
+            if path.exists():
+                path.unlink()
     return payload
 
 
@@ -815,7 +886,7 @@ def run_dwi2cond_pipeline(
                 run_raw_fit,
                 inputs=tuple(raw_inputs),
                 outputs=tuple(raw_outputs),
-                dependencies=(preprocess_name,),
+                dependencies=(),
                 parameters={
                     "workers": config.workers,
                     "fit": "official-pre-correction-FSL-WLS",
@@ -974,6 +1045,9 @@ def run_dwi2cond_pipeline(
                     ArtifactContract(nonlinear / "DTI_coregT1_FA.nii.gz", "nifti", ndim=3),
                     ArtifactContract(nonlinear / "DTI_coregT1_V1.nii.gz", "nifti", ndim=4, final_axis=3),
                     ArtifactContract(nonlinear / "DTI_coregT1_valid_mask.nii.gz", "nifti", ndim=3),
+                    ArtifactContract(nonlinear / "DTI_FA_nonlin.nii.gz", "nifti", ndim=3),
+                    ArtifactContract(nonlinear / "DTI_coregT1_jacobian.nii.gz", "nifti", ndim=3),
+                    ArtifactContract(nonlinear / "DTI_coregT1_nonlinear_qa.json", "json"),
                     ArtifactContract(nonlinear / "nonlinear_registration_qa.json", "json"),
                 ),
                 dependencies=("register_t1",),
@@ -1011,6 +1085,7 @@ def run_dwi2cond_pipeline(
                 dependencies=(final_dependency,),
                 parameters={"official_m2m_contract": True},
                 implementation_version=version,
+                preserve_outputs_on_attempt=True,
             )
         )
         publish_dependency = "publish_tensor"
@@ -1019,7 +1094,12 @@ def run_dwi2cond_pipeline(
     if config.fem_smoke != "none":
         for mode in ("scalar", "vn", "dir", "mc"):
             stage_name = f"fem_{mode}"
-            manifest = fem_root / mode / "dwi2cond_xp_simulation.json"
+            manifest_root = (
+                fem_root / "dry-run"
+                if config.fem_smoke == "dry-run"
+                else fem_root
+            )
+            manifest = manifest_root / mode / "dwi2cond_xp_simulation.json"
             fem_manifests[mode] = manifest
 
             def run_fem(active_mode: str = mode) -> dict[str, object]:
@@ -1045,13 +1125,18 @@ def run_dwi2cond_pipeline(
                         m2m["eeg"],
                         *(() if mode == "scalar" else (final_tensor,)),
                     ),
-                    outputs=(ArtifactContract(manifest, "json"),),
+                    outputs=(
+                        ArtifactContract(
+                            manifest, "json", dynamic_inventory=True
+                        ),
+                    ),
                     dependencies=(final_dependency,),
                     parameters={
                         "mode": mode,
                         "solver": config.solver,
                         "cpus": config.workers,
                         "dry_run": config.fem_smoke == "dry-run",
+                        "simnibs_runtime": _simnibs_runtime_identity(),
                     },
                     backend="simnibs-4.6.0",
                     implementation_version=version,
@@ -1160,17 +1245,46 @@ def run_dwi2cond_pipeline(
             config.bvecs,
             registration / "T1_brainmask.nii.gz",
             dwi_mask,
+            raw_qa_mask,
             final_directory / "DTI_coregT1_FA.nii.gz",
             final_tensor,
             final_directory / "DTI_coregT1_valid_mask.nii.gz",
-            config.data,
+            raw_qa_dwi,
             corrected_dwi,
             registration / "DTI_FA_6dof_QA.nii.gz",
             registration / "DTI_SSE_6dof_QA.nii.gz",
             registration / "DTIraw_FA_6dof_QA.nii.gz",
             registration / "DTIraw_SSE_6dof_QA.nii.gz",
+            (
+                fit_bvecs
+                if config.preprocessing_mode in ("legacy", "eddy")
+                else None
+            ),
             m2m["t1"],
             final_directory / "DTI_coregT1_V1.nii.gz",
+            (
+                preprocess / "topup" / "field_hz.nii.gz"
+                if config.preprocessing_mode == "eddy"
+                and config.reverse_phase_encoding is not None
+                else config.susceptibility_field
+                if config.preprocessing_mode == "eddy"
+                else None
+            ),
+            (
+                nonlinear / "FA2T1_jacobian.nii.gz"
+                if config.t1_mode == "nonlinear"
+                else None
+            ),
+            (
+                preprocess / "eddy" / "eddy_parameters.txt"
+                if config.preprocessing_mode == "eddy"
+                else None
+            ),
+            (
+                preprocess / "eddy" / "outlier_map.txt"
+                if config.preprocessing_mode == "eddy"
+                else None
+            ),
             *fem_manifests.values(),
         ]
         qa_outputs = (
@@ -1203,15 +1317,22 @@ def run_dwi2cond_pipeline(
 
     package_source = Path(__file__).resolve().parents[1]
     implementation_files = tuple(sorted(package_source.rglob("*.py")))
+    if raw_fit_dependency is not None:
+        raw_stage_index = next(
+            index for index, stage in enumerate(stages) if stage.name == raw_fit_dependency
+        )
+        raw_stage = stages.pop(raw_stage_index)
+        preprocess_index = next(
+            index for index, stage in enumerate(stages) if stage.name == preprocess_name
+        )
+        stages.insert(preprocess_index, raw_stage)
     runner = PipelineRunner(
         root / "manifests",
         progress=progress,
         implementation_files=implementation_files,
     )
     results = runner.run(stages)
-    # Aggregated QA has already read upstream values. Revalidate the publication
-    # stage explicitly so source, published tensor, provenance, and cache lineage
-    # cannot diverge while avoiding another decode of the large corrected DWI.
+    # 汇总 QA 已读取上游数组；这里只复核发布与 QA 终点，避免再次解码大型 DWI。
     final_validation_stages = [stages[-1]]
     if publish_dependency is not None:
         final_validation_stages.insert(

@@ -843,6 +843,18 @@ def test_topup_restores_one_common_arithmetic_mean_scale(monkeypatch) -> None:
     np.testing.assert_array_equal(result.corrected_scans[..., 0], 20.0)
     np.testing.assert_array_equal(result.corrected_scans[..., 1], 20.0)
 
+    adversarial = np.ones((10, 1, 1, 2), dtype=np.float32)
+    adversarial[0, 0, 0, 0] = np.float32(1.0e8)
+    adversarial[..., 1] = np.float32(30.0)
+    precise = topup.run_simnibs46_topup(
+        adversarial, rows, (1.0, 1.0, 1.0)
+    ).corrected_scans
+    expected_common = 0.5 * (
+        np.mean(adversarial[..., 0], dtype=np.float64) + 30.0
+    )
+    output_means = np.mean(precise, axis=(0, 1, 2), dtype=np.float64)
+    np.testing.assert_allclose(output_means, expected_common, rtol=0.0, atol=0.25)
+
 
 @pytest.mark.skipif(
     not FSL_TOPUP.is_file() or not FSL_TOPUP_CONFIG.is_file(),

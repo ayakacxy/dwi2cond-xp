@@ -106,7 +106,9 @@ def _mean_artifacts(
     """Decode DWI once and generate b0 and diffusion means without repeated gzip reads."""
 
     image, values = _load_finite(path, ndim=4)
-    if values.shape[3] <= int(max(b0_indices.max(), diffusion_indices.max())):
+    expected_volumes = int(b0_indices.size + diffusion_indices.size)
+    maximum_index = int(max(b0_indices.max(), diffusion_indices.max()))
+    if values.shape[3] != expected_volumes or maximum_index >= values.shape[3]:
         raise ValueError(f"{path} volume count does not match b-values")
     b0_mean = np.mean(values[..., b0_indices], axis=3, dtype=np.float64)
     diffusion_mean = np.mean(
@@ -203,6 +205,16 @@ def audit_fem_manifest(
     }
     if status != "completed":
         return summary
+    from .pipeline import ArtifactContract, validate_artifacts
+
+    inventory_metadata = validate_artifacts(
+        (
+            ArtifactContract(
+                manifest_path, "json", dynamic_inventory=True
+            ),
+        ),
+        numerical=False,
+    )[0]
     if manifest.get("required_simnibs_version") != "4.6.0":
         raise ValueError(f"FEM manifest {manifest_path} does not require SimNIBS 4.6.0")
     input_contract = manifest.get("input")
@@ -259,6 +271,7 @@ def audit_fem_manifest(
             "mesh_outputs": [str(item.resolve()) for item in mesh_outputs],
             "subject_volumes": volume_summaries,
             "volume_tissues": list(labels),
+            "artifacts": inventory_metadata["dynamic_artifacts"],
         }
     )
     return summary
@@ -417,8 +430,12 @@ def build_pipeline_qa(
         ),
     }
     if inputs.v1 is not None:
-        _, stored_v1 = _load_finite(inputs.v1, ndim=4)
+        stored_v1_image, stored_v1 = _load_finite(inputs.v1, ndim=4)
         if stored_v1.shape != spatial_shape + (3,):
+            raise ValueError("V1 must share the tensor grid and have final axis 3")
+        if not np.allclose(
+            stored_v1_image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6
+        ):
             raise ValueError("V1 must share the tensor grid and have final axis 3")
         stored = np.asarray(stored_v1[valid], dtype=np.float64)
         stored_norm = np.linalg.norm(stored, axis=1)
@@ -439,13 +456,19 @@ def build_pipeline_qa(
 
     field_qa: dict[str, object] = {"status": "not_provided"}
     if inputs.field_hz is not None:
-        _, field_values = _load_finite(inputs.field_hz, ndim=3)
-        field_mask = (
-            corrected_dwi_mask
-            if field_values.shape == corrected_dwi_mask.shape
-            else mask
-        )
-        if field_values.shape != field_mask.shape:
+        field_image, field_values = _load_finite(inputs.field_hz, ndim=3)
+        if field_values.shape == corrected_dwi_mask.shape and np.allclose(
+            field_image.affine,
+            corrected_dwi_mask_image.affine,
+            rtol=0.0,
+            atol=1.0e-6,
+        ):
+            field_mask = corrected_dwi_mask
+        elif field_values.shape == mask.shape and np.allclose(
+            field_image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6
+        ):
+            field_mask = mask
+        else:
             raise ValueError("field must share the DWI or tensor brain-mask grid")
         field_qa = {
             "status": "available",
@@ -458,8 +481,10 @@ def build_pipeline_qa(
                 field_values * inputs.readout_seconds, field_mask
             )
     if inputs.jacobian is not None:
-        _, jacobian_values = _load_finite(inputs.jacobian, ndim=3)
-        if jacobian_values.shape != spatial_shape:
+        jacobian_image, jacobian_values = _load_finite(inputs.jacobian, ndim=3)
+        if jacobian_values.shape != spatial_shape or not np.allclose(
+            jacobian_image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6
+        ):
             raise ValueError("Jacobian and brain mask must share one grid")
         field_qa["jacobian"] = _masked_stats(jacobian_values, mask)
         field_qa["nonpositive_jacobian_voxels"] = int(
@@ -487,8 +512,24 @@ def build_pipeline_qa(
 
     overlay: dict[str, object] = {"status": "not_provided"}
     if inputs.t1 is not None and inputs.registered_fa is not None:
-        _, t1_values = _load_finite(inputs.t1, ndim=3)
-        _, registered_fa = _load_finite(inputs.registered_fa, ndim=3)
+        t1_image, t1_values = _load_finite(inputs.t1, ndim=3)
+        registered_fa_image, registered_fa = _load_finite(
+            inputs.registered_fa, ndim=3
+        )
+        if (
+            t1_values.shape != spatial_shape
+            or registered_fa.shape != spatial_shape
+            or not np.allclose(
+                t1_image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6
+            )
+            or not np.allclose(
+                registered_fa_image.affine,
+                mask_image.affine,
+                rtol=0.0,
+                atol=1.0e-6,
+            )
+        ):
+            raise ValueError("T1, registered FA and brain mask must share one grid")
         overlay = _write_overlay(
             t1_values,
             registered_fa,
@@ -499,8 +540,10 @@ def build_pipeline_qa(
 
     sse_qa: dict[str, object] = {"status": "not_provided"}
     if inputs.sse is not None:
-        _, sse_values = _load_finite(inputs.sse, ndim=3)
-        if sse_values.shape != spatial_shape:
+        sse_image, sse_values = _load_finite(inputs.sse, ndim=3)
+        if sse_values.shape != spatial_shape or not np.allclose(
+            sse_image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6
+        ):
             raise ValueError("SSE and brain mask must share one grid")
         sse_qa = {"status": "available", "stats": _masked_stats(sse_values, valid)}
 
@@ -508,9 +551,22 @@ def build_pipeline_qa(
     if inputs.raw_registered_fa is not None or inputs.raw_registered_sse is not None:
         if inputs.raw_registered_fa is None or inputs.raw_registered_sse is None:
             raise ValueError("raw registered FA and SSE must be provided together")
-        _, raw_fa_values = _load_finite(inputs.raw_registered_fa, ndim=3)
-        _, raw_sse_values = _load_finite(inputs.raw_registered_sse, ndim=3)
-        if raw_fa_values.shape != spatial_shape or raw_sse_values.shape != spatial_shape:
+        raw_fa_image, raw_fa_values = _load_finite(
+            inputs.raw_registered_fa, ndim=3
+        )
+        raw_sse_image, raw_sse_values = _load_finite(
+            inputs.raw_registered_sse, ndim=3
+        )
+        if (
+            raw_fa_values.shape != spatial_shape
+            or raw_sse_values.shape != spatial_shape
+            or not np.allclose(
+                raw_fa_image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6
+            )
+            or not np.allclose(
+                raw_sse_image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6
+            )
+        ):
             raise ValueError("raw registered FA, SSE, and brain mask must share one grid")
         raw_fit_qa = {
             "status": "available",

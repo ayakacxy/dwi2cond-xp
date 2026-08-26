@@ -41,6 +41,7 @@ def _optimize_stage_payload(
         np.ndarray,
         np.ndarray,
         float | np.ndarray,
+        float | np.ndarray,
         np.ndarray,
         float,
         np.ndarray,
@@ -51,7 +52,18 @@ def _optimize_stage_payload(
 ) -> tuple[int, np.ndarray, float, int]:
     """Run an MCFLIRT stage without cross-volume dependencies in a separate worker."""
 
-    position, fixed, moving, spacing, initial, multiplier, center, dof, *extra = payload
+    (
+        position,
+        fixed,
+        moving,
+        spacing,
+        moving_spacing,
+        initial,
+        multiplier,
+        center,
+        dof,
+        *extra,
+    ) = payload
     if extra:
         parameter_axes, smooth_mm = extra
         matrix, cost, count = _optimize_one_stage(
@@ -64,10 +76,18 @@ def _optimize_stage_payload(
             dof,
             parameter_axes=parameter_axes,
             smooth_mm=smooth_mm,
+            moving_spacing_mm=moving_spacing,
         )
     else:
         matrix, cost, count = _optimize_one_stage(
-            fixed, moving, spacing, initial, multiplier, center, dof
+            fixed,
+            moving,
+            spacing,
+            initial,
+            multiplier,
+            center,
+            dof,
+            moving_spacing_mm=moving_spacing,
         )
     return position, matrix, cost, count
 
@@ -115,54 +135,55 @@ def _register_mcflirt_series(
         raise ValueError("Legacy registration inputs must contain only finite values")
 
     voxel_sizes = nib.affines.voxel_sizes(affine)
-    fix_2d = spatial_shape[2] < 3 or spatial_shape[2] * voxel_sizes[2] < 20.0
-    parameter_axes = (2, 3, 4) if fix_2d else None
-    smooth_mm = 0.1 if fix_2d else 1.0
+    fix_2d = False
     matrices = [np.eye(4, dtype=np.float64) for _ in volumes]
     evaluations = [0 for _ in volumes]
     costs = [0.0 for _ in volumes]
     total = len(stages_mm) * len(volumes)
     done = 0
     reference_cache: dict[float, np.ndarray] = {}
-    volume_cache: dict[float, list[np.ndarray]] = {}
-    center_cache: dict[float, list[np.ndarray]] = {}
+    moving_cache: list[np.ndarray] | None = None
+    moving_spacing = np.asarray(voxel_sizes, dtype=np.float64)
     multipliers = (0.8, 0.8, 0.1)
     for stage_index, spacing in enumerate(stages_mm):
         key = float(spacing)
-        stage_voxel_sizes = (
-            np.asarray((spacing, spacing, 8.0), dtype=np.float64)
-            if fix_2d
-            else float(spacing)
-        )
         if key not in reference_cache:
             fixed_stage = _isotropic_resample(reference, voxel_sizes, spacing)
-            volume_stage = [
-                _isotropic_resample(volume, voxel_sizes, spacing)
-                for volume in volumes
-            ]
-            if fix_2d:
+            if stage_index == 0 and (
+                fixed_stage.shape[2] < 3
+                or fixed_stage.shape[2] * float(spacing) < 20.0
+            ):
+                fix_2d = True
                 fixed_stage = np.pad(
                     fixed_stage, ((0, 0), (0, 0), (1, 1)), mode="edge"
                 )
-                volume_stage = [
+                moving_cache = [
                     np.pad(volume, ((0, 0), (0, 0), (1, 1)), mode="edge")
-                    for volume in volume_stage
+                    for volume in volumes
                 ]
+                moving_spacing = np.asarray(
+                    (voxel_sizes[0], voxel_sizes[1], 8.0), dtype=np.float64
+                )
             reference_cache[key] = fixed_stage
-            volume_cache[key] = volume_stage
-            center_cache[key] = [
-                _intensity_center_scaled_mm(volume, stage_voxel_sizes)
-                for volume in volume_cache[key]
-            ]
         fixed = reference_cache[key]
-        coarse = volume_cache[key]
-        centers = center_cache[key]
+        if fix_2d:
+            fixed = np.pad(fixed, ((0, 0), (0, 0), (1, 1)), mode="edge")
+        stage_voxel_sizes = np.asarray(
+            (spacing, spacing, 8.0 if fix_2d else spacing), dtype=np.float64
+        )
+        parameter_axes = (2, 3, 4) if fix_2d else None
+        smooth_mm = 0.1 if fix_2d else 1.0
+        moving = list(volumes) if moving_cache is None else moving_cache
+        centers = [
+            _intensity_center_scaled_mm(volume, moving_spacing)
+            for volume in moving
+        ]
         stage_output = [matrix.copy() for matrix in matrices]
 
         def optimize(position: int) -> tuple[int, np.ndarray, float, int]:
             arguments = (
                 fixed,
-                coarse[position],
+                moving[position],
                 stage_voxel_sizes,
                 matrices[position],
                 multipliers[min(stage_index, 2)],
@@ -174,9 +195,12 @@ def _register_mcflirt_series(
                     *arguments,
                     parameter_axes=parameter_axes,
                     smooth_mm=smooth_mm,
+                    moving_spacing_mm=moving_spacing,
                 )
             else:
-                matrix, cost, count = _optimize_one_stage(*arguments)
+                matrix, cost, count = _optimize_one_stage(
+                    *arguments, moving_spacing_mm=moving_spacing
+                )
             return position, matrix, cost, count
 
         positions = list(range(len(volumes)))
@@ -190,8 +214,9 @@ def _register_mcflirt_series(
                 payload = (
                     position,
                     fixed,
-                    coarse[position],
+                    moving[position],
                     stage_voxel_sizes,
+                    moving_spacing,
                     matrices[position],
                     multipliers[min(stage_index, 2)],
                     centers[position],

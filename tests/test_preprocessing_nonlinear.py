@@ -751,6 +751,32 @@ def test_nonlinear_contract_rejects_invalid_inputs():
         )
 
 
+def test_public_ppd_masks_use_fsl_nonzero_support_for_negative_values():
+    shape = (3, 3, 3)
+    tensor = _diagonal_tensor(shape)
+    warp = np.zeros(shape + (3,), dtype=np.float32)
+    positive = resample_tensor_ppd_fsl(
+        tensor,
+        np.eye(4),
+        shape,
+        np.eye(4),
+        warp,
+        source_mask=np.ones(shape),
+        reference_mask=np.ones(shape),
+    )
+    negative = resample_tensor_ppd_fsl(
+        tensor,
+        np.eye(4),
+        shape,
+        np.eye(4),
+        warp,
+        source_mask=-np.ones(shape),
+        reference_mask=-np.ones(shape),
+    )
+    np.testing.assert_array_equal(negative.valid_mask, positive.valid_mask)
+    np.testing.assert_array_equal(negative.tensor, positive.tensor)
+
+
 def test_fnirt_validation_contracts_cover_all_public_boundaries():
     values = np.ones((3, 3, 3), dtype=np.float32)
     with pytest.raises(ValueError, match="finite 3D"):
@@ -996,14 +1022,16 @@ def test_fnirt_tiny_sigma_and_explicit_binary_mask_paths():
 
 def test_fnirt_self_registration_uses_identity_fast_path():
     values = np.arange(7 * 6 * 5, dtype=np.float32).reshape(7, 6, 5) + 1.0
+    almost_identity = np.eye(4)
+    almost_identity[0, 3] = 5.0e-9
     result = fnirt_module.run_simnibs46_fnirt(
         values,
         values.copy(),
         np.eye(4),
         np.eye(4),
-        np.eye(4),
+        almost_identity,
         reference_mask=np.ones_like(values, dtype=np.uint8),
-        moving_mask=np.ones_like(values, dtype=np.uint8),
+        moving_mask=np.zeros_like(values, dtype=np.uint8),
     )
 
     assert result.levels == ()
@@ -1465,6 +1493,24 @@ def test_fnirt_nifti_runner_rejects_all_early_file_contract_errors(tmp_path):
         register_tensor_fnirt_nifti(
             fa_file, tensor_file, reference_file, tmp_path / "missing.mat", tmp_path
         )
+    mask_cases = (
+        (np.ones(shape + (1,)), np.eye(4), "three-dimensional"),
+        (np.ones((2, 2, 2)), np.eye(4), "share the reference grid"),
+        (np.full(shape, np.nan), np.eye(4), "finite nonzero support"),
+        (np.zeros(shape), np.eye(4), "finite nonzero support"),
+    )
+    for index, (values, affine, message) in enumerate(mask_cases):
+        mask = tmp_path / f"invalid-mask-{index}.nii.gz"
+        nib.save(nib.Nifti1Image(values, affine), mask)
+        with pytest.raises(ValueError, match=message):
+            register_tensor_fnirt_nifti(
+                fa_file,
+                tensor_file,
+                reference_file,
+                affine_file,
+                tmp_path,
+                brain_mask_file=mask,
+            )
     np.savetxt(affine_file, np.eye(3))
     with pytest.raises(ValueError, match="finite and 4x4"):
         register_tensor_fnirt_nifti(
@@ -1483,6 +1529,9 @@ def test_fnirt_nifti_runner_writes_complete_contract_with_mocked_optimizer(
     brain_mask_file = tmp_path / "brain_mask.nii.gz"
     affine_file = tmp_path / "affine.mat"
     output = tmp_path / "output"
+    stale_attempt = output / f".fnirt-attempt-{os.getpid()}"
+    stale_attempt.mkdir(parents=True)
+    (stale_attempt / "partial.txt").write_text("partial\n", encoding="utf-8")
     nib.save(nib.Nifti1Image(np.ones(shape, dtype=np.float32), np.eye(4)), fa_file)
     nib.save(nib.Nifti1Image(_diagonal_tensor(shape), np.eye(4)), tensor_file)
     reference_affine = np.diag((0.7, 0.8, 0.9, 1.0))

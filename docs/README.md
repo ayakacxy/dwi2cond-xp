@@ -44,7 +44,15 @@
   control-flow and counterexample evidence.
 - [v0.3.0 post-re-audit closure](V0.3.0_POST_REAUDIT_REMEDIATION_REPORT_2026-08-26.md):
   issue classification, fixes, real-FSL gates, complete test evidence, and the
-  remaining optimizer and end-to-end boundaries.
+  remaining optimizer and end-to-end boundaries; its all-closed conclusion is
+  superseded by the latest-tag independent re-audit below.
+- [v0.3.0 latest-tag independent re-audit](V0.3.0_LATEST_TAG_INDEPENDENT_REAUDIT_REPORT_2026-08-26.md):
+  final-tag workflow composition, legacy optimizer control flow, residual
+  scientific QA/cache/API contracts, real-FSL probes, and the ordered repair
+  acceptance plan.
+- [v0.3.0 latest-tag remediation](V0.3.0_LATEST_TAG_REMEDIATION_REPORT_2026-08-27.md):
+  issue-by-issue closure of the latest `6 P1 + 9 P2/P3` findings, discriminative
+  tests, complete coverage evidence, and remaining evidence boundaries.
 - [FSL subset reimplementation plan](FSL_SUBSET_REIMPLEMENTATION_PLAN.md): the
   completed P0--P11 implementation and acceptance ledger.
 - [Changelog](CHANGELOG.md): released and unreleased user-visible changes.

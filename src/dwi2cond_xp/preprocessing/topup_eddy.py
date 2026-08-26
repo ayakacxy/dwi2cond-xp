@@ -52,6 +52,10 @@ def run_topup_eddy_nifti(
 ) -> dict[str, object]:
     """执行官方 reverse 4D preparation、TOPUP、BET 与 EDDY 顺序。"""
 
+    if not np.isfinite(readout_seconds) or not 0.01 <= readout_seconds <= 0.2:
+        raise ValueError("readout seconds must be finite and within [0.01, 0.2]")
+    if phase_encoding_direction not in ("x", "x-", "y", "y-"):
+        raise ValueError("TOPUP phase-encoding direction must be x, x-, y, or y-")
     root = Path(output_directory)
     preparation = root / "topup_preparation"
     topup = root / "topup"

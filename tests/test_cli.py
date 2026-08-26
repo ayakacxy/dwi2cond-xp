@@ -83,6 +83,10 @@ def test_preprocessing_lazy_exports_and_missing_attribute() -> None:
 
 
 def test_pipeline_qa_rejects_invalid_and_duplicate_fem_manifest_modes() -> None:
+    defaults = cli._build_parser().parse_args(
+        ["pipeline-qa", "bvals", "bvecs", "mask", "fa", "tensor", "valid", "out"]
+    )
+    assert defaults.b0_threshold == 0.0
     positional = ["bvals", "bvecs", "mask", "fa", "tensor", "valid", "output"]
     with pytest.raises(ValueError, match="scalar/vn/dir/mc=PATH"):
         cli.main(["pipeline-qa", *positional, "--fem-manifest", "bad"])

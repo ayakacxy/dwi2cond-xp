@@ -297,8 +297,9 @@ dwi2cond-xp register-t1 dti_outputs m2m_subject t1_registration_outputs \
 
 ## 🚀 Minimal workflow
 
-Run the official-default correctness path (`legacy + nonlinear`) and publish the
-final tensor atomically into the m2m directory:
+Run the official-default correctness path (`legacy + nonlinear`) and publish a
+validated tensor/provenance pair into the m2m directory. Recoverable publication
+failures restore the previous valid pair:
 
 ```bash
 dwi2cond-xp run-pipeline \

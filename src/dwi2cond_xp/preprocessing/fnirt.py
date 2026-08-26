@@ -2363,20 +2363,10 @@ def run_simnibs46_fnirt(
         float(value) for value in np.linalg.norm(moving_transform[:3, :3], axis=0)
     )
     displacement_spacing = fsl_fnirt_full_resolution_knot_spacing(voxel_sizes)
-    same_masks = (
-        reference_mask is None
-        and moving_mask is None
-        or reference_mask is not None
-        and moving_mask is not None
-        and np.array_equal(reference_mask, moving_mask)
-    )
     if (
         np.array_equal(np.asarray(reference), np.asarray(moving))
-        and np.allclose(
-            reference_transform, moving_transform, rtol=0.0, atol=1.0e-12
-        )
-        and np.allclose(affine, np.eye(4), rtol=0.0, atol=1.0e-12)
-        and same_masks
+        and np.array_equal(reference_transform, moving_transform)
+        and np.all(np.abs(affine - np.eye(4)) < 1.0e-8)
     ):
         coefficients = np.zeros(
             fsl_coefficient_shape(full_shape, displacement_spacing) + (3,),

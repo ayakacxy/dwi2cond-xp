@@ -6,7 +6,9 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
+import shutil
 import time
 
 import nibabel as nib
@@ -263,12 +265,12 @@ def resample_tensor_ppd_fsl(
     if source_mask is None:
         source_valid = np.any(values[..., :3] != 0.0, axis=-1)
     else:
-        source_valid = np.asarray(source_mask) > 0
+        source_valid = np.asarray(source_mask) != 0
         if source_valid.shape != values.shape[:3]:
             raise ValueError("source_mask must match the tensor grid")
     target_valid = np.ones(target_shape, dtype=bool)
     if reference_mask is not None:
-        target_valid = np.asarray(reference_mask) > 0
+        target_valid = np.asarray(reference_mask) != 0
         if target_valid.shape != target_shape:
             raise ValueError("reference_mask must match the reference grid")
 
@@ -658,6 +660,21 @@ def register_tensor_fnirt_nifti(
         raise ValueError(
             "brain_mask_file is required by the SimNIBS 4.6 FNIRT tensor branch"
         )
+    brain_mask_image = nib.load(str(brain_mask_file))
+    if len(brain_mask_image.shape) != 3:
+        raise ValueError("The FNIRT brain mask must be three-dimensional")
+    if brain_mask_image.shape != reference_image.shape or not np.allclose(
+        brain_mask_image.affine,
+        reference_image.affine,
+        rtol=0.0,
+        atol=1.0e-6,
+    ):
+        raise ValueError("The FNIRT brain mask must share the reference grid")
+    brain_mask_values = np.asarray(brain_mask_image.dataobj)
+    if not np.all(np.isfinite(brain_mask_values)) or not np.any(
+        brain_mask_values != 0
+    ):
+        raise ValueError("The FNIRT brain mask must contain finite nonzero support")
     reference = np.asarray(reference_image.dataobj, dtype=np.float32)
     fa = np.asarray(fa_image.dataobj, dtype=np.float32)
     reference_voxel_sizes = tuple(
@@ -676,8 +693,12 @@ def register_tensor_fnirt_nifti(
     if progress is not None:
         progress(4, "finalize_write", 0, 3, None)
 
-    output = Path(output_directory)
-    output.mkdir(parents=True, exist_ok=True)
+    final_output = Path(output_directory)
+    final_output.mkdir(parents=True, exist_ok=True)
+    output = final_output / f".fnirt-attempt-{os.getpid()}"
+    if output.exists():
+        shutil.rmtree(output)
+    output.mkdir(parents=True)
     coefficient_path = output / "FA2T1_warp.nii.gz"
     field_path = output / "FA2T1_field.nii.gz"
     jacobian_path = output / "FA2T1_jacobian.nii.gz"
@@ -826,12 +847,28 @@ def register_tensor_fnirt_nifti(
         },
         "wall_seconds": completed_at - started,
     }
-    qa_path = output / "nonlinear_registration_qa.json"
+    def final_path(value: object) -> object:
+        if isinstance(value, dict):
+            return {key: final_path(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [final_path(item) for item in value]
+        if isinstance(value, str):
+            prefix = str(output.resolve())
+            if value == prefix or value.startswith(prefix + "/"):
+                return str(final_output.resolve()) + value[len(prefix) :]
+        return value
+
+    qa = final_path(qa)
+    assert isinstance(qa, dict)
+    for staged in sorted(output.iterdir()):
+        staged.replace(final_output / staged.name)
+    qa_path = final_output / "nonlinear_registration_qa.json"
     temporary = qa_path.with_suffix(qa_path.suffix + ".tmp")
     temporary.write_text(
         json.dumps(qa, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     temporary.replace(qa_path)
+    output.rmdir()
     if progress is not None:
         progress(4, "finalize_complete", 3, 3, None)
     return qa

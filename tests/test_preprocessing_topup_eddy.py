@@ -118,3 +118,24 @@ def test_corrected_pair_must_have_exactly_two_volumes(tmp_path: Path) -> None:
     _nifti(pair, np.ones((2, 2, 2, 3)))
     with pytest.raises(ValueError, match="exactly two"):
         module._save_first_corrected_b0(pair, tmp_path / "first.nii.gz")
+
+
+@pytest.mark.parametrize(
+    ("readout", "direction", "message"),
+    ((0.001, "y", "within"), (0.05, "z", "must be x")),
+)
+def test_topup_eddy_rejects_global_parameters_before_creating_outputs(
+    tmp_path: Path, readout: float, direction: str, message: str
+) -> None:
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match=message):
+        module.run_topup_eddy_nifti(
+            tmp_path / "dwi.nii.gz",
+            tmp_path / "bvals",
+            tmp_path / "bvecs",
+            tmp_path / "reverse.nii.gz",
+            output,
+            readout_seconds=readout,
+            phase_encoding_direction=direction,
+        )
+    assert not output.exists()

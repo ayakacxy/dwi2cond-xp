@@ -9,6 +9,15 @@ versions follow semantic versioning.
 
 ### Fixed
 
+- Closed the final-tag independent re-audit findings (`6 P1 + 9 P2/P3`): real
+  producer JSON schemas, canonical nomoco publication, reference-only MCFLIRT
+  pyramids/raw-moving sampling, first-level `fix2D`, complete scientific QA
+  grids and cache lineage, strict FEM inventories, and failure-atomic m2m
+  tensor/provenance publication.
+- Aligned standalone exact-zero QA, low-level PPD nonzero masks, FNIRT identity
+  detection, and TOPUP double-precision means; made FEM dry-run/finalization,
+  actual SimNIBS cache identity, ignored inputs, all-zero anisotropic tissues,
+  and FNIRT prevalidation/attempt publication explicit and testable.
 - Made the interspersed-b0 EDDY fixture gate portable across CPU architectures:
   the Linux x86_64 input hash remains frozen as FSL A/B provenance, while the
   generated DWI is also checked by affine, dtype, numerical summaries, samples,
@@ -72,6 +81,9 @@ versions follow semantic versioning.
 
 ### Added
 
+- Added the latest-tag independent re-audit and its issue-by-issue closure
+  report, including `13370/13370` production coverage and explicit FSL 6.0.4
+  reference gates.
 - Added the post-remediation independent re-audit and its issue-by-issue
   closure report, including discriminative EDDY no-repol evidence and direct
   FSL gates for DTIFIT, TOPUP, vecreg, and thin-volume MCFLIRT.

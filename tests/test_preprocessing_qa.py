@@ -16,11 +16,33 @@ from dwi2cond_xp.preprocessing.qa import (
     build_pipeline_qa,
 )
 from dwi2cond_xp.preprocessing import qa
+from dwi2cond_xp.preprocessing import pipeline
 from dwi2cond_xp.cli import main
 
 
 def _save(path: Path, values: np.ndarray) -> None:
     nib.save(nib.Nifti1Image(values, np.eye(4)), path)
+
+
+def _artifact_entry(path: Path, root: Path) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "path": str(path.resolve()),
+        "relative_path": path.resolve().relative_to(root.resolve()).as_posix(),
+        "type": "file",
+        "bytes": path.stat().st_size,
+        "sha256": pipeline._sha256_file(path),
+    }
+    if path.name.endswith((".nii", ".nii.gz")):
+        image = nib.load(path)
+        entry.update(
+            {
+                "type": "nifti",
+                "shape": list(image.shape),
+                "affine": image.affine.tolist(),
+                "dtype": str(image.get_data_dtype()),
+            }
+        )
+    return entry
 
 
 def _core_inputs(tmp_path: Path) -> PipelineQaInputs:
@@ -94,9 +116,14 @@ def test_build_pipeline_qa_covers_all_formal_sections(tmp_path: Path) -> None:
                         "mode": mode,
                         "final_tissues": str(tmp_path / "final_tissues.nii.gz"),
                     },
-                    "outputs": [str(mesh)],
-                    "masked_subject_volumes": [str(volume)],
-                    "volume_tissues": [1],
+                        "outputs": [str(mesh)],
+                        "masked_subject_volumes": [str(volume)],
+                        "volume_tissues": [1],
+                        "output_directory": str(tmp_path),
+                        "artifacts": [
+                            _artifact_entry(mesh, tmp_path),
+                            _artifact_entry(volume, tmp_path),
+                        ],
                 }
             )
             + "\n",
@@ -272,6 +299,71 @@ def test_pipeline_qa_rejects_core_affine_mismatch(tmp_path: Path) -> None:
         )
 
 
+def test_pipeline_qa_rejects_shifted_optional_scientific_grids(
+    tmp_path: Path,
+) -> None:
+    core = _core_inputs(tmp_path)
+    shape = (4, 5, 6)
+    shifted_affine = np.eye(4)
+    shifted_affine[0, 3] = 2.0
+
+    def shifted(name: str, values: np.ndarray) -> Path:
+        path = tmp_path / name
+        nib.save(nib.Nifti1Image(values, shifted_affine), path)
+        return path
+
+    v1 = np.zeros(shape + (3,), dtype=np.float32)
+    v1[..., 0] = 1.0
+    optional_inputs = (
+        replace(core, v1=shifted("v1-shifted.nii.gz", v1)),
+        replace(
+            core,
+            field_hz=shifted(
+                "field-shifted.nii.gz", np.ones(shape, dtype=np.float32)
+            ),
+        ),
+        replace(
+            core,
+            jacobian=shifted(
+                "jacobian-shifted.nii.gz", np.ones(shape, dtype=np.float32)
+            ),
+        ),
+        replace(
+            core,
+            sse=shifted("sse-shifted.nii.gz", np.ones(shape, dtype=np.float32)),
+        ),
+    )
+    for index, inputs in enumerate(optional_inputs):
+        with pytest.raises(ValueError, match="grid"):
+            build_pipeline_qa(inputs, tmp_path / f"optional-grid-{index}")
+
+    _save(
+        tmp_path / "registered-fa.nii.gz",
+        np.ones(shape, dtype=np.float32),
+    )
+    with pytest.raises(ValueError, match="T1, registered FA"):
+        build_pipeline_qa(
+            replace(
+                core,
+                t1=shifted("t1-shifted.nii.gz", np.ones(shape, dtype=np.float32)),
+                registered_fa=tmp_path / "registered-fa.nii.gz",
+            ),
+            tmp_path / "optional-grid-overlay",
+        )
+
+    _save(tmp_path / "small-mask.nii.gz", np.ones((2, 2, 2), dtype=np.uint8))
+    _save(tmp_path / "field-core-grid.nii.gz", np.ones(shape, dtype=np.float32))
+    report = build_pipeline_qa(
+        replace(
+            core,
+            corrected_dwi_brain_mask=tmp_path / "small-mask.nii.gz",
+            field_hz=tmp_path / "field-core-grid.nii.gz",
+        ),
+        tmp_path / "field-tensor-grid",
+    )
+    assert report["susceptibility"]["status"] == "available"
+
+
 def test_raw_fit_qa_requires_a_paired_common_grid(tmp_path: Path) -> None:
     core = _core_inputs(tmp_path)
     _save(tmp_path / "raw-fa.nii.gz", np.ones((4, 5, 6), dtype=np.float32))
@@ -339,8 +431,13 @@ def test_fem_audit_rejects_nonzero_values_outside_selected_tissues(
                     "final_tissues": str(tmp_path / "tissues.nii.gz"),
                 },
                 "outputs": [str(tmp_path / "result.msh")],
-                "masked_subject_volumes": [str(tmp_path / "E.nii.gz")],
-                "volume_tissues": [1],
+                    "masked_subject_volumes": [str(tmp_path / "E.nii.gz")],
+                    "volume_tissues": [1],
+                    "output_directory": str(tmp_path),
+                    "artifacts": [
+                        _artifact_entry(tmp_path / "result.msh", tmp_path),
+                        _artifact_entry(tmp_path / "E.nii.gz", tmp_path),
+                    ],
             }
         )
         + "\n",
@@ -408,6 +505,11 @@ def _fem_manifest_fixture(tmp_path: Path) -> tuple[Path, dict[str, object]]:
         "outputs": [str(tmp_path / "audit.msh")],
         "masked_subject_volumes": [str(tmp_path / "audit-E.nii.gz")],
         "volume_tissues": [1],
+        "output_directory": str(tmp_path),
+        "artifacts": [
+            _artifact_entry(tmp_path / "audit.msh", tmp_path),
+            _artifact_entry(tmp_path / "audit-E.nii.gz", tmp_path),
+        ],
     }
     path = tmp_path / "audit.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -441,7 +543,14 @@ def test_fem_audit_covers_planned_singleton_and_all_contract_failures(
     run({**base, "input": bad_input}, "final_tissues must be 3D")
     _save(tmp_path / "wrong-grid.nii.gz", np.ones((3, 2, 2, 3), dtype=np.float32))
     run(
-        {**base, "masked_subject_volumes": [str(tmp_path / "wrong-grid.nii.gz")]},
+        {
+            **base,
+            "masked_subject_volumes": [str(tmp_path / "wrong-grid.nii.gz")],
+            "artifacts": [
+                _artifact_entry(tmp_path / "audit.msh", tmp_path),
+                _artifact_entry(tmp_path / "wrong-grid.nii.gz", tmp_path),
+            ],
+        },
         "does not match final_tissues",
     )
 

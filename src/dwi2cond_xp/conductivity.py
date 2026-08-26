@@ -69,6 +69,26 @@ def _adjust_excentricity(eigenvalues: np.ndarray, scaling: float) -> np.ndarray:
     return result
 
 
+def _anisotropic_intensity_scale(
+    mean_determinant: Mapping[int, float],
+    conductivities: Mapping[int, float],
+) -> float:
+    """由各组织平均行列式计算强度校正比例并拒绝退化输入。"""
+
+    numerator = 0.0
+    denominator = 0.0
+    for tag, determinant in mean_determinant.items():
+        root = determinant ** (1.0 / 3.0)
+        numerator += conductivities[tag] * root
+        denominator += root * root
+    if not np.isfinite(denominator) or denominator <= 0.0:
+        raise ValueError("Anisotropic intensity denominator must be positive and finite")
+    intensity_scale = numerator / denominator
+    if not np.isfinite(intensity_scale) or intensity_scale <= 0.0:
+        raise ValueError("Anisotropic intensity scale must be positive and finite")
+    return float(intensity_scale)
+
+
 def correct_fsl_tensor_basis(tensors: np.ndarray, affine: np.ndarray) -> np.ndarray:
     """Convert FSL tensor component directions to SimNIBS mesh world directions."""
     tensors = np.asarray(tensors, dtype=np.float64)
@@ -180,10 +200,15 @@ def tensors_to_conductivity(
                 eigenvalues, 1e10, max_ratio, -1e-6
             )
             determinant = np.prod(eigenvalues, axis=1)
-            mean_determinant[tag_int] = float(
+            current_mean_determinant = float(
                 np.sum(determinant * element_weights[indices])
                 / np.sum(element_weights[indices])
             )
+            if not np.isfinite(current_mean_determinant) or current_mean_determinant <= 0.0:
+                raise ValueError(
+                    f"Anisotropic tissue {tag_int} has no positive finite mean determinant"
+                )
+            mean_determinant[tag_int] = current_mean_determinant
             pending[tag_int] = (indices, eigenvalues, eigenvectors)
             reports["tissues"][str(tag_int)] = {
                 "elements": int(indices.size),
@@ -207,14 +232,10 @@ def tensors_to_conductivity(
             }
 
     if pending:
-        numerator = 0.0
-        denominator = 0.0
-        for tag, determinant in mean_determinant.items():
-            conductivity = conductivity_for(tag)
-            root = determinant ** (1.0 / 3.0)
-            numerator += conductivity * root
-            denominator += root * root
-        intensity_scale = numerator / denominator
+        intensity_scale = _anisotropic_intensity_scale(
+            mean_determinant,
+            {tag: conductivity_for(tag) for tag in mean_determinant},
+        )
         reports["intensity_scale"] = float(intensity_scale)
         for tag, (indices, eigenvalues, eigenvectors) in pending.items():
             conductivity = conductivity_for(tag)

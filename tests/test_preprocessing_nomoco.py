@@ -69,6 +69,20 @@ def test_masked_brain_uses_fsl_strictly_positive_mask(tmp_path: Path) -> None:
     np.testing.assert_array_equal(np.asarray(nib.load(output).dataobj), expected)
 
 
+def test_prepare_fitting_input_accepts_already_published_canonical_file(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "DWIraw.nii"
+    values = np.ones((2, 2, 2, 2), dtype=np.float32)
+    nib.save(nib.Nifti1Image(values, np.eye(4)), source)
+
+    result, report = nomoco_module._prepare_fitting_input(source, source)
+
+    assert result == source
+    assert report["materialization"] == "byte_copy"
+    np.testing.assert_array_equal(np.asarray(nib.load(result).dataobj), values)
+
+
 @pytest.mark.parametrize("direct_mmap", [False, True])
 def test_nomoco_pipeline_matches_existing_fit_and_emits_no_correction_artifacts(
     tmp_path: Path, monkeypatch, direct_mmap: bool
@@ -133,8 +147,10 @@ def test_nomoco_pipeline_matches_existing_fit_and_emits_no_correction_artifacts(
             np.asarray(nib.load(tmp_path / f"direct_{suffix}.nii.gz").dataobj),
         )
     if direct_mmap:
+        assert (output / "DWIraw.nii").is_file()
         assert (output / "DWIforfit.nii").exists()
         assert report["fitting_input"]["strategy"] == "validated_input_mmap"
+        assert report["fitting_input"]["materialization"] == "byte_copy"
     else:
         assert np.min(np.asarray(nib.load(output / "DWIforfit.nii").dataobj)) == 0.0
         assert report["fitting_input"]["strategy"] == "single_decode_materialization"

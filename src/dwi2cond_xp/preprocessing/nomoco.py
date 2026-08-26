@@ -63,14 +63,17 @@ def _prepare_fitting_input(
         validation["finite"] = finite
         validation["nonnegative"] = nonnegative
         if finite:
+            if source.resolve() != materialized_file.resolve():
+                shutil.copyfile(source, materialized_file)
             validation.update(
                 {
                     "strategy": "validated_input_mmap",
-                    "materialized": False,
+                    "materialized": True,
+                    "materialization": "byte_copy",
                     "validation_z_chunk": z_chunk,
                 }
             )
-            return source, validation
+            return materialized_file, validation
 
     write_fsl_reoriented(
         source,
@@ -258,8 +261,7 @@ def run_nomoco_nifti(
         "fit_qa": paths["fit_qa"].name,
     }
     artifacts["dwi_for_fit"] = paths["dwi_for_fit"].name
-    if input_strategy["materialized"]:
-        artifacts["raw_reoriented"] = paths["materialized"].name
+    artifacts["raw_reoriented"] = paths["materialized"].name
     if normalized_grad_dev is not None:
         artifacts["grad_dev"] = normalized_grad_dev.name
     report: dict[str, object] = {

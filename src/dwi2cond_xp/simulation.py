@@ -15,6 +15,43 @@ import numpy as np
 SIMNIBS_REQUIRED_VERSION = "4.6.0"
 
 
+def _validate_tdcs_parameters(
+    *,
+    anode: str,
+    cathode: str,
+    current_ma: float,
+    shape: str,
+    dimensions: tuple[float, float],
+    thickness: float,
+    fields: str,
+    solver: str,
+    volume_tissues: tuple[int, ...],
+) -> None:
+    """在创建 SimNIBS 对象前验证固定电极与求解参数。"""
+
+    if not anode or not cathode or anode == cathode:
+        raise ValueError("Anode and cathode must be distinct nonempty positions")
+    if (
+        not np.isfinite(current_ma)
+        or current_ma <= 0
+        or not np.isfinite(thickness)
+        or thickness <= 0
+        or len(dimensions) != 2
+        or any(not np.isfinite(value) or value <= 0 for value in dimensions)
+    ):
+        raise ValueError("Current, electrode dimensions, and thickness must be positive")
+    if shape not in {"rect", "ellipse"}:
+        raise ValueError("Electrode shape must be rect or ellipse")
+    if solver not in {"pardiso", "hypre", "mumps", "petsc_pardiso"}:
+        raise ValueError("Unsupported FEM solver")
+    if not fields:
+        raise ValueError("fields must contain at least one SimNIBS output field")
+    if not volume_tissues or any(
+        not isinstance(tag, (int, np.integer)) or tag <= 0 for tag in volume_tissues
+    ):
+        raise ValueError("volume_tissues must contain positive integer tissue labels")
+
+
 def _discover_subject_files(
     subpath: Path,
 ) -> tuple[Path, Path, Path, Path | None]:
@@ -74,6 +111,8 @@ def validate_simulation_inputs(
 
     tensor_path: Path | None = None
     tensor_contract: dict[str, Any] | None = None
+    if mode == "scalar" and tensor_file is not None:
+        raise ValueError("tensor_file must not be provided for scalar mode")
     if mode != "scalar":
         if tensor_file is None:
             # Match the SimNIBS 4.6 dwi2cond subject-directory contract.
@@ -133,6 +172,17 @@ def build_tdcs_session(
     volume_tissues: tuple[int, ...] = (1, 2, 3),
 ):
     """Construct a fixed-montage SimNIBS 4.6 SESSION without solving."""
+    _validate_tdcs_parameters(
+        anode=anode,
+        cathode=cathode,
+        current_ma=current_ma,
+        shape=shape,
+        dimensions=dimensions,
+        thickness=thickness,
+        fields=fields,
+        solver=solver,
+        volume_tissues=volume_tissues,
+    )
     try:
         import simnibs
         from simnibs import sim_struct
@@ -142,15 +192,6 @@ def build_tdcs_session(
         raise RuntimeError(
             f"SimNIBS {SIMNIBS_REQUIRED_VERSION} is required; found {simnibs.__version__}"
         )
-    if current_ma <= 0 or thickness <= 0 or any(value <= 0 for value in dimensions):
-        raise ValueError("Current, electrode dimensions, and thickness must be positive")
-    if shape not in {"rect", "ellipse"}:
-        raise ValueError("Electrode shape must be rect or ellipse")
-    if solver not in {"pardiso", "hypre", "mumps", "petsc_pardiso"}:
-        raise ValueError("Unsupported FEM solver")
-    if not volume_tissues or any(tag <= 0 for tag in volume_tissues):
-        raise ValueError("volume_tissues must contain positive integer tissue labels")
-
     session = sim_struct.SESSION()
     session.subpath = input_contract["subpath"]
     session.pathfem = str(Path(output_directory).resolve())
@@ -234,7 +275,7 @@ def inventory_simulation_outputs(
             continue
         entry: dict[str, Any] = {
             "path": str(resolved),
-            "relative_path": str(resolved.relative_to(output)),
+            "relative_path": resolved.relative_to(output).as_posix(),
             "type": "file",
             "bytes": resolved.stat().st_size,
             "sha256": _sha256_file(resolved),
@@ -309,9 +350,21 @@ def run_tdcs(
     """Validate, record, and optionally execute one tDCS conductivity mode."""
     if cpus <= 0:
         raise ValueError("cpus must be a positive integer")
+    _validate_tdcs_parameters(
+        anode=anode,
+        cathode=cathode,
+        current_ma=current_ma,
+        shape=shape,
+        dimensions=dimensions,
+        thickness=thickness,
+        fields=fields,
+        solver=solver,
+        volume_tissues=volume_tissues,
+    )
     contract = validate_simulation_inputs(subpath, mode=mode, tensor_file=tensor_file)
-    output_directory = Path(output_root).resolve() / mode
-    if not dry_run and output_directory.exists():
+    root = Path(output_root).resolve()
+    output_directory = root / "dry-run" / mode if dry_run else root / mode
+    if output_directory.exists():
         shutil.rmtree(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
     manifest_path = output_directory / "dwi2cond_xp_simulation.json"
@@ -334,13 +387,16 @@ def run_tdcs(
         "map_to_subject_volume": True,
         "cpus": cpus,
         "output_directory": str(output_directory),
+        "outputs": [],
+        "masked_subject_volumes": [],
+        "artifacts": [],
     }
-    _write_manifest(manifest_path, manifest)
-    if dry_run:
-        return manifest
-
-    phase = "build_session"
+    phase = "write_initial_manifest"
     try:
+        _write_manifest(manifest_path, manifest)
+        if dry_run:
+            return manifest
+        phase = "build_session"
         session = build_tdcs_session(
             contract,
             output_directory,
@@ -364,9 +420,29 @@ def run_tdcs(
             contract["final_tissues"],
             volume_tissues,
         )
+        if not masked_subject_volumes:
+            raise ValueError("SimNIBS produced no subject-volume output")
         phase = "inventory_outputs"
         artifacts = inventory_simulation_outputs(
             output_directory, manifest_path=manifest_path
+        )
+        phase = "serialize_outputs"
+        safe_outputs = _json_safe(outputs)
+        phase = "write_completed_manifest"
+        manifest["status"] = "completed"
+        manifest["outputs"] = safe_outputs
+        manifest["masked_subject_volumes"] = masked_subject_volumes
+        manifest["artifacts"] = artifacts
+        _write_manifest(manifest_path, manifest)
+        phase = "validate_completed_manifest"
+        from .preprocessing.pipeline import ArtifactContract, validate_artifacts
+
+        validate_artifacts(
+            (
+                ArtifactContract(
+                    manifest_path, "json", dynamic_inventory=True
+                ),
+            )
         )
     except Exception as exc:
         manifest["status"] = "failed"
@@ -375,9 +451,4 @@ def run_tdcs(
         manifest["error"] = str(exc)
         _write_manifest(manifest_path, manifest)
         raise
-    manifest["status"] = "completed"
-    manifest["outputs"] = _json_safe(outputs)
-    manifest["masked_subject_volumes"] = masked_subject_volumes
-    manifest["artifacts"] = artifacts
-    _write_manifest(manifest_path, manifest)
     return manifest

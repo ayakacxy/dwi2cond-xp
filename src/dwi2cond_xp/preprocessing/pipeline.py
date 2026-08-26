@@ -34,6 +34,7 @@ class ArtifactContract:
     ndim: int | None = None
     final_axis: int | None = None
     allow_empty: bool = False
+    dynamic_inventory: bool = False
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class StageDefinition:
     parameters: Mapping[str, object] = field(default_factory=dict)
     backend: str = "python-optimized"
     implementation_version: str = "unknown"
+    preserve_outputs_on_attempt: bool = False
 
 
 @dataclass(frozen=True)
@@ -151,35 +153,90 @@ def _artifact_metadata(
             raise ValueError(f"JSON artifact must contain an object: {path}")
         metadata["keys"] = sorted(str(key) for key in payload)
         dynamic = payload.get("artifacts")
-        if dynamic is not None:
+        if contract.dynamic_inventory:
             if not isinstance(dynamic, list):
                 raise ValueError(f"JSON artifacts must contain a list: {path}")
+            if payload.get("status") == "completed" and not dynamic:
+                raise ValueError(
+                    f"Completed dynamic artifact inventory must not be empty: {path}"
+                )
+            output_directory = payload.get("output_directory")
+            if not isinstance(output_directory, str):
+                raise ValueError(
+                    f"Dynamic artifact manifest must declare output_directory: {path}"
+                )
+            dynamic_root = Path(output_directory).resolve()
             validated_dynamic: list[dict[str, object]] = []
+            seen_paths: set[Path] = set()
             for entry in dynamic:
                 if not isinstance(entry, dict) or not isinstance(
                     entry.get("path"), str
                 ):
                     raise ValueError(f"Invalid dynamic artifact entry: {path}")
                 dynamic_path = Path(entry["path"]).resolve()
+                try:
+                    relative_path = dynamic_path.relative_to(dynamic_root).as_posix()
+                except ValueError as error:
+                    raise ValueError(
+                        f"Dynamic output artifact is outside output_directory: {dynamic_path}"
+                    ) from error
+                if dynamic_path in seen_paths:
+                    raise ValueError(
+                        f"Dynamic output artifact is listed more than once: {dynamic_path}"
+                    )
+                seen_paths.add(dynamic_path)
                 if not dynamic_path.is_file():
                     raise FileNotFoundError(
                         f"Missing dynamic output artifact: {dynamic_path}"
                     )
                 current = {
                     "path": str(dynamic_path),
-                    "relative_path": entry.get("relative_path"),
+                    "relative_path": relative_path,
                     "type": entry.get("type", "file"),
                     "bytes": dynamic_path.stat().st_size,
                     "sha256": _sha256_file(dynamic_path),
                 }
-                for key in ("shape", "affine", "dtype"):
-                    if key in entry:
-                        current[key] = entry[key]
+                if current["type"] == "nifti":
+                    image = nib.load(str(dynamic_path), mmap=True)
+                    affine = np.asarray(image.affine, dtype=np.float64)
+                    if not np.all(np.isfinite(affine)):
+                        raise ValueError(
+                            f"Dynamic NIfTI affine is not finite: {dynamic_path}"
+                        )
+                    current.update(
+                        {
+                            "shape": [int(value) for value in image.shape],
+                            "affine": affine.tolist(),
+                            "dtype": str(image.get_data_dtype()),
+                        }
+                    )
                 if any(current.get(key) != entry.get(key) for key in current):
                     raise ValueError(
                         f"Dynamic output artifact changed after publication: {dynamic_path}"
                     )
                 validated_dynamic.append(current)
+            inventory_paths = {str(item) for item in seen_paths}
+            for field_name in ("outputs", "masked_subject_volumes"):
+                values = payload.get(field_name, [])
+                if not isinstance(values, list):
+                    raise ValueError(
+                        f"Dynamic artifact manifest field {field_name} must be a list: {path}"
+                    )
+                for value in values:
+                    if not isinstance(value, str):
+                        raise ValueError(
+                            f"Dynamic artifact manifest field {field_name} must "
+                            f"contain artifact paths only: {path}"
+                        )
+                    declared = Path(value)
+                    if not declared.is_absolute():
+                        declared = dynamic_root / declared
+                    resolved_declared = str(declared.resolve())
+                    if resolved_declared not in inventory_paths:
+                        raise ValueError(
+                            f"{field_name} artifact is missing from dynamic inventory: "
+                            f"{resolved_declared}"
+                        )
             metadata["dynamic_artifacts"] = validated_dynamic
     elif contract.kind == "text":
         if not path.read_text(encoding="utf-8").strip() and not contract.allow_empty:
@@ -265,7 +322,14 @@ def _numerical_runtime_identity() -> dict[str, object]:
     """Capture numerical-library and threading identities that can change results."""
 
     distributions: dict[str, str] = {}
-    for name in ("numpy", "scipy", "numba", "nibabel", "threadpoolctl"):
+    for name in (
+        "numpy",
+        "scipy",
+        "numba",
+        "nibabel",
+        "threadpoolctl",
+        "simnibs",
+    ):
         try:
             distributions[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
@@ -423,12 +487,14 @@ class PipelineRunner:
         cpu_started = time.process_time()
         if self.progress is not None:
             self.progress(stage.name, 0, 1, "running")
-        _remove_declared_outputs(stage.outputs)
+        if not stage.preserve_outputs_on_attempt:
+            _remove_declared_outputs(stage.outputs)
         try:
             action_result = stage.action()
             artifacts = validate_artifacts(stage.outputs, numerical=False)
         except Exception as error:
-            _remove_declared_outputs(stage.outputs)
+            if not stage.preserve_outputs_on_attempt:
+                _remove_declared_outputs(stage.outputs)
             peak_rss, peak_rss_method = _peak_rss_bytes()
             failed_manifest: dict[str, object] = {
                 **identity,
