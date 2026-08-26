@@ -297,6 +297,25 @@ def test_output_cleanup_removes_declared_directory(tmp_path: Path) -> None:
 def test_numerical_runtime_identity_covers_unavailable_dependencies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        pipeline,
+        "threadpool_info",
+        lambda: [
+            {
+                "internal_api": "openblas",
+                "user_api": "blas",
+                "filepath": "/synthetic/libblas.so",
+                "version": "test",
+                "num_threads": 2,
+                "ignored": "not part of the cache identity",
+            }
+        ],
+    )
+    libraries = pipeline._numerical_runtime_identity()["threadpool_libraries"]
+    assert libraries[0]["internal_api"] == "openblas"
+    assert libraries[0]["num_threads"] == 2
+    assert "ignored" not in libraries[0]
+
     real_version = pipeline.importlib.metadata.version
 
     def missing_scipy(name: str) -> str:
