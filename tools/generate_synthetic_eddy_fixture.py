@@ -111,6 +111,11 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output_directory", type=Path)
+    parser.add_argument(
+        "--interspersed-b0",
+        action="store_true",
+        help="place three b0 volumes at indices 0, 13, and 25",
+    )
     args = parser.parse_args()
     output = args.output_directory.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -119,8 +124,25 @@ def main() -> int:
     affine = np.array(
         [[-2.0, 0.0, 0.0, 25.0], [0.0, 2.0, 0.0, -25.0], [0.0, 0.0, 2.0, -17.0], [0.0, 0.0, 0.0, 1.0]]
     )
-    directions = _directions(24)
-    clean, mask = _undistorted_series(shape, directions)
+    directions = _directions(23 if args.interspersed_b0 else 24)
+    base_series, mask = _undistorted_series(shape, directions)
+    if args.interspersed_b0:
+        baseline = base_series[..., 0]
+        diffusion = base_series[..., 2:]
+        clean = np.concatenate(
+            (
+                baseline[..., None],
+                diffusion[..., :12],
+                baseline[..., None],
+                diffusion[..., 12:],
+                baseline[..., None],
+            ),
+            axis=3,
+        )
+        b0_indices = np.asarray((0, 13, 25), dtype=np.int64)
+    else:
+        clean = base_series
+        b0_indices = np.asarray((0, 1), dtype=np.int64)
     volume_count = clean.shape[3]
     phase = np.linspace(0.0, 2.0 * np.pi, volume_count, endpoint=False)
     motion = np.column_stack(
@@ -143,7 +165,7 @@ def main() -> int:
     ec[:, 6] = 0.0007 * np.sin(1.1 * phase)
     ec[:, 7] = 0.0005 * np.cos(0.8 * phase)
     ec[:, 8] = 0.0006 * np.sin(1.4 * phase)
-    ec[:2] = 0.0
+    ec[b0_indices] = 0.0
     center = (np.asarray(shape, dtype=np.float64) - 1.0) / 2.0
     observed = np.empty_like(clean)
     for index in range(volume_count):
@@ -174,8 +196,10 @@ def main() -> int:
     mask_image.set_qform(affine, 1)
     mask_image.set_sform(affine, 1)
     nib.save(mask_image, output / "mask.nii")
-    bvals = np.concatenate((np.zeros(2), np.full(directions.shape[0], 1000.0)))
-    bvecs = np.column_stack((np.zeros((3, 2)), directions.T))
+    bvals = np.full(volume_count, 1000.0)
+    bvals[b0_indices] = 0.0
+    bvecs = np.zeros((3, volume_count), dtype=np.float64)
+    bvecs[:, np.flatnonzero(bvals != 0.0)] = directions.T
     with (output / "bvals").open("w", encoding="utf-8", newline="\n") as stream:
         np.savetxt(stream, bvals[None, :], fmt="%.1f")
     with (output / "bvecs").open("w", encoding="utf-8", newline="\n") as stream:
@@ -198,12 +222,17 @@ def main() -> int:
         output / "truth_undistorted_dwi.nii",
     ]
     manifest = {
-        "fixture_id": "synthetic-eddy-v1",
+        "fixture_id": (
+            "synthetic-eddy-interspersed-b0-v1"
+            if args.interspersed_b0
+            else "synthetic-eddy-v1"
+        ),
         "visibility": "public-nonanatomical",
         "shape": [*shape, volume_count],
         "voxel_sizes_mm": [2.0, 2.0, 2.0],
         "phase_encoding": [0, 1, 0, 0.05],
-        "b0_count": 2,
+        "b0_count": int(b0_indices.size),
+        "b0_indices": b0_indices.tolist(),
         "dwi_count": int(directions.shape[0]),
         "motion_parameters_rad_mm": motion.tolist(),
         "quadratic_ec_parameters_fsl_order": ec.tolist(),

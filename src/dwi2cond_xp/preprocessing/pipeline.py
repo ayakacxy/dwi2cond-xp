@@ -5,16 +5,19 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import hashlib
+import importlib.metadata
 import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import sys
 import time
 from typing import Literal
 
 import nibabel as nib
 import numpy as np
+from threadpoolctl import threadpool_info
 
 
 ArtifactKind = Literal["nifti", "json", "text", "directory", "file"]
@@ -147,6 +150,37 @@ def _artifact_metadata(
         if not isinstance(payload, dict):
             raise ValueError(f"JSON artifact must contain an object: {path}")
         metadata["keys"] = sorted(str(key) for key in payload)
+        dynamic = payload.get("artifacts")
+        if dynamic is not None:
+            if not isinstance(dynamic, list):
+                raise ValueError(f"JSON artifacts must contain a list: {path}")
+            validated_dynamic: list[dict[str, object]] = []
+            for entry in dynamic:
+                if not isinstance(entry, dict) or not isinstance(
+                    entry.get("path"), str
+                ):
+                    raise ValueError(f"Invalid dynamic artifact entry: {path}")
+                dynamic_path = Path(entry["path"]).resolve()
+                if not dynamic_path.is_file():
+                    raise FileNotFoundError(
+                        f"Missing dynamic output artifact: {dynamic_path}"
+                    )
+                current = {
+                    "path": str(dynamic_path),
+                    "relative_path": entry.get("relative_path"),
+                    "type": entry.get("type", "file"),
+                    "bytes": dynamic_path.stat().st_size,
+                    "sha256": _sha256_file(dynamic_path),
+                }
+                for key in ("shape", "affine", "dtype"):
+                    if key in entry:
+                        current[key] = entry[key]
+                if any(current.get(key) != entry.get(key) for key in current):
+                    raise ValueError(
+                        f"Dynamic output artifact changed after publication: {dynamic_path}"
+                    )
+                validated_dynamic.append(current)
+            metadata["dynamic_artifacts"] = validated_dynamic
     elif contract.kind == "text":
         if not path.read_text(encoding="utf-8").strip() and not contract.allow_empty:
             raise ValueError(f"Text artifact contains no values: {path}")
@@ -216,6 +250,73 @@ def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
     temporary.replace(path)
 
 
+def _remove_declared_outputs(contracts: Sequence[ArtifactContract]) -> None:
+    """Remove only this stage's declared outputs before or after a failed attempt."""
+
+    for contract in contracts:
+        path = contract.path.resolve()
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+
+
+def _numerical_runtime_identity() -> dict[str, object]:
+    """Capture numerical-library and threading identities that can change results."""
+
+    distributions: dict[str, str] = {}
+    for name in ("numpy", "scipy", "numba", "nibabel", "threadpoolctl"):
+        try:
+            distributions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            distributions[name] = "not-installed"
+    libraries = []
+    for item in threadpool_info():
+        libraries.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "internal_api",
+                    "user_api",
+                    "prefix",
+                    "filepath",
+                    "version",
+                    "threading_layer",
+                    "architecture",
+                    "num_threads",
+                )
+            }
+        )
+    libraries.sort(key=lambda item: str(item.get("filepath")))
+    try:
+        from numba import config as numba_config
+        from numba import get_num_threads, threading_layer
+
+        active_numba_threads = get_num_threads()
+        active_threading_layer = threading_layer()
+        numba_identity = {
+            "configured_threading_layer": str(numba_config.THREADING_LAYER),
+            "active_threading_layer": active_threading_layer,
+            "configured_num_threads": int(numba_config.NUMBA_NUM_THREADS),
+            "active_num_threads": int(active_numba_threads),
+        }
+    except ImportError:
+        numba_identity = {"status": "not-installed"}
+    except (RuntimeError, ValueError) as error:
+        numba_identity = {
+            "status": "unavailable",
+            "error_type": type(error).__name__,
+            "error": str(error),
+        }
+    return {
+        "python": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "distributions": distributions,
+        "threadpool_libraries": libraries,
+        "numba": numba_identity,
+    }
+
+
 class PipelineRunner:
     """Run stages in deterministic topological order and preserve backend identity."""
 
@@ -262,6 +363,7 @@ class PipelineRunner:
             "backend": stage.backend,
             "implementation_version": stage.implementation_version,
             "implementation_files": implementation,
+            "numerical_runtime": _numerical_runtime_identity(),
         }
         return hashlib.sha256(_json_bytes(payload)).hexdigest(), payload
 
@@ -321,10 +423,12 @@ class PipelineRunner:
         cpu_started = time.process_time()
         if self.progress is not None:
             self.progress(stage.name, 0, 1, "running")
+        _remove_declared_outputs(stage.outputs)
         try:
             action_result = stage.action()
             artifacts = validate_artifacts(stage.outputs, numerical=False)
         except Exception as error:
+            _remove_declared_outputs(stage.outputs)
             peak_rss, peak_rss_method = _peak_rss_bytes()
             failed_manifest: dict[str, object] = {
                 **identity,

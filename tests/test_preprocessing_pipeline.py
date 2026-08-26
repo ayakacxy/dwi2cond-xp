@@ -133,6 +133,203 @@ def test_pipeline_reexecutes_when_cached_artifact_content_is_replaced(
     np.testing.assert_array_equal(np.asarray(nib.load(output).dataobj), 1.0)
 
 
+def test_pipeline_reexecutes_when_dynamic_fem_artifact_changes(tmp_path: Path) -> None:
+    source = tmp_path / "input.txt"
+    source.write_text("source\n", encoding="utf-8")
+    output = tmp_path / "simulation.json"
+    field = tmp_path / "field.msh"
+    calls: list[int] = []
+
+    def action() -> None:
+        calls.append(1)
+        field.write_text("fresh-field\n", encoding="utf-8")
+        output.write_text(
+            json.dumps(
+                {
+                    "status": "completed",
+                    "artifacts": [
+                        {
+                            "path": str(field.resolve()),
+                            "relative_path": field.name,
+                            "type": "file",
+                            "bytes": field.stat().st_size,
+                            "sha256": pipeline._sha256_file(field),
+                        }
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    stage = StageDefinition(
+        "fem",
+        action,
+        inputs=(source,),
+        outputs=(ArtifactContract(output, "json"),),
+    )
+    PipelineRunner(tmp_path / "manifests").run((stage,))
+    field.write_text("tampered-field\n", encoding="utf-8")
+
+    result = PipelineRunner(tmp_path / "manifests").run((stage,))[0]
+
+    assert result.status == "completed"
+    assert calls == [1, 1]
+    assert field.read_text(encoding="utf-8") == "fresh-field\n"
+
+
+def test_pipeline_failed_attempt_cannot_reuse_stale_declared_outputs(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "input.txt"
+    source.write_text("source\n", encoding="utf-8")
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    contracts = (
+        ArtifactContract(first, "text"),
+        ArtifactContract(second, "text"),
+    )
+
+    def failing_action() -> None:
+        first.write_text("attempt-one\n", encoding="utf-8")
+        second.write_text("stale-second\n", encoding="utf-8")
+        raise RuntimeError("attempt failed")
+
+    failed_stage = StageDefinition(
+        "transaction",
+        failing_action,
+        inputs=(source,),
+        outputs=contracts,
+    )
+    with pytest.raises(RuntimeError, match="attempt failed"):
+        PipelineRunner(tmp_path / "manifests").run((failed_stage,))
+    assert not first.exists()
+    assert not second.exists()
+
+    def incomplete_retry() -> None:
+        first.write_text("attempt-two\n", encoding="utf-8")
+
+    retry_stage = StageDefinition(
+        "transaction",
+        incomplete_retry,
+        inputs=(source,),
+        outputs=contracts,
+    )
+    with pytest.raises(FileNotFoundError, match="second.txt"):
+        PipelineRunner(tmp_path / "manifests").run((retry_stage,))
+    assert not first.exists()
+    assert not second.exists()
+
+
+def test_pipeline_numerical_runtime_identity_invalidates_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "input.txt"
+    output = tmp_path / "output.txt"
+    source.write_text("source\n", encoding="utf-8")
+    calls: list[int] = []
+
+    def action() -> None:
+        calls.append(1)
+        output.write_text("result\n", encoding="utf-8")
+
+    stage = StageDefinition(
+        "runtime",
+        action,
+        inputs=(source,),
+        outputs=(ArtifactContract(output, "text"),),
+    )
+    monkeypatch.setattr(pipeline, "_numerical_runtime_identity", lambda: {"blas": "A"})
+    PipelineRunner(tmp_path / "manifests").run((stage,))
+    monkeypatch.setattr(pipeline, "_numerical_runtime_identity", lambda: {"blas": "B"})
+
+    result = PipelineRunner(tmp_path / "manifests").run((stage,))[0]
+
+    assert result.status == "completed"
+    assert calls == [1, 1]
+
+
+def test_dynamic_artifact_manifest_rejects_all_invalid_forms(tmp_path: Path) -> None:
+    manifest = tmp_path / "simulation.json"
+    contract = ArtifactContract(manifest, "json")
+
+    for payload, message in (
+        ({"artifacts": {}}, "contain a list"),
+        ({"artifacts": ["bad"]}, "Invalid dynamic artifact entry"),
+        (
+            {"artifacts": [{"path": str(tmp_path / "missing.msh")}]},
+            "Missing dynamic output artifact",
+        ),
+    ):
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises((ValueError, FileNotFoundError), match=message):
+            validate_artifacts((contract,), numerical=False)
+
+    image_path = tmp_path / "field.nii.gz"
+    _write_nifti(image_path)
+    image = nib.load(image_path)
+    entry = {
+        "path": str(image_path.resolve()),
+        "relative_path": image_path.name,
+        "type": "nifti",
+        "bytes": image_path.stat().st_size,
+        "sha256": pipeline._sha256_file(image_path),
+        "shape": list(image.shape),
+        "affine": image.affine.tolist(),
+        "dtype": str(image.get_data_dtype()),
+    }
+    manifest.write_text(json.dumps({"artifacts": [entry]}), encoding="utf-8")
+    metadata = validate_artifacts((contract,), numerical=False)[0]
+    assert metadata["dynamic_artifacts"] == [entry]
+
+
+def test_output_cleanup_removes_declared_directory(tmp_path: Path) -> None:
+    output = tmp_path / "stage-output"
+    output.mkdir()
+    (output / "partial.txt").write_text("partial\n", encoding="utf-8")
+
+    pipeline._remove_declared_outputs((ArtifactContract(output, "directory"),))
+
+    assert not output.exists()
+
+
+def test_numerical_runtime_identity_covers_unavailable_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_version = pipeline.importlib.metadata.version
+
+    def missing_scipy(name: str) -> str:
+        if name == "scipy":
+            raise pipeline.importlib.metadata.PackageNotFoundError(name)
+        return real_version(name)
+
+    monkeypatch.setattr(pipeline.importlib.metadata, "version", missing_scipy)
+    real_import = builtins.__import__
+
+    def missing_numba(name, *args, **kwargs):
+        if name == "numba":
+            raise ImportError("numba unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_numba)
+    missing = pipeline._numerical_runtime_identity()
+    assert missing["distributions"]["scipy"] == "not-installed"
+    assert missing["numba"] == {"status": "not-installed"}
+
+    monkeypatch.setattr(builtins, "__import__", real_import)
+    import numba
+
+    monkeypatch.setattr(
+        numba,
+        "get_num_threads",
+        lambda: (_ for _ in ()).throw(RuntimeError("threading unavailable")),
+    )
+    unavailable = pipeline._numerical_runtime_identity()
+    assert unavailable["numba"]["status"] == "unavailable"
+    assert unavailable["numba"]["error_type"] == "RuntimeError"
+
+
 def test_directory_hash_covers_topology_files_and_rejects_unknown_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

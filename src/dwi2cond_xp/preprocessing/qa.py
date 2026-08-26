@@ -28,6 +28,8 @@ class PipelineQaInputs:
     tensor: Path
     valid_mask: Path
     dwi_brain_mask: Path | None = None
+    raw_dwi_brain_mask: Path | None = None
+    corrected_dwi_brain_mask: Path | None = None
     raw_dwi: Path | None = None
     corrected_dwi: Path | None = None
     raw_registered_fa: Path | None = None
@@ -100,7 +102,7 @@ def _mean_artifacts(
     diffusion_indices: np.ndarray,
     output: Path,
     prefix: str,
-) -> tuple[dict[str, str], np.ndarray, np.ndarray]:
+) -> tuple[dict[str, str], np.ndarray, np.ndarray, nib.Nifti1Image]:
     """Decode DWI once and generate b0 and diffusion means without repeated gzip reads."""
 
     image, values = _load_finite(path, ndim=4)
@@ -118,6 +120,7 @@ def _mean_artifacts(
         {"b0_mean": str(b0_path), "mean_dwi": str(diffusion_path)},
         b0_mean,
         diffusion_mean,
+        image,
     )
 
 
@@ -265,7 +268,7 @@ def build_pipeline_qa(
     inputs: PipelineQaInputs,
     output_directory: str | Path,
     *,
-    b0_threshold: float = 50.0,
+    b0_threshold: float = 0.0,
     progress: QaProgress | None = None,
 ) -> dict[str, object]:
     """Generate all available P11 QA and explicitly list inapplicable mode-specific items."""
@@ -281,19 +284,31 @@ def build_pipeline_qa(
         raise ValueError("QA requires at least one b0 and one diffusion volume")
     original_bvecs = _load_bvecs(inputs.original_bvecs, bvals.size)
 
-    _mask_image, raw_mask = _load_finite(inputs.brain_mask, ndim=3)
+    mask_image, raw_mask = _load_finite(inputs.brain_mask, ndim=3)
     mask = raw_mask != 0
     if np.count_nonzero(mask) == 0:
         raise ValueError("brain mask must contain at least one voxel")
-    dwi_mask = mask
-    if inputs.dwi_brain_mask is not None:
-        _, raw_dwi_mask = _load_finite(inputs.dwi_brain_mask, ndim=3)
-        dwi_mask = raw_dwi_mask != 0
-        if np.count_nonzero(dwi_mask) == 0:
+    raw_dwi_mask_path = inputs.raw_dwi_brain_mask or inputs.dwi_brain_mask
+    corrected_dwi_mask_path = (
+        inputs.corrected_dwi_brain_mask or inputs.dwi_brain_mask
+    )
+
+    def load_dwi_mask(path: Path | None) -> tuple[nib.Nifti1Image, np.ndarray]:
+        if path is None:
+            return mask_image, mask
+        image, values = _load_finite(path, ndim=3)
+        selected = values != 0
+        if np.count_nonzero(selected) == 0:
             raise ValueError("DWI brain mask must contain at least one voxel")
-    _fa_image, fa_values = _load_finite(inputs.fa, ndim=3)
-    _tensor_image, tensor_values = _load_finite(inputs.tensor, ndim=4)
-    _, valid_values = _load_finite(inputs.valid_mask, ndim=3)
+        return image, selected
+
+    raw_dwi_mask_image, raw_dwi_mask = load_dwi_mask(raw_dwi_mask_path)
+    corrected_dwi_mask_image, corrected_dwi_mask = load_dwi_mask(
+        corrected_dwi_mask_path
+    )
+    fa_image, fa_values = _load_finite(inputs.fa, ndim=3)
+    tensor_image, tensor_values = _load_finite(inputs.tensor, ndim=4)
+    valid_image, valid_values = _load_finite(inputs.valid_mask, ndim=3)
     if tensor_values.shape[-1] != 6:
         raise ValueError("tensor final axis must contain six components")
     spatial_shape = mask.shape
@@ -303,6 +318,11 @@ def build_pipeline_qa(
         or valid_values.shape != spatial_shape
     ):
         raise ValueError("mask, FA, tensor and valid mask must share one grid")
+    for image in (fa_image, tensor_image, valid_image):
+        if not np.allclose(
+            image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6
+        ):
+            raise ValueError("mask, FA, tensor and valid mask must share one grid")
     valid = mask & (valid_values != 0)
     if np.count_nonzero(valid) == 0:
         raise ValueError("valid tensor mask selects no voxels")
@@ -311,32 +331,52 @@ def build_pipeline_qa(
 
     dwi_artifacts: dict[str, object] = {}
     if inputs.raw_dwi is not None:
-        raw_artifacts, _raw_b0, raw_mean = _mean_artifacts(
+        raw_artifacts, _raw_b0, raw_mean, raw_dwi_image = _mean_artifacts(
             inputs.raw_dwi,
             b0_indices,
             diffusion_indices,
             output,
             "raw",
         )
+        if raw_dwi_mask.shape != raw_mean.shape or not np.allclose(
+            raw_dwi_mask_image.affine,
+            raw_dwi_image.affine,
+            rtol=0.0,
+            atol=1.0e-6,
+        ):
+            raise ValueError("raw DWI and raw DWI mask must share one grid")
         dwi_artifacts["raw"] = {
             "artifacts": raw_artifacts,
-            "mean_dwi_stats": _masked_stats(raw_mean, dwi_mask),
+            "mean_dwi_stats": _masked_stats(raw_mean, raw_dwi_mask),
         }
     else:
         dwi_artifacts["raw"] = {"status": "not_provided"}
     if progress is not None:
         progress("raw_dwi", 2, 8)
     if inputs.corrected_dwi is not None:
-        corrected_artifacts, _corrected_b0, corrected_mean = _mean_artifacts(
-            inputs.corrected_dwi,
-            b0_indices,
-            diffusion_indices,
-            output,
-            "corrected",
+        corrected_artifacts, _corrected_b0, corrected_mean, corrected_dwi_image = (
+            _mean_artifacts(
+                inputs.corrected_dwi,
+                b0_indices,
+                diffusion_indices,
+                output,
+                "corrected",
+            )
         )
+        if corrected_dwi_mask.shape != corrected_mean.shape or not np.allclose(
+            corrected_dwi_mask_image.affine,
+            corrected_dwi_image.affine,
+            rtol=0.0,
+            atol=1.0e-6,
+        ):
+            raise ValueError(
+                "corrected DWI and corrected DWI mask must share one grid"
+            )
         dwi_artifacts["corrected"] = {
             "artifacts": corrected_artifacts,
-            "mean_dwi_stats": _masked_stats(corrected_mean, dwi_mask),
+            "mean_dwi_stats": _masked_stats(
+                corrected_mean, corrected_dwi_mask
+            ),
         }
     else:
         dwi_artifacts["corrected"] = {"status": "not_provided"}
@@ -400,7 +440,11 @@ def build_pipeline_qa(
     field_qa: dict[str, object] = {"status": "not_provided"}
     if inputs.field_hz is not None:
         _, field_values = _load_finite(inputs.field_hz, ndim=3)
-        field_mask = dwi_mask if field_values.shape == dwi_mask.shape else mask
+        field_mask = (
+            corrected_dwi_mask
+            if field_values.shape == corrected_dwi_mask.shape
+            else mask
+        )
         if field_values.shape != field_mask.shape:
             raise ValueError("field must share the DWI or tensor brain-mask grid")
         field_qa = {

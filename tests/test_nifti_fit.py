@@ -354,3 +354,106 @@ def test_parallel_fit_reports_completed_blocks(tmp_path: Path) -> None:
     assert output.is_file()
     assert len(progress) == 2
     assert progress[-1][0] == 2
+
+
+def test_float_mask_uses_fsl_integer_coercion_for_fit_and_qa(tmp_path: Path) -> None:
+    paths, _, _ = _write_fixture(tmp_path)
+    image = nib.load(paths["data"])
+    seed_signal = np.asarray(image.dataobj)[0, 0, 0]
+    data = np.broadcast_to(seed_signal, (5, 1, 1, seed_signal.size)).copy()
+    mask_values = np.array([0.5, 0.999, 1.0, 1.5, -1.0], dtype=np.float32).reshape(5, 1, 1)
+    affine = np.eye(4)
+    nib.save(nib.Nifti1Image(data, affine), paths["data"])
+    nib.save(nib.Nifti1Image(mask_values, affine), paths["mask"])
+    output = tmp_path / "coerced_tensor.nii.gz"
+
+    fit_dti_nifti(
+        paths["data"],
+        paths["bvals"],
+        paths["bvecs"],
+        paths["mask"],
+        output,
+        compatibility_mode="robust",
+    )
+
+    qa = json.loads((tmp_path / "coerced_tensor_qa.json").read_text())
+    valid = np.asarray(nib.load(tmp_path / "coerced_tensor_valid_mask.nii.gz").dataobj)
+    assert qa["masked_voxels"] == 2
+    assert qa["valid_fitted_voxels"] == 2
+    assert valid.ravel().tolist() == [0, 0, 1, 1, 0]
+
+
+@pytest.mark.parametrize("workers", (1, 2))
+def test_nonfinite_grad_dev_fails_before_any_formal_output(
+    tmp_path: Path, workers: int
+) -> None:
+    paths, _, _ = _write_fixture(tmp_path)
+    grad_image = nib.load(paths["grad"])
+    grad_values = np.asarray(grad_image.dataobj).copy()
+    grad_values[0, 0, 0, 0] = np.nan
+    nib.save(nib.Nifti1Image(grad_values, grad_image.affine, grad_image.header), paths["grad"])
+    output = tmp_path / "bad_grad_tensor.nii.gz"
+
+    with pytest.raises(ValueError, match="grad_dev contains NaN or Inf"):
+        fit_dti_nifti(
+            paths["data"],
+            paths["bvals"],
+            paths["bvecs"],
+            paths["mask"],
+            output,
+            grad_dev_file=paths["grad"],
+            workers=workers,
+        )
+
+    expected = [
+        output,
+        tmp_path / "bad_grad_tensor_valid_mask.nii.gz",
+        tmp_path / "bad_grad_tensor_qa.json",
+    ]
+    expected.extend(tmp_path / f"bad_grad_tensor_{name}.nii.gz" for name in ("FA", "MD", "L1", "V1", "S0", "sse"))
+    assert not any(path.exists() for path in expected)
+
+
+def test_nonfinite_float_mask_is_rejected_before_fitting(tmp_path: Path) -> None:
+    paths, _, _ = _write_fixture(tmp_path)
+    mask_image = nib.load(paths["mask"])
+    mask = np.asarray(mask_image.dataobj, dtype=np.float32).copy()
+    mask[0, 0, 0] = np.nan
+    nib.save(nib.Nifti1Image(mask, mask_image.affine), paths["mask"])
+
+    with pytest.raises(ValueError, match="mask contains NaN or Inf"):
+        fit_dti_nifti(
+            paths["data"],
+            paths["bvals"],
+            paths["bvecs"],
+            paths["mask"],
+            tmp_path / "mask_tensor.nii.gz",
+        )
+
+
+def test_dtifit_outputs_use_fsl_units_intents_and_calibration(tmp_path: Path) -> None:
+    paths, _, _ = _write_fixture(tmp_path)
+    output = tmp_path / "metadata_tensor.nii.gz"
+    fit_dti_nifti(
+        paths["data"],
+        paths["bvals"],
+        paths["bvecs"],
+        paths["mask"],
+        output,
+        compatibility_mode="robust",
+    )
+
+    tensor_header = nib.load(output).header
+    l1 = nib.load(tmp_path / "metadata_tensor_L1.nii.gz")
+    fa_header = nib.load(tmp_path / "metadata_tensor_FA.nii.gz").header
+    mo_header = nib.load(tmp_path / "metadata_tensor_MO.nii.gz").header
+    v1_header = nib.load(tmp_path / "metadata_tensor_V1.nii.gz").header
+
+    assert tensor_header.get_xyzt_units() == ("mm", "sec")
+    assert float(tensor_header["cal_min"]) == 0.0
+    assert float(tensor_header["cal_max"]) == pytest.approx(
+        float(np.max(np.asarray(l1.dataobj)))
+    )
+    assert (float(fa_header["cal_min"]), float(fa_header["cal_max"])) == (0.0, 1.0)
+    assert (float(mo_header["cal_min"]), float(mo_header["cal_max"])) == (-1.0, 1.0)
+    assert int(v1_header["intent_code"]) == 2003

@@ -12,6 +12,8 @@ import nibabel as nib
 import numpy as np
 from scipy.ndimage import affine_transform
 
+from .preprocessing.transforms import world_matrix_to_fsl
+
 
 def tensor6_to_matrix(tensor: np.ndarray) -> np.ndarray:
     """Convert the FSL six-component order to symmetric 3x3 tensors."""
@@ -116,6 +118,8 @@ def register_tensor_affine(
         @ reference_img.affine
     )
     source = np.asarray(tensor_img.dataobj, dtype=np.float32)
+    if not np.all(np.isfinite(source)):
+        raise ValueError("The input tensor contains NaN or Inf")
     target_shape = reference_img.shape[:3]
     sampled = np.empty(target_shape + (6,), dtype=np.float32)
     loaded_at = time.perf_counter()
@@ -136,13 +140,24 @@ def register_tensor_affine(
 
     source_mask: np.ndarray | None = None
     if source_mask_file is not None or source_mask_mode is not None:
-        source_mask = (
-            (source[..., 0] != 0)
-            | (source[..., 1] != 0)
-            | (source[..., 2] != 0)
-            if source_mask_mode == "fsl-vecreg"
-            else np.asarray(nib.load(str(source_mask_file)).dataobj) > 0
-        )
+        if source_mask_mode == "fsl-vecreg":
+            source_mask = (
+                (source[..., 0] != 0)
+                | (source[..., 1] != 0)
+                | (source[..., 2] != 0)
+            )
+        else:
+            source_mask_img = nib.load(str(source_mask_file))
+            source_mask = np.asarray(source_mask_img.dataobj) != 0
+            if not np.allclose(
+                source_mask_img.affine,
+                tensor_img.affine,
+                rtol=0.0,
+                atol=1.0e-6,
+            ):
+                raise ValueError(
+                    "The source mask must match the tensor grid exactly"
+                )
         if source_mask.shape != tensor_img.shape[:3]:
             raise ValueError("The source-mask shape does not match the tensor")
 
@@ -184,7 +199,13 @@ def register_tensor_affine(
             )
     resampled_at = time.perf_counter()
     orientation_transform = (
-        transform
+        world_matrix_to_fsl(
+            transform,
+            tensor_img.shape[:3],
+            tensor_img.affine,
+            reference_img.shape[:3],
+            reference_img.affine,
+        )
         if reorientation_transform is None
         else np.asarray(reorientation_transform, dtype=np.float64)
     )
@@ -216,7 +237,7 @@ def register_tensor_affine(
         valid &= sampled_source_mask
     if reference_mask_file is not None:
         reference_mask_img = nib.load(str(reference_mask_file))
-        reference_mask = np.asarray(reference_mask_img.dataobj) > 0
+        reference_mask = np.asarray(reference_mask_img.dataobj) != 0
         if reference_mask.shape != target_shape or not np.allclose(
             reference_mask_img.affine, reference_img.affine
         ):

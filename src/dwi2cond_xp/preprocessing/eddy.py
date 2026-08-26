@@ -13,7 +13,7 @@ from time import perf_counter
 import numpy as np
 from numba import get_num_threads, njit, prange, set_num_threads, threading_layer
 
-from ..gradients import load_gradients
+from ..gradients import _is_single_fsl_shell, load_gradients
 from ._numba import set_available_numba_threads
 from .brain_mask import robust_intensity_limits
 from .orientation import write_fsl_reoriented
@@ -29,6 +29,15 @@ from .topup import (
 
 
 GP_VOXEL_SELECTION_ATTEMPT_LIMIT = 100_000_000
+
+
+def _validate_eddy_readout_seconds(readout_seconds: float) -> float:
+    """Validate the closed readout-time interval accepted by FSL EDDY."""
+
+    value = float(readout_seconds)
+    if not np.isfinite(value) or value < 0.01 or value > 0.2:
+        raise ValueError("readout seconds must be finite and within [0.01, 0.2]")
+    return value
 
 
 def _configure_numba_worker() -> None:
@@ -185,6 +194,7 @@ class EddyDwiRegistrationResult:
     joint_mask: np.ndarray
     outlier_map: np.ndarray | None = None
     outlier_free_scans: np.ndarray | None = None
+    formal_scan_space_scans: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -2381,6 +2391,7 @@ def run_eddy_b0_iterations(
 ) -> EddyB0RegistrationResult:
     """Run FSL's fixed movement-only b0 registration iterations."""
 
+    _validate_eddy_readout_seconds(readout_seconds)
     scans = np.asarray(fsl_scaled_scans, dtype=np.float32).copy()
     mask = np.asarray(brain_mask)
     if scans.ndim != 4 or scans.shape[3] < 2 or not np.all(np.isfinite(scans)):
@@ -2571,6 +2582,46 @@ def _apply_eddy_outlier_slices(
     stored_outliers[volume] = current_outliers
 
 
+def _interpolate_interspersed_b0_movement(
+    b0_indices: np.ndarray,
+    dwi_indices: np.ndarray,
+    b0_movement_parameters: np.ndarray,
+    total_scan_count: int,
+) -> np.ndarray | None:
+    """Interpolate FSL's useful interspersed-b0 movement onto DWI scans."""
+
+    b0 = np.asarray(b0_indices, dtype=np.int64).reshape(-1)
+    dwi = np.asarray(dwi_indices, dtype=np.int64).reshape(-1)
+    movement = np.asarray(b0_movement_parameters, dtype=np.float64)
+    if movement.shape != (b0.size, 6):
+        raise ValueError("b0 movement parameters must have shape (N_b0, 6)")
+    if total_scan_count < 1 or np.any(b0 < 0) or np.any(dwi < 0):
+        raise ValueError("scan indices and total scan count must be valid")
+    if (
+        b0.size <= 2
+        or float(b0[0]) >= 0.25 * total_scan_count
+        or float(b0[-1]) <= 0.75 * total_scan_count
+    ):
+        return None
+
+    interpolated = np.empty((dwi.size, 6), dtype=np.float64)
+    for local_index, global_index in enumerate(dwi):
+        upper = int(np.searchsorted(b0, global_index, side="right"))
+        if upper == 0:
+            interpolated[local_index] = movement[0]
+        elif upper == b0.size:
+            interpolated[local_index] = movement[-1]
+        else:
+            lower = upper - 1
+            alpha = float(global_index - b0[lower]) / float(
+                b0[upper] - b0[lower]
+            )
+            interpolated[local_index] = (
+                (1.0 - alpha) * movement[lower] + alpha * movement[upper]
+            )
+    return interpolated
+
+
 def run_eddy_dwi_iterations(
     fsl_scaled_scans: np.ndarray,
     bvecs: np.ndarray,
@@ -2591,6 +2642,10 @@ def run_eddy_dwi_iterations(
     susceptibility_field_hz: np.ndarray
     | PreparedEddySusceptibilityField
     | None = None,
+    post_location_movement_transform: Callable[
+        [np.ndarray, np.ndarray, np.ndarray], np.ndarray
+    ]
+    | None = None,
 ) -> EddyDwiRegistrationResult:
     """Run FSL's fixed no-TOPUP DWI registration and optional ``--repol``.
 
@@ -2599,6 +2654,7 @@ def run_eddy_dwi_iterations(
     estimation remains a separate stage.
     """
 
+    _validate_eddy_readout_seconds(readout_seconds)
     scans = np.asarray(fsl_scaled_scans, dtype=np.float32).copy()
     original_scans = scans.copy()
     vectors = np.asarray(bvecs, dtype=np.float64)
@@ -2676,7 +2732,9 @@ def run_eddy_dwi_iterations(
             susceptibility_field_hz=prepared_field,
         )
 
-    def load_prediction_state() -> tuple[
+    def load_prediction_state(
+        error_variance_fudge_factor: float = 10.0,
+    ) -> tuple[
         np.ndarray,
         EddyHyperparameterResult,
         EddySphericalGP,
@@ -2698,7 +2756,9 @@ def run_eddy_dwi_iterations(
             random_seed=random_seed,
         )
         hyperparameter_result = estimate_spherical_gp_hyperparameters(
-            selected, vectors
+            selected,
+            vectors,
+            error_variance_fudge_factor=error_variance_fudge_factor,
         )
         gp = fit_spherical_gp_weights(
             vectors, hyperparameter_result.hyperparameters
@@ -2813,17 +2873,16 @@ def run_eddy_dwi_iterations(
             joint_mask, hyperparameter_result, _gp, predictions = (
                 load_prediction_state()
             )
-            if replace_outliers:
-                outlier_result = detect_outliers(predictions, joint_mask)
-                if _iteration:
-                    replace_detected_outliers(
-                        outlier_result,
-                        joint_mask,
-                        hyperparameter_result.hyperparameters,
-                    )
-                    joint_mask, hyperparameter_result, _gp, predictions = (
-                        load_prediction_state()
-                    )
+            outlier_result = detect_outliers(predictions, joint_mask)
+            if _iteration:
+                replace_detected_outliers(
+                    outlier_result,
+                    joint_mask,
+                    hyperparameter_result.hyperparameters,
+                )
+                joint_mask, hyperparameter_result, _gp, predictions = (
+                    load_prediction_state()
+                )
 
             def update_volume(
                 volume: int,
@@ -2931,18 +2990,29 @@ def run_eddy_dwi_iterations(
         movement = _apply_eddy_dwi_location_reference(
             movement, scans.shape[:3], voxel_sizes_mm
         )
-        if replace_outliers:
-            final_joint_mask, final_hyperparameters, _gp, final_predictions = (
-                load_prediction_state()
+        if post_location_movement_transform is not None:
+            transformed_movement = np.asarray(
+                post_location_movement_transform(
+                    movement.copy(), eddy.copy(), scans.copy()
+                ),
+                dtype=np.float64,
             )
-            outlier_result = detect_outliers(
-                final_predictions, final_joint_mask
-            )
-            replace_detected_outliers(
-                outlier_result,
-                final_joint_mask,
-                final_hyperparameters.hyperparameters,
-            )
+            if transformed_movement.shape != movement.shape or not np.all(
+                np.isfinite(transformed_movement)
+            ):
+                raise ValueError(
+                    "post-location movement transform returned an invalid array"
+                )
+            movement = transformed_movement
+        final_joint_mask, final_hyperparameters, _gp, final_predictions = (
+            load_prediction_state(error_variance_fudge_factor=1.0)
+        )
+        outlier_result = detect_outliers(final_predictions, final_joint_mask)
+        replace_detected_outliers(
+            outlier_result,
+            final_joint_mask,
+            final_hyperparameters.hyperparameters,
+        )
         outlier_free_scans = scans.copy() if replace_outliers else None
         transformed_volumes = (
             list(executor.map(unwarp_volume, volume_indices))
@@ -2971,17 +3041,14 @@ def run_eddy_dwi_iterations(
         final_joint_mask,
         None if outlier_result is None else outlier_result.outlier_map.copy(),
         outlier_free_scans,
+        (scans if replace_outliers else original_scans).copy(),
     )
 
 
 def _same_diffusion_shell(bvals: np.ndarray) -> bool:
-    """Return FSL's strict pairwise ``abs(b1-b2) < 100`` shell predicate."""
+    """Return FSL EDDY's template/mean/reassignment single-shell predicate."""
 
-    values = np.asarray(bvals, dtype=np.float64).reshape(-1)
-    return bool(
-        values.size > 0
-        and np.all(np.abs(values[:, None] - values[None, :]) < 100.0)
-    )
+    return _is_single_fsl_shell(np.asarray(bvals, dtype=np.float64))
 
 
 def run_simnibs46_eddy(
@@ -3005,6 +3072,7 @@ def run_simnibs46_eddy(
 ) -> EddyRunResult:
     """Run the complete single-shell SimNIBS 4.6 EDDY fixed subset."""
 
+    _validate_eddy_readout_seconds(readout_seconds)
     values = np.asarray(scans, dtype=np.float32)
     shell_values = np.asarray(bvals, dtype=np.float64).reshape(-1)
     vectors = np.asarray(bvecs, dtype=np.float64)
@@ -3072,6 +3140,67 @@ def run_simnibs46_eddy(
     if progress is not None:
         progress("register_b0", 1, 1)
         progress("register_dwi", 0, 1)
+
+    initial_dwi_movement = _interpolate_interspersed_b0_movement(
+        b0_indices,
+        dwi_indices,
+        b0_result.movement_parameters,
+        values.shape[3],
+    )
+    shell_translation = 0.0
+    shell_alignment = np.zeros(6, dtype=np.float64)
+
+    def align_after_location_reference(
+        movement_parameters: np.ndarray,
+        eddy_parameters: np.ndarray,
+        current_scans: np.ndarray,
+    ) -> np.ndarray:
+        nonlocal shell_translation, shell_alignment
+        dwi_unwarped = np.empty_like(current_scans)
+        dwi_joint_mask = np.ones(values.shape[:3], dtype=np.uint8)
+        for local_index in range(current_scans.shape[3]):
+            transformed = transform_eddy_scan_to_model(
+                current_scans[..., local_index],
+                movement_parameters[local_index],
+                eddy_parameters[local_index],
+                voxel_sizes_mm,
+                phase_encoding_axis,
+                phase_encoding_sign,
+                readout_seconds,
+                susceptibility_field_hz=prepared_field,
+            )
+            dwi_unwarped[..., local_index] = transformed.values
+            dwi_joint_mask *= transformed.mask
+        shell_translation = estimate_eddy_shell_pe_translation(
+            b0_result.unwarped_scans,
+            dwi_unwarped,
+            b0_result.joint_mask,
+            dwi_joint_mask,
+            voxel_sizes_mm,
+            phase_encoding_axis,
+        )
+        shell_alignment = estimate_eddy_shell_rigid_alignment(
+            b0_result.unwarped_scans,
+            dwi_unwarped,
+            b0_result.joint_mask,
+            dwi_joint_mask,
+            voxel_sizes_mm,
+        )
+        if align_shells_post_eddy:
+            return apply_eddy_shell_rigid_alignment(
+                movement_parameters,
+                shell_alignment,
+                values.shape[:3],
+                voxel_sizes_mm,
+            )
+        return apply_eddy_shell_pe_translation(
+            movement_parameters,
+            shell_translation,
+            values.shape[:3],
+            voxel_sizes_mm,
+            phase_encoding_axis,
+        )
+
     dwi_result = run_eddy_dwi_iterations(
         scaled[..., dwi_indices],
         vectors[:, dwi_indices],
@@ -3084,42 +3213,14 @@ def run_simnibs46_eddy(
         bvals=shell_values[dwi_indices],
         workers=workers,
         replace_outliers=replace_outliers,
+        initial_movement_parameters=initial_dwi_movement,
         susceptibility_field_hz=prepared_field,
+        post_location_movement_transform=align_after_location_reference,
     )
     if progress is not None:
         progress("register_dwi", 1, 1)
         progress("align_shells", 0, 1)
-    shell_translation = estimate_eddy_shell_pe_translation(
-        b0_result.unwarped_scans,
-        dwi_result.unwarped_scans,
-        b0_result.joint_mask,
-        dwi_result.joint_mask,
-        voxel_sizes_mm,
-        phase_encoding_axis,
-    )
-    shell_alignment = estimate_eddy_shell_rigid_alignment(
-        b0_result.unwarped_scans,
-        dwi_result.unwarped_scans,
-        b0_result.joint_mask,
-        dwi_result.joint_mask,
-        voxel_sizes_mm,
-    )
     dwi_movement = dwi_result.movement_parameters.copy()
-    if align_shells_post_eddy:
-        dwi_movement = apply_eddy_shell_rigid_alignment(
-            dwi_movement,
-            shell_alignment,
-            values.shape[:3],
-            voxel_sizes_mm,
-        )
-    else:
-        dwi_movement = apply_eddy_shell_pe_translation(
-            dwi_movement,
-            shell_translation,
-            values.shape[:3],
-            voxel_sizes_mm,
-            phase_encoding_axis,
-        )
     if progress is not None:
         progress("align_shells", 1, 1)
         progress("final_resampling", 0, int(values.shape[3]))
@@ -3127,9 +3228,13 @@ def run_simnibs46_eddy(
     corrected_scaled = np.empty_like(scaled)
     corrected_scaled[..., b0_indices] = b0_result.unwarped_scans
     dwi_scan_space = (
-        dwi_result.outlier_free_scans
-        if dwi_result.outlier_free_scans is not None
-        else scaled[..., dwi_indices]
+        dwi_result.formal_scan_space_scans
+        if dwi_result.formal_scan_space_scans is not None
+        else (
+            dwi_result.outlier_free_scans
+            if dwi_result.outlier_free_scans is not None
+            else scaled[..., dwi_indices]
+        )
     )
 
     def resample_dwi(local_index: int) -> tuple[int, np.ndarray, np.ndarray]:
@@ -3237,8 +3342,7 @@ def run_eddy_nifti(
     }
     if phase_encoding_direction not in directions:
         raise ValueError("phase encoding direction must be x, x-, y, y-, z, or z-")
-    if not np.isfinite(readout_seconds) or readout_seconds <= 0.0:
-        raise ValueError("readout seconds must be positive and finite")
+    _validate_eddy_readout_seconds(readout_seconds)
     if workers < 1:
         raise ValueError("workers must be positive")
     if random_seed < 0:
@@ -3624,10 +3728,6 @@ def detect_eddy_slice_outliers(
             raise ValueError("previous_outlier_map must match the statistics shape")
         fit_eligible &= ~previous
     item_count = int(np.count_nonzero(fit_eligible))
-    if item_count < 2:
-        raise ValueError(
-            "at least two eligible slices are required for outlier detection"
-        )
     mean_center = 0.0
     squared_center = 0.0
     total_voxels = 0
@@ -3638,8 +3738,11 @@ def detect_eddy_slice_outliers(
                 mean_center += voxel_count * mean[volume, slice_index]
                 squared_center += voxel_count * squared[volume, slice_index]
                 total_voxels += voxel_count
-    mean_center /= total_voxels
-    squared_center /= total_voxels
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mean_center = float(np.divide(np.float64(mean_center), total_voxels))
+        squared_center = float(
+            np.divide(np.float64(squared_center), total_voxels)
+        )
     mean_variance = 0.0
     squared_variance = 0.0
     for slice_index in range(mean.shape[1]):
@@ -3650,18 +3753,24 @@ def detect_eddy_slice_outliers(
                 squared_delta = squared[volume, slice_index] - squared_center
                 mean_variance += voxel_count * mean_delta * mean_delta
                 squared_variance += voxel_count * squared_delta * squared_delta
-    mean_std = np.sqrt(mean_variance / (item_count - 1))
-    squared_std = np.sqrt(squared_variance / (item_count - 1))
-    if mean_std == 0.0 or squared_std == 0.0:
-        raise ValueError("slice residual variance must be nonzero")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        mean_std = float(
+            np.sqrt(np.divide(np.float64(mean_variance), item_count - 1))
+        )
+        squared_std = float(
+            np.sqrt(np.divide(np.float64(squared_variance), item_count - 1))
+        )
     normalized = np.zeros_like(mean)
     normalized_squared = np.zeros_like(mean)
     scale = np.zeros_like(mean)
     scale[eligible] = 1.0 / np.sqrt(counts[eligible])
-    normalized[eligible] = (mean[eligible] - mean_center) / (scale[eligible] * mean_std)
-    normalized_squared[eligible] = (squared[eligible] - squared_center) / (
-        scale[eligible] * squared_std
-    )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        normalized[eligible] = (mean[eligible] - mean_center) / (
+            scale[eligible] * mean_std
+        )
+        normalized_squared[eligible] = (
+            squared[eligible] - squared_center
+        ) / (scale[eligible] * squared_std)
     outliers = eligible & (-normalized > threshold_standard_deviations)
     if consider_positive:
         outliers |= eligible & (normalized > threshold_standard_deviations)

@@ -62,6 +62,7 @@ def test_complete_workflow_writes_stage_manifests_and_reuses_cache(
         calls["preprocess"] += 1
         output.mkdir(parents=True, exist_ok=True)
         for name, shape in (
+            ("DWIraw.nii", (3, 3, 3, 2)),
             ("DTI_tensor.nii.gz", (3, 3, 3, 6)),
             ("DTI_FA.nii.gz", (3, 3, 3)),
             ("DTI_sse.nii.gz", (3, 3, 3)),
@@ -118,8 +119,21 @@ def test_complete_workflow_writes_stage_manifests_and_reuses_cache(
         _nifti(Path(kwargs["valid_mask_file"]), (3, 3, 3))
         _json(Path(kwargs["qa_file"]))
 
+    def fake_aligned(data, _bvals, target, **kwargs):
+        image = nib.load(data)
+        _nifti(Path(target), image.shape[:3])
+        if kwargs.get("progress") is not None:
+            kwargs["progress"](1, 1)
+        return Path(target)
+
+    def fake_bet(_source, target, **_kwargs):
+        _nifti(Path(target), (3, 3, 3))
+        return SimpleNamespace()
+
     monkeypatch.setattr(workflow, "run_nomoco_nifti", fake_nomoco)
     monkeypatch.setattr(workflow, "fit_dti_nifti", fake_fit)
+    monkeypatch.setattr(workflow, "write_aligned_b0_mean", fake_aligned)
+    monkeypatch.setattr(workflow, "write_bet_brain_mask", fake_bet)
     monkeypatch.setattr(workflow, "run_t1_registration_nifti", fake_registration)
     monkeypatch.setattr(workflow, "build_pipeline_qa", fake_qa)
 
@@ -339,8 +353,21 @@ def _install_common_workflow_stubs(
         _nifti(Path(kwargs["valid_mask_file"]), (3, 3, 3))
         _json(Path(kwargs["qa_file"]))
 
+    def fake_aligned(data, _bvals, target, **kwargs):
+        image = nib.load(data)
+        _nifti(Path(target), image.shape[:3])
+        if kwargs.get("progress") is not None:
+            kwargs["progress"](1, 1)
+        return Path(target)
+
+    def fake_bet(_source, target, **_kwargs):
+        _nifti(Path(target), (3, 3, 3))
+        return SimpleNamespace()
+
     monkeypatch.setattr(workflow, "run_t1_registration_nifti", fake_registration)
     monkeypatch.setattr(workflow, "fit_dti_nifti", fake_fit)
+    monkeypatch.setattr(workflow, "write_aligned_b0_mean", fake_aligned)
+    monkeypatch.setattr(workflow, "write_bet_brain_mask", fake_bet)
     monkeypatch.setattr(workflow, "register_tensor_fnirt_nifti", fake_nonlinear)
     monkeypatch.setattr(workflow, "run_tdcs", fake_fem)
     monkeypatch.setattr(workflow, "build_pipeline_qa", fake_qa)
@@ -725,6 +752,16 @@ def test_workflow_covers_all_new_input_contract_failures(tmp_path: Path) -> None
 
     cases = (
         ({"fit_compatibility_mode": "bad"}, ValueError, "fit_compatibility_mode"),
+        (
+            {"preprocessing_mode": "nomoco", "prefit_tensor": tensor},
+            ValueError,
+            "only consumed by prefit",
+        ),
+        (
+            {"preprocessing_mode": "nomoco", "random_seed": 9},
+            ValueError,
+            "only consumed by eddy",
+        ),
         (
             {"preprocessing_mode": "prefit", "prefit_tensor": tmp_path / "missing"},
             FileNotFoundError,

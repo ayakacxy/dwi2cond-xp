@@ -104,6 +104,33 @@ def test_tensor_to_mesh_writes_conductivity_and_qa(monkeypatch, tmp_path: Path) 
     assert report["mode"] == "vn"
 
 
+def test_tensor_to_mesh_counts_true_tetrahedra_in_boolean_mask(
+    monkeypatch, tmp_path: Path
+) -> None:
+    mesh = _install_fake_simnibs(monkeypatch, tmp_path)
+    mesh.elm.get_tetrahedra = lambda: np.array([True, False, True])
+    image = SimpleNamespace(
+        shape=(2, 2, 2, 6), dataobj=np.zeros((2, 2, 2, 6)), affine=np.eye(4)
+    )
+    monkeypatch.setattr(simnibs_adapter.nib, "load", lambda path: image)
+    monkeypatch.setattr(simnibs_adapter, "correct_fsl_tensor_basis", lambda matrix, affine: matrix)
+    monkeypatch.setattr(
+        simnibs_adapter,
+        "tensors_to_conductivity",
+        lambda matrices, *_args, **_kwargs: (
+            np.repeat(np.eye(3)[None], matrices.shape[0], axis=0),
+            {},
+        ),
+    )
+    qa = tmp_path / "bool_qa.json"
+
+    simnibs_adapter.tensor_to_mesh_conductivity(
+        "tensor", "mesh", tmp_path / "bool.msh", qa_file=qa
+    )
+
+    assert json.loads(qa.read_text(encoding="utf-8"))["tetrahedra"] == 2
+
+
 def test_tensor_to_mesh_rejects_non_six_component_image(monkeypatch, tmp_path: Path) -> None:
     _install_fake_simnibs(monkeypatch, tmp_path)
     image = SimpleNamespace(shape=(2, 2, 2, 5), dataobj=np.zeros((2, 2, 2, 5)), affine=np.eye(4))

@@ -168,6 +168,110 @@ def test_build_pipeline_qa_marks_mode_specific_inputs_as_unavailable(
     assert report["fem_smoke"]["scalar"]["status"] == "not_provided"
 
 
+def test_pipeline_qa_default_b0_selection_is_exact_zero(tmp_path: Path) -> None:
+    core = _core_inputs(tmp_path)
+    core.bvals.write_text("0 20 1000\n", encoding="utf-8")
+    shape = (4, 5, 6)
+    dwi = np.stack(
+        [
+            np.full(shape, 10.0, dtype=np.float32),
+            np.full(shape, 20.0, dtype=np.float32),
+            np.full(shape, 100.0, dtype=np.float32),
+        ],
+        axis=3,
+    )
+    _save(tmp_path / "raw.nii.gz", dwi)
+
+    report = build_pipeline_qa(
+        replace(core, raw_dwi=tmp_path / "raw.nii.gz"), tmp_path / "qa"
+    )
+
+    assert report["dwi"]["raw"]["mean_dwi_stats"]["mean"] == 60.0
+    np.testing.assert_array_equal(
+        np.asarray(nib.load(tmp_path / "qa/raw_b0_mean.nii.gz").dataobj),
+        10.0,
+    )
+
+
+def test_pipeline_qa_uses_separate_raw_and_corrected_mask_lineages(tmp_path: Path) -> None:
+    core = _core_inputs(tmp_path)
+    shape = (4, 5, 6)
+    raw = np.zeros(shape + (3,), dtype=np.float32)
+    corrected = np.zeros_like(raw)
+    raw[..., 0] = corrected[..., 0] = 10.0
+    raw[0, 0, 0, 1:] = 2.0
+    raw[1, 0, 0, 1:] = 200.0
+    corrected[0, 0, 0, 1:] = 3.0
+    corrected[1, 0, 0, 1:] = 300.0
+    _save(tmp_path / "raw.nii.gz", raw)
+    _save(tmp_path / "corrected.nii.gz", corrected)
+    raw_mask = np.zeros(shape, dtype=np.uint8)
+    corrected_mask = np.zeros(shape, dtype=np.uint8)
+    raw_mask[0, 0, 0] = 1
+    corrected_mask[1, 0, 0] = 1
+    _save(tmp_path / "raw_mask.nii.gz", raw_mask)
+    _save(tmp_path / "corrected_mask.nii.gz", corrected_mask)
+
+    report = build_pipeline_qa(
+        replace(
+            core,
+            raw_dwi=tmp_path / "raw.nii.gz",
+            corrected_dwi=tmp_path / "corrected.nii.gz",
+            raw_dwi_brain_mask=tmp_path / "raw_mask.nii.gz",
+            corrected_dwi_brain_mask=tmp_path / "corrected_mask.nii.gz",
+        ),
+        tmp_path / "qa",
+    )
+
+    assert report["dwi"]["raw"]["mean_dwi_stats"]["mean"] == 2.0
+    assert report["dwi"]["corrected"]["mean_dwi_stats"]["mean"] == 300.0
+
+    shifted_mask = tmp_path / "shifted_raw_mask.nii.gz"
+    nib.save(
+        nib.Nifti1Image(raw_mask, np.diag([2.0, 1.0, 1.0, 1.0])), shifted_mask
+    )
+    with pytest.raises(ValueError, match="raw DWI and raw DWI mask"):
+        build_pipeline_qa(
+            replace(
+                core,
+                raw_dwi=tmp_path / "raw.nii.gz",
+                raw_dwi_brain_mask=shifted_mask,
+            ),
+            tmp_path / "qa_shifted",
+        )
+
+    shifted_corrected_mask = tmp_path / "shifted_corrected_mask.nii.gz"
+    nib.save(
+        nib.Nifti1Image(
+            corrected_mask, np.diag([1.0, 2.0, 1.0, 1.0])
+        ),
+        shifted_corrected_mask,
+    )
+    with pytest.raises(ValueError, match="corrected DWI and corrected DWI mask"):
+        build_pipeline_qa(
+            replace(
+                core,
+                corrected_dwi=tmp_path / "corrected.nii.gz",
+                corrected_dwi_brain_mask=shifted_corrected_mask,
+            ),
+            tmp_path / "qa_shifted_corrected",
+        )
+
+
+def test_pipeline_qa_rejects_core_affine_mismatch(tmp_path: Path) -> None:
+    core = _core_inputs(tmp_path)
+    fa = np.full((4, 5, 6), 0.6, dtype=np.float32)
+    shifted_fa = tmp_path / "shifted_fa.nii.gz"
+    nib.save(
+        nib.Nifti1Image(fa, np.diag([2.0, 1.0, 1.0, 1.0])), shifted_fa
+    )
+
+    with pytest.raises(ValueError, match="mask, FA, tensor and valid mask"):
+        build_pipeline_qa(
+            replace(core, fa=shifted_fa), tmp_path / "qa_shifted_core"
+        )
+
+
 def test_raw_fit_qa_requires_a_paired_common_grid(tmp_path: Path) -> None:
     core = _core_inputs(tmp_path)
     _save(tmp_path / "raw-fa.nii.gz", np.ones((4, 5, 6), dtype=np.float32))

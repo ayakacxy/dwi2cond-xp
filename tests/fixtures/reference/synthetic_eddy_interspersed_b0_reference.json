@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "fixture_id": "synthetic-eddy-interspersed-b0-v1",
+  "visibility": "public-nonanatomical",
+  "purpose": "D2C-030-016 and D2C-030-017 official EDDY control-flow gate",
+  "reference": {
+    "simnibs": "4.6.0",
+    "fsl": "6.0.4:ddd0a010",
+    "random_seed": 1,
+    "workers": 2,
+    "iterations": 5,
+    "repol": true,
+    "peas": true
+  },
+  "fixture": {
+    "shape": [26, 26, 18, 26],
+    "voxel_sizes_mm": [2.0, 2.0, 2.0],
+    "phase_encoding_direction": "y",
+    "readout_seconds": 0.05,
+    "b0_indices": [0, 13, 25],
+    "slice_corruptions": [
+      {"volume": 5, "slice": 8, "factor": 0.0},
+      {"volume": 11, "slice": 9, "factor": 0.12},
+      {"volume": 18, "slice": 7, "factor": 0.0},
+      {"volume": 23, "slice": 10, "factor": 0.0}
+    ],
+    "generator_command": [
+      "python",
+      "tools/generate_synthetic_eddy_fixture.py",
+      "<fixture-directory>",
+      "--interspersed-b0"
+    ],
+    "input_sha256": {
+      "dwi.nii": "84c179f1a9debde4941c93cc76bb8a8ade3f4da7ba9dd506d13f358a8776fde6",
+      "mask.nii": "478178fb4299253c382eee6927174854ac61fd6789509252005e6067e2c53e4c",
+      "bvals": "39e665a83e1fad70b6be836e63e610ecdd7c5875bd03b62e81e90ae952cf2ce2",
+      "bvecs": "d3af84265c447d520dc15717fd33b7a55d942464749ef0003264c5b446906aba",
+      "acqp.txt": "e06a0a33b6a2ad8821925fb86f1d13967c4194fe1f2597023df61b93f31fc149",
+      "index.txt": "d0c6b7f89430f4d72b2245e115987f0f639a90d48bda4a5f2c6d0f330f040ddc"
+    }
+  },
+  "commands": {
+    "fsl": [
+      "python",
+      "tools/run_fsl_eddy_reference.py",
+      "--dwi", "<fixture-directory>/dwi.nii",
+      "--mask", "<fixture-directory>/mask.nii",
+      "--bvecs", "<fixture-directory>/bvecs",
+      "--bvals", "<fixture-directory>/bvals",
+      "--acqp", "<fixture-directory>/acqp.txt",
+      "--index", "<fixture-directory>/index.txt",
+      "--output-directory", "<fixture-directory>/fsl",
+      "--niter", "5",
+      "--initrand", "1",
+      "--workers", "2",
+      "--fsldir", "<FSL-directory>"
+    ],
+    "candidate": [
+      "python", "-m", "dwi2cond_xp", "prepare-eddy",
+      "<fixture-directory>/dwi.nii",
+      "<fixture-directory>/bvals",
+      "<fixture-directory>/bvecs",
+      "<fixture-directory>/mask.nii",
+      "<fixture-directory>/local",
+      "--readout-seconds", "0.05",
+      "--phase-encoding-direction", "y",
+      "--random-seed", "1",
+      "--workers", "2",
+      "--progress", "off"
+    ]
+  },
+  "comparison": {
+    "mask": "input mask",
+    "corrected_dwi": {
+      "relative_l2": 0.0015422001015394926,
+      "max_abs": 25.87677001953125
+    },
+    "outlier_free_scan_space": {
+      "relative_l2": 0.0001109180084313266,
+      "max_abs": 4.33001708984375
+    },
+    "parameters": {
+      "all_relative_l2": 0.01255111199002126,
+      "movement_relative_l2": 0.012133598326480591,
+      "ec9_relative_l2": 0.02463231238700698
+    },
+    "rotated_bvec_relative_l2": 0.0007533382489014515,
+    "outlier_map_exact": true,
+    "fsl_and_candidate_detected_volume_slice": [[5, 8], [18, 7], [23, 10]],
+    "injected_but_not_detected_by_either": [[11, 9]]
+  },
+  "output_sha256": {
+    "fsl_corrected_dwi": "78e801041da128cfdbb74f37407aa2769cb9ad5e9fa9045b60c18edcfa12166f",
+    "candidate_corrected_dwi": "1afa96598831690ccf736527dfc5b70ab1793f905ba73c26d3e555ba4e56ab04"
+  },
+  "evidence_boundary": "Synthetic stage-level gate; it proves the interspersed-b0 and post-PEAS repol branches are exercised, not bitwise optimizer equality or real-subject end-to-end equivalence."
+}

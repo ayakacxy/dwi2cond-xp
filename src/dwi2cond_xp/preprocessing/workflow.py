@@ -119,6 +119,10 @@ def _validate_config(config: Dwi2CondPipelineConfig) -> dict[str, Path]:
         raise ValueError("workers must be positive")
     if config.fit_compatibility_mode not in ("strict-fsl", "robust"):
         raise ValueError("fit_compatibility_mode must be strict-fsl or robust")
+    if config.preprocessing_mode != "prefit" and config.prefit_tensor is not None:
+        raise ValueError("prefit_tensor is only consumed by prefit mode")
+    if config.preprocessing_mode != "eddy" and config.random_seed != 1:
+        raise ValueError("random_seed is only consumed by eddy preprocessing")
     if config.preprocessing_mode == "prefit":
         if config.prefit_tensor is None or not config.prefit_tensor.is_file():
             raise FileNotFoundError(f"Missing pre-fitted tensor: {config.prefit_tensor}")
@@ -361,6 +365,8 @@ def run_dwi2cond_pipeline(
     preprocess.mkdir(parents=True, exist_ok=True)
     stages: list[StageDefinition] = []
     version = str(__version__)
+    raw_qa_dwi: Path | None = None
+    raw_qa_mask: Path | None = None
 
     def subprogress(stage: str) -> Callable[[str, int, int], None] | None:
         if progress is None:
@@ -409,6 +415,7 @@ def run_dwi2cond_pipeline(
             return {"status": report["status"], "mode": report["mode"]}
 
         preprocess_outputs = (
+            ArtifactContract(preprocess / "DWIraw.nii", "nifti", ndim=4),
             ArtifactContract(preprocess / "DTI_tensor.nii.gz", "nifti", ndim=4, final_axis=6),
             ArtifactContract(preprocess / "DTI_FA.nii.gz", "nifti", ndim=3),
             ArtifactContract(preprocess / "DTI_sse.nii.gz", "nifti", ndim=3),
@@ -418,7 +425,7 @@ def run_dwi2cond_pipeline(
             ArtifactContract(preprocess / "DWIbvals", "text"),
             ArtifactContract(preprocess / "DWIbvecs", "text"),
         )
-        corrected_dwi = config.data
+        corrected_dwi = preprocess / "DWIraw.nii"
         fit_bvals = preprocess / "DWIbvals"
         fit_bvecs = preprocess / "DWIbvecs"
         dwi_mask = preprocess / "nodif_brain_mask.nii.gz"
@@ -662,7 +669,6 @@ def run_dwi2cond_pipeline(
                 "mode": config.preprocessing_mode,
                 "workers": config.workers,
                 "fit_compatibility_mode": config.fit_compatibility_mode,
-                "random_seed": config.random_seed,
                 "readout_seconds": config.readout_seconds,
                 "phase_encoding_direction": config.phase_encoding_direction,
                 "reverse_phase_encoding": config.reverse_phase_encoding is not None,
@@ -676,6 +682,11 @@ def run_dwi2cond_pipeline(
                     else "external-extension"
                     if config.dwi_brain_mask is not None
                     else "official-exact-b0-alignment-bet-0.2"
+                ),
+                **(
+                    {"random_seed": config.random_seed}
+                    if config.preprocessing_mode == "eddy"
+                    else {}
                 ),
             },
             implementation_version=version,
@@ -722,6 +733,10 @@ def run_dwi2cond_pipeline(
     if config.preprocessing_mode != "prefit":
         raw_dti_directory = preprocess / "raw_dti_qa"
         raw_dwi = raw_dti_directory / "DWIraw.nii"
+        raw_nodif = raw_dti_directory / "nodif.nii.gz"
+        raw_mask = raw_dti_directory / "nodif_brain_mask.nii.gz"
+        raw_qa_dwi = raw_dwi
+        raw_qa_mask = raw_mask
         raw_grad_dev = (
             None if config.grad_dev is None else raw_dti_directory / "grad_dev.nii"
         )
@@ -734,6 +749,20 @@ def run_dwi2cond_pipeline(
                 float32=True,
                 nonnegative=False,
             )
+            write_aligned_b0_mean(
+                raw_dwi,
+                config.bvals,
+                raw_nodif,
+                b0_threshold=0.0,
+                workers=config.workers,
+                progress=lambda _done, _total: None,
+            )
+            write_bet_brain_mask(
+                raw_nodif,
+                raw_mask,
+                fractional_threshold=0.2,
+                workers=config.workers,
+            )
             if config.grad_dev is not None and raw_grad_dev is not None:
                 write_fsl_reoriented(
                     config.grad_dev,
@@ -744,7 +773,7 @@ def run_dwi2cond_pipeline(
                 raw_dwi,
                 config.bvals,
                 config.bvecs,
-                dwi_mask,
+                raw_mask,
                 raw_dti_directory / "DTI.nii.gz",
                 grad_dev_file=raw_grad_dev,
                 workers=config.workers,
@@ -759,6 +788,8 @@ def run_dwi2cond_pipeline(
 
         raw_outputs = [
             ArtifactContract(raw_dwi, "nifti", ndim=4),
+            ArtifactContract(raw_nodif, "nifti", ndim=3),
+            ArtifactContract(raw_mask, "nifti", ndim=3),
             ArtifactContract(
                 raw_dti_directory / "DTI_tensor.nii.gz",
                 "nifti",
@@ -772,7 +803,7 @@ def run_dwi2cond_pipeline(
             ),
             ArtifactContract(raw_dti_directory / "DTI_qa.json", "json"),
         ]
-        raw_inputs = [config.data, config.bvals, config.bvecs, dwi_mask]
+        raw_inputs = [config.data, config.bvals, config.bvecs]
         if config.grad_dev is not None and raw_grad_dev is not None:
             raw_inputs.append(config.grad_dev)
             raw_outputs.append(
@@ -1059,10 +1090,12 @@ def run_dwi2cond_pipeline(
                 original_bvecs=config.bvecs,
                 brain_mask=registration / "T1_brainmask.nii.gz",
                 dwi_brain_mask=dwi_mask,
+                raw_dwi_brain_mask=raw_qa_mask,
+                corrected_dwi_brain_mask=dwi_mask,
                 fa=final_directory / "DTI_coregT1_FA.nii.gz",
                 tensor=final_tensor,
                 valid_mask=final_directory / "DTI_coregT1_valid_mask.nii.gz",
-                raw_dwi=config.data,
+                raw_dwi=raw_qa_dwi,
                 corrected_dwi=corrected_dwi,
                 raw_registered_fa=registration / "DTIraw_FA_6dof_QA.nii.gz",
                 raw_registered_sse=registration / "DTIraw_SSE_6dof_QA.nii.gz",

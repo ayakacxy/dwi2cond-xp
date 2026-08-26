@@ -1,12 +1,12 @@
 # Validation
 
-The replacement `v0.3.0` correctness gate completed with `579 passed, 5 skipped`
-and `12,935/12,935` executable statements covered (`100.00%`), including cold-cache
+The post-re-audit `v0.3.0` correctness gate completed with `618 passed, 6 skipped`
+and `13,204/13,204` executable statements covered (`100.00%`), including cold-cache
 synthetic TOPUP, EDDY, and FNIRT/PPD E2E paths plus direct FSL 6.0.4 `dtifit`
-comparisons. The five visible skips are optional FSL executable probes; the
-explicitly configured local FSL batch completed without skips. Cross-platform
-CI and replacement tag-release results remain pending until the candidate is
-pushed and the tag workflow completes.
+comparisons. The six visible skips are optional FSL executable probes; the
+explicitly configured local FSL probes all passed. Cross-platform CI and the
+replacement tag-release results remain pending until this candidate is pushed
+and the tag workflow completes.
 
 ## Automated contracts
 
@@ -40,6 +40,16 @@ thresholds pass. The near-zero tensor and SSE relative errors on this sharp
 synthetic fixture are retained as regression indicators, not as whole-grid
 tensor equivalence claims. Full details are in the
 [v0.3.0 audit remediation report](V0.3.0_AUDIT_REMEDIATION_REPORT_2026-08-26.md).
+
+The later post-remediation re-audit found 27 additional issue records spanning
+official control flow, public APIs, cache/failure transactions, QA, and metadata.
+All are closed in the
+[post-re-audit remediation report](V0.3.0_POST_REAUDIT_REMEDIATION_REPORT_2026-08-26.md).
+Its strongest new official gates include a deterministic interspersed-b0 EDDY
+fixture (`0.00154220` corrected-DWI relative L2 and an exact final outlier map),
+unequal-mean TOPUP, oblique-basis vecreg, and thin-volume MCFLIRT. The EDDY
+commands, hashes, and metrics are frozen in
+[`synthetic_eddy_interspersed_b0_reference.json`](../tests/fixtures/reference/synthetic_eddy_interspersed_b0_reference.json).
 
 A non-identity 90-degree premat plus one-voxel GRE shift was also compared with
 real FSL `convertwarp` and `applywarp`; the corrected Python trilinear result is

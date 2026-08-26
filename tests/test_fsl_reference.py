@@ -114,18 +114,43 @@ def test_small_nifti_matches_fsl_wls_with_grad_dev(tmp_path):
     reference = np.asarray(nib.load(tmp_path / "fsl_tensor.nii.gz").dataobj)
     assert ours.shape == reference.shape == shape + (6,)
     assert np.allclose(ours, reference, rtol=2e-5, atol=2e-8)
+    ours_tensor_header = nib.load(ours_file).header
+    fsl_tensor_header = nib.load(tmp_path / "fsl_tensor.nii.gz").header
+    assert ours_tensor_header.get_xyzt_units() == fsl_tensor_header.get_xyzt_units()
+    assert float(ours_tensor_header["cal_min"]) == pytest.approx(
+        float(fsl_tensor_header["cal_min"]), abs=1e-8
+    )
+    assert float(ours_tensor_header["cal_max"]) == pytest.approx(
+        float(fsl_tensor_header["cal_max"]), rel=2e-5, abs=2e-8
+    )
     for suffix in ("FA", "MD", "MO", "L1", "L2", "L3", "S0", "sse"):
-        ours_map = np.asarray(nib.load(tmp_path / f"ours_tensor_{suffix}.nii.gz").dataobj)
-        fsl_map = np.asarray(nib.load(tmp_path / f"fsl_{suffix}.nii.gz").dataobj)
+        ours_image = nib.load(tmp_path / f"ours_tensor_{suffix}.nii.gz")
+        fsl_image = nib.load(tmp_path / f"fsl_{suffix}.nii.gz")
+        ours_map = np.asarray(ours_image.dataobj)
+        fsl_map = np.asarray(fsl_image.dataobj)
         assert np.allclose(ours_map, fsl_map, rtol=2e-5, atol=2e-7), suffix
-    for suffix in ("V1", "V2", "V3"):
-        ours_vector = np.asarray(
-            nib.load(tmp_path / f"ours_tensor_{suffix}.nii.gz").dataobj
+        assert ours_image.header.get_xyzt_units() == fsl_image.header.get_xyzt_units()
+        np.testing.assert_allclose(
+            [ours_image.header["cal_min"], ours_image.header["cal_max"]],
+            [fsl_image.header["cal_min"], fsl_image.header["cal_max"]],
+            rtol=2e-5,
+            atol=2e-7,
         )
-        fsl_vector = np.asarray(nib.load(tmp_path / f"fsl_{suffix}.nii.gz").dataobj)
+    for suffix in ("V1", "V2", "V3"):
+        ours_image = nib.load(tmp_path / f"ours_tensor_{suffix}.nii.gz")
+        fsl_image = nib.load(tmp_path / f"fsl_{suffix}.nii.gz")
+        ours_vector = np.asarray(ours_image.dataobj)
+        fsl_vector = np.asarray(fsl_image.dataobj)
         # Eigenvector sign is arbitrary, so compare axial angle rather than sign.
         axial_dot = np.abs(np.sum(ours_vector * fsl_vector, axis=-1))
         assert np.allclose(axial_dot, 1.0, rtol=0, atol=2e-5), suffix
+        assert int(ours_image.header["intent_code"]) == int(
+            fsl_image.header["intent_code"]
+        ) == 2003
+        np.testing.assert_array_equal(
+            [ours_image.header["cal_min"], ours_image.header["cal_max"]],
+            [fsl_image.header["cal_min"], fsl_image.header["cal_max"]],
+        )
 
 
 @pytest.mark.skipif(
@@ -144,7 +169,10 @@ def test_strict_mode_matches_fsl_nonpositive_and_nan_edge_cases(tmp_path):
     )
     data = np.broadcast_to(normal, shape + (bvals.size,)).copy().astype(np.float32)
     data[1, 0, 0, :] = -1.0
-    data[2, 0, 0, 3] = np.nan
+    data[2, 0, 0, :] = np.asarray(
+        [1, 2, 100, 200, 300, np.nan, 500, 600, 700, 800, 900],
+        dtype=np.float32,
+    )
 
     affine = np.eye(4)
     data_file = tmp_path / "edge-data.nii.gz"
@@ -168,6 +196,17 @@ def test_strict_mode_matches_fsl_nonpositive_and_nan_edge_cases(tmp_path):
     )
     ours_qa = json.loads((tmp_path / "ours-edge_qa.json").read_text())
     assert ours_qa["valid_fitted_voxels"] == 3
+    ours_parallel = tmp_path / "ours-edge-parallel.nii.gz"
+    fit_dti_nifti(
+        data_file,
+        bvals_file,
+        bvecs_file,
+        mask_file,
+        ours_parallel,
+        compatibility_mode="strict-fsl",
+        z_chunk=1,
+        workers=2,
+    )
 
     fsl_prefix = tmp_path / "fsl-edge"
     environment = os.environ.copy()
@@ -196,16 +235,90 @@ def test_strict_mode_matches_fsl_nonpositive_and_nan_edge_cases(tmp_path):
         text=True,
     )
 
-    for ours_suffix, fsl_suffix, rtol, atol in (
-        ("", "_tensor", 3e-5, 3e-8),
-        ("_S0", "_S0", 3e-5, 3e-5),
-        ("_sse", "_sse", 3e-5, 3e-5),
-    ):
-        ours = np.asarray(nib.load(tmp_path / f"ours-edge{ours_suffix}.nii.gz").dataobj)
-        reference = np.asarray(nib.load(tmp_path / f"fsl-edge{fsl_suffix}.nii.gz").dataobj)
-        assert np.allclose(
-            np.squeeze(ours), np.squeeze(reference), rtol=rtol, atol=atol
-        ), ours_suffix
+    for ours_prefix in ("ours-edge", "ours-edge-parallel"):
+        for ours_suffix, fsl_suffix, rtol, atol in (
+            ("", "_tensor", 3e-5, 3e-8),
+            ("_S0", "_S0", 3e-5, 3e-5),
+            ("_sse", "_sse", 3e-5, 3e-5),
+        ):
+            ours = np.asarray(
+                nib.load(tmp_path / f"{ours_prefix}{ours_suffix}.nii.gz").dataobj
+            )
+            reference = np.asarray(
+                nib.load(tmp_path / f"fsl-edge{fsl_suffix}.nii.gz").dataobj
+            )
+            assert np.allclose(
+                np.squeeze(ours), np.squeeze(reference), rtol=rtol, atol=atol
+            ), (ours_prefix, ours_suffix)
+
+
+@pytest.mark.skipif(
+    not FSL_DTIFIT.is_file(),
+    reason="FSL reference disabled; set FSL_DTIFIT to a local dtifit executable",
+)
+def test_float_mask_coercion_matches_real_fsl_dtifit(tmp_path):
+    bvals, bvecs = _gradient_fixture()
+    design = form_design_matrix(bvals, bvecs)
+    tensor = np.array([1.4e-3, 8e-5, -4e-5, 7e-4, 6e-5, 4e-4])
+    signal = np.exp(
+        -(design[:, :6] @ tensor + design[:, 6] * -np.log(1000.0))
+    ).astype(np.float32)
+    shape = (6, 1, 1)
+    data = np.broadcast_to(signal, shape + (bvals.size,)).copy()
+    mask = np.asarray([0.0, 0.5, 0.999, 1.0, 1.5, -1.0], dtype=np.float32).reshape(
+        shape
+    )
+    data_file = tmp_path / "mask-data.nii.gz"
+    mask_file = tmp_path / "float-mask.nii.gz"
+    bvals_file = tmp_path / "mask-bvals"
+    bvecs_file = tmp_path / "mask-bvecs"
+    nib.save(nib.Nifti1Image(data, np.eye(4)), data_file)
+    nib.save(nib.Nifti1Image(mask, np.eye(4)), mask_file)
+    np.savetxt(bvals_file, bvals[None, :], fmt="%.8g")
+    np.savetxt(bvecs_file, bvecs.T, fmt="%.12g")
+
+    ours_file = tmp_path / "ours-mask.nii.gz"
+    fit_dti_nifti(
+        data_file,
+        bvals_file,
+        bvecs_file,
+        mask_file,
+        ours_file,
+        compatibility_mode="strict-fsl",
+        workers=2,
+        z_chunk=1,
+    )
+    environment = os.environ.copy()
+    environment["FSLDIR"] = str(FSL_DTIFIT.parent.parent)
+    environment["FSLOUTPUTTYPE"] = "NIFTI_GZ"
+    subprocess.run(
+        [
+            str(FSL_DTIFIT),
+            "-k",
+            str(data_file),
+            "-m",
+            str(mask_file),
+            "-r",
+            str(bvecs_file),
+            "-b",
+            str(bvals_file),
+            "-o",
+            str(tmp_path / "fsl-mask"),
+            "--wls",
+            "--save_tensor",
+        ],
+        check=True,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    ours = np.asarray(nib.load(ours_file).dataobj)
+    reference = np.asarray(nib.load(tmp_path / "fsl-mask_tensor.nii.gz").dataobj)
+    np.testing.assert_allclose(ours, reference, rtol=3e-5, atol=3e-8)
+    assert np.flatnonzero(np.any(reference != 0.0, axis=-1).ravel()).tolist() == [3, 4]
+    qa = json.loads((tmp_path / "ours-mask_qa.json").read_text())
+    assert qa["masked_voxels"] == qa["valid_fitted_voxels"] == 2
 
 
 def test_invalid_voxel_is_explicitly_recorded(tmp_path):

@@ -47,7 +47,7 @@ distribution.
 | Contract | Result | Evidence boundary |
 | --- | ---: | --- |
 | SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
-| Python test suite | **100.00% statement coverage** | 12,935/12,935 executable statements across 579 passed tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
+| Python test suite | **100.00% statement coverage** | 13,204/13,204 executable statements across 618 passed tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
 | DTI tensor parity | **relative L2 4.18e-6** | Same HCP input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
 | Conductivity parity | **max abs 0 to 2.22e-16** | Synthetic mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
 | Fixed-montage FEM | **4/4 modes completed** | Real `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
@@ -79,10 +79,11 @@ included. It also repairs the workflow lineage, masking, fitting semantics,
 TOPUP-to-EDDY closure, official defaults, pre-fitted tensor import, and m2m
 publication defects found by the v0.2.0 audit. FSL is retained only as an
 optional local numerical reference; it is not called by the released runtime.
-The independent v0.3.0 audit's 14 confirmed defects are closed in the
-replacement release. This does not assert bitwise equality for every FSL
-optimizer or a new full-subject official A/B; the current numerical boundary is
-documented in the [audit remediation report](docs/V0.3.0_AUDIT_REMEDIATION_REPORT_2026-08-26.md).
+The independent audits' confirmed defects, including the later post-remediation
+findings `D2C-030-015..041`, are closed in the replacement candidate. This does
+not assert bitwise equality for every FSL optimizer or a new full-subject
+official A/B; the current numerical boundary is documented in the
+[post-re-audit closure report](docs/V0.3.0_POST_REAUDIT_REMEDIATION_REPORT_2026-08-26.md).
 
 The pure-Python DTI and tensor-mapping core uses NumPy, SciPy, NiBabel, h5py,
 and tqdm. Mesh conductivity, FEM, and lead-field workflows require exactly
@@ -489,8 +490,8 @@ retain the HCP acknowledgment and are not a substitute for accepting the
 - Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso;
   all vector E-field NIfTIs were finite and strictly excluded tissues outside
   WM/GM/CSF.
-- The replacement v0.3.0 release gate completed with `579 passed, 5 skipped` and strict
-  `100.00%` statement coverage over all `12,935/12,935` executable statements.
+- The post-re-audit v0.3.0 gate completed with `618 passed, 6 skipped` and strict
+  `100.00%` statement coverage over all `13,204/13,204` executable statements.
   Cross-platform CI enforces the same threshold; optional reference and
   integration tests are skipped only when their external prerequisites are
   unavailable.

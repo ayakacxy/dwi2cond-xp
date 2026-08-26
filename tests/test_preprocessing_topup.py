@@ -1,9 +1,13 @@
 from types import SimpleNamespace
+import os
+from pathlib import Path
+import subprocess
 
 import nibabel as nib
 import numpy as np
 import pytest
 
+from dwi2cond_xp.preprocessing import topup
 from dwi2cond_xp.preprocessing.topup import (
     HESSIAN_PRECISION,
     IMAGE_INTERPOLATION,
@@ -28,9 +32,6 @@ from dwi2cond_xp.preprocessing.topup import (
     spline_design_matrix,
     topup_pair_cost,
     validate_acquisition_parameters,
-)
-from dwi2cond_xp.preprocessing import topup
-from dwi2cond_xp.preprocessing.topup import (
     _balanced_spline_hessian_workset,
     _expand_coefficients_fsl_order,
     _expand_coefficients_fsl_order_voxel_parallel,
@@ -44,6 +45,12 @@ from dwi2cond_xp.preprocessing.topup import (
     _spline_jte_fsl_order,
     _topup_movement_matrix,
     _topup_matrix_to_movement_parameters,
+)
+
+
+FSL_TOPUP = Path(os.environ.get("FSL_TOPUP", "/path/not/configured/topup"))
+FSL_TOPUP_CONFIG = Path(
+    os.environ.get("FSL_TOPUP_CONFIG", "/path/not/configured/b02b0_nosubsamp.cnf")
 )
 
 
@@ -781,3 +788,127 @@ def test_topup_runner_rejects_an_optimizer_that_does_not_publish_final_state(
     rows = np.asarray([[0, 1, 0, 0.05], [0, -1, 0, 0.05]], dtype=float)
     with pytest.raises(RuntimeError, match="final TOPUP state"):
         topup.run_simnibs46_topup(scans, rows, (1.0, 1.0, 1.0))
+
+
+def test_topup_restores_one_common_arithmetic_mean_scale(monkeypatch) -> None:
+    class IdentityObjective:
+        def __init__(self, scans, *_args, **_kwargs):
+            self.scans = np.asarray(scans)
+            self._state = None
+
+        def cost(self, _parameters):
+            self._state = SimpleNamespace(
+                corrected_scans=self.scans.copy(),
+                joint_mask=np.ones(self.scans.shape[:3], dtype=np.uint8),
+            )
+            return 0.0
+
+        @staticmethod
+        def gradient(parameters):
+            return np.zeros_like(parameters)
+
+        @staticmethod
+        def hessian(parameters):
+            return np.eye(parameters.size)
+
+    level = topup.TopupLevel(
+        2.0, 1, 0.0, 0, 0.0, False, "scaled_conjugate_gradient"
+    )
+    monkeypatch.setattr(topup, "SIMNIBS46_TOPUP_LEVELS", (level,))
+    monkeypatch.setattr(topup, "TopupFixedMovementObjective", IdentityObjective)
+    monkeypatch.setattr(
+        topup,
+        "fsl_regrid_topup_scan",
+        lambda scan, voxel_sizes: (np.asarray(scan), voxel_sizes),
+    )
+    monkeypatch.setattr(
+        topup, "fsl_smooth_topup_scan", lambda scan, *_args: np.asarray(scan)
+    )
+    import dwi2cond_xp.preprocessing.topup_optimizer as optimizer
+
+    monkeypatch.setattr(
+        optimizer,
+        "fsl_scaled_conjugate_gradient",
+        lambda starting, *_args, **_kwargs: SimpleNamespace(
+            parameters=np.asarray(starting), cost=0.0
+        ),
+    )
+    scans = np.empty((3, 3, 3, 2), dtype=np.float32)
+    scans[..., 0] = 10.0
+    scans[..., 1] = 30.0
+    rows = np.asarray([[0, 1, 0, 0.05], [0, -1, 0, 0.05]], dtype=float)
+
+    result = topup.run_simnibs46_topup(scans, rows, (1.0, 1.0, 1.0))
+
+    np.testing.assert_array_equal(result.corrected_scans[..., 0], 20.0)
+    np.testing.assert_array_equal(result.corrected_scans[..., 1], 20.0)
+
+
+@pytest.mark.skipif(
+    not FSL_TOPUP.is_file() or not FSL_TOPUP_CONFIG.is_file(),
+    reason="FSL TOPUP reference and SimNIBS config are required",
+)
+def test_unequal_mean_corrected_pair_matches_real_fsl_common_scale(tmp_path) -> None:
+    shape = (16, 14, 12)
+    grid = np.indices(shape, dtype=np.float64)
+    base = (
+        900.0
+        * np.exp(
+            -(
+                ((grid[0] - 5.3) / 3.1) ** 2
+                + ((grid[1] - 6.2) / 3.5) ** 2
+                + ((grid[2] - 5.1) / 2.8) ** 2
+            )
+        )
+        + 450.0
+        * np.exp(
+            -(
+                ((grid[0] - 11.0) / 2.0) ** 2
+                + ((grid[1] - 9.0) / 2.5) ** 2
+                + ((grid[2] - 7.0) / 2.0) ** 2
+            )
+        )
+    ).astype(np.float32)
+    forward = np.roll(base, 1, axis=1)
+    reverse = np.roll(base, -1, axis=1) * np.float32(2.0)
+    scans = np.stack((forward, reverse), axis=3)
+    rows = np.asarray([[0, 1, 0, 0.05], [0, -1, 0, 0.05]], dtype=float)
+    voxel_sizes = (2.0, 2.2, 2.5)
+    affine = np.diag([-voxel_sizes[0], voxel_sizes[1], voxel_sizes[2], 1.0])
+    merged = tmp_path / "merged.nii.gz"
+    acqp = tmp_path / "acqp.txt"
+    prefix = tmp_path / "fsl"
+    fsl_corrected = tmp_path / "fsl_corrected.nii.gz"
+    nib.save(nib.Nifti1Image(scans, affine), merged)
+    np.savetxt(acqp, rows, fmt="%.17g")
+    environment = os.environ.copy()
+    environment["FSLDIR"] = str(FSL_TOPUP.parent.parent)
+    environment["FSLOUTPUTTYPE"] = "NIFTI_GZ"
+
+    subprocess.run(
+        [
+            str(FSL_TOPUP),
+            f"--imain={merged}",
+            f"--datain={acqp}",
+            f"--config={FSL_TOPUP_CONFIG}",
+            f"--out={prefix}",
+            f"--iout={fsl_corrected}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    ours = topup.run_simnibs46_topup(scans, rows, voxel_sizes).corrected_scans
+    reference = np.asarray(nib.load(fsl_corrected).dataobj)
+    common = np.all(np.isfinite(ours), axis=-1) & np.all(np.isfinite(reference), axis=-1)
+    relative_l2 = np.linalg.norm((ours[common] - reference[common]).ravel()) / np.linalg.norm(
+        reference[common].ravel()
+    )
+
+    assert relative_l2 < 0.05
+    ours_means = np.mean(ours[common], axis=0)
+    fsl_means = np.mean(reference[common], axis=0)
+    assert ours_means[1] / ours_means[0] == pytest.approx(
+        fsl_means[1] / fsl_means[0], rel=5e-4
+    )

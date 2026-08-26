@@ -39,6 +39,12 @@
 - [v0.3.0 audit remediation](V0.3.0_AUDIT_REMEDIATION_REPORT_2026-08-26.md):
   issue-by-issue fixes, executable FSL gates, current numerical results, and
   remaining non-equivalence boundaries for the replacement release.
+- [v0.3.0 post-remediation re-audit](V0.3.0_POST_REMEDIATION_REAUDIT_REPORT_2026-08-26.md):
+  frozen discovery report for issues `D2C-030-015..041`, including official
+  control-flow and counterexample evidence.
+- [v0.3.0 post-re-audit closure](V0.3.0_POST_REAUDIT_REMEDIATION_REPORT_2026-08-26.md):
+  issue classification, fixes, real-FSL gates, complete test evidence, and the
+  remaining optimizer and end-to-end boundaries.
 - [FSL subset reimplementation plan](FSL_SUBSET_REIMPLEMENTATION_PLAN.md): the
   completed P0--P11 implementation and acceptance ledger.
 - [Changelog](CHANGELOG.md): released and unreleased user-visible changes.

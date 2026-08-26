@@ -19,18 +19,31 @@ from .tensor_fit import fit_tensor_wls
 ProgressCallback = Callable[[int, int, int], None]
 
 
+def _fsl_integer_mask(values: np.ndarray) -> np.ndarray:
+    """Apply FSL dtifit's float-to-int mask coercion before the positive test."""
+
+    array = np.asarray(values)
+    if not np.all(np.isfinite(array)):
+        raise ValueError("The mask contains NaN or Inf")
+    return array.astype(np.int32) > 0
+
+
 def _save_float_map(
     values: np.ndarray,
     path: Path,
     reference: nib.spatialimages.SpatialImage,
     *,
-    vector: bool = False,
+    intent_code: int | None = None,
+    calibration: tuple[float, float] | None = None,
 ) -> None:
     """Write a float32 scalar or vector NIfTI using the reference-space contract."""
     header = reference.header.copy()
     header.set_data_dtype(np.float32)
-    if vector:
-        header.set_intent("vector")
+    header.set_xyzt_units("mm", "sec")
+    if intent_code is not None:
+        header.set_intent(intent_code, allow_unknown=True)
+    if calibration is not None:
+        header["cal_min"], header["cal_max"] = calibration
     image = nib.Nifti1Image(values.astype(np.float32, copy=False), reference.affine, header)
     image.set_qform(reference.get_qform(), int(reference.header["qform_code"]))
     image.set_sform(reference.get_sform(), int(reference.header["sform_code"]))
@@ -51,11 +64,26 @@ def _save_derived_maps(
     outputs = decompose_tensor6(tensor, valid, semantics="dtifit")
     outputs["S0"] = s0
     outputs["sse"] = sse
+    l1_max = float(np.max(outputs["L1"], initial=0.0))
 
     paths: dict[str, str] = {}
     for suffix, values in outputs.items():
         path = output_path.with_name(f"{base}_{suffix}.nii.gz")
-        _save_float_map(values, path, reference, vector=suffix.startswith("V"))
+        if suffix == "FA":
+            calibration = (0.0, 1.0)
+        elif suffix == "MO" or suffix.startswith("V"):
+            calibration = (-1.0, 1.0)
+        elif suffix in {"L1", "L2", "L3", "MD"}:
+            calibration = (0.0, l1_max)
+        else:
+            calibration = (0.0, float(np.max(values, initial=0.0)))
+        _save_float_map(
+            values,
+            path,
+            reference,
+            intent_code=2003 if suffix.startswith("V") else None,
+            calibration=calibration,
+        )
         paths[suffix] = str(path)
     return paths
 
@@ -119,7 +147,7 @@ def _fit_z_block(
     """Independent worker entry point for z-block fitting."""
     data_img = nib.load(data_file, mmap=True)
     mask_img = nib.load(mask_file, mmap=True)
-    mask_chunk = np.asanyarray(mask_img.dataobj[:, :, z0:z1]) > 0
+    mask_chunk = _fsl_integer_mask(mask_img.dataobj[:, :, z0:z1])
     fitted_volume = np.zeros(mask_chunk.shape + (6,), dtype=np.float32)
     s0_volume = np.zeros(mask_chunk.shape, dtype=np.float32)
     sse_volume = np.zeros(mask_chunk.shape, dtype=np.float32)
@@ -232,6 +260,8 @@ def fit_dti_nifti(
             raise ValueError("grad_dev shape must be the DWI spatial shape plus nine components")
         if not np.allclose(grad_img.affine, data_img.affine):
             raise ValueError("The grad_dev affine does not match the DWI affine")
+        if not np.all(np.isfinite(np.asanyarray(grad_img.dataobj))):
+            raise ValueError("grad_dev contains NaN or Inf")
 
     bvals, bvecs = load_gradients(bvals_file, bvecs_file)
     if bvals.size != data_img.shape[3]:
@@ -257,7 +287,9 @@ def fit_dti_nifti(
     s0_output = np.zeros(data_img.shape[:3], dtype=np.float32)
     sse_output = np.zeros(data_img.shape[:3], dtype=np.float32)
     valid_output = np.zeros(data_img.shape[:3], dtype=np.uint8)
-    total_masked = int(np.count_nonzero(np.asanyarray(mask_img.dataobj)))
+    total_masked = int(
+        np.count_nonzero(_fsl_integer_mask(np.asanyarray(mask_img.dataobj)))
+    )
     processed = 0
     nonfinite_voxels = 0
     all_nonpositive_voxels = 0
@@ -332,6 +364,12 @@ def fit_dti_nifti(
 
     header = data_img.header.copy()
     header.set_data_dtype(np.float32)
+    header.set_xyzt_units("mm", "sec")
+    tensor_l1 = decompose_tensor6(
+        output, valid_output.astype(bool), requested=("L1",)
+    )["L1"]
+    header["cal_min"] = 0.0
+    header["cal_max"] = float(np.max(tensor_l1, initial=0.0))
     output_img = nib.Nifti1Image(output, data_img.affine, header=header)
     output_img.set_qform(data_img.get_qform(), int(data_img.header["qform_code"]))
     output_img.set_sform(data_img.get_sform(), int(data_img.header["sform_code"]))
@@ -406,7 +444,7 @@ def _fit_dti_nifti_serial(
     nonpositive_measurements = 0
     for z0 in range(0, data_img.shape[2], z_chunk):
         z1 = min(z0 + z_chunk, data_img.shape[2])
-        mask_chunk = np.asanyarray(mask_img.dataobj[:, :, z0:z1]) > 0
+        mask_chunk = _fsl_integer_mask(mask_img.dataobj[:, :, z0:z1])
         if not np.any(mask_chunk):
             if progress is not None:
                 progress(processed, total_masked, z1)

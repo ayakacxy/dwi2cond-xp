@@ -7,6 +7,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from dwi2cond_xp import simulation
 from dwi2cond_xp.simulation import (
     _discover_subject_files,
     _json_safe,
@@ -87,6 +88,40 @@ def test_tensor_grid_must_match_t1(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="Tensor shape"):
         validate_simulation_inputs(subpath, mode="vn", tensor_file=wrong_tensor)
+
+
+def test_simulation_rejects_nonfinite_tensor_and_tissue_grid_mismatch(tmp_path: Path) -> None:
+    subpath, tensor_file = _make_subject(tmp_path)
+    tensor_image = nib.load(tensor_file)
+    tensor_values = np.asarray(tensor_image.dataobj).copy()
+    tensor_values[0, 0, 0, 2] = np.inf
+    nib.save(
+        nib.Nifti1Image(tensor_values, tensor_image.affine, tensor_image.header),
+        tensor_file,
+    )
+    with pytest.raises(ValueError, match="Tensor data contains NaN or Inf"):
+        validate_simulation_inputs(subpath, mode="vn", tensor_file=tensor_file)
+
+    tissues = subpath / "final_tissues.nii.gz"
+    nib.save(
+        nib.Nifti1Image(
+            np.zeros((3, 4, 5, 1), dtype=np.uint8), tensor_image.affine
+        ),
+        tissues,
+    )
+    assert validate_simulation_inputs(
+        subpath, mode="scalar", tensor_file=None
+    )["grid"]["shape"] == [
+        3,
+        4,
+        5,
+    ]
+    nib.save(
+        nib.Nifti1Image(np.zeros((3, 4, 5), dtype=np.uint8), np.diag([2, 1, 1, 1])),
+        tissues,
+    )
+    with pytest.raises(ValueError, match="share one three-dimensional grid"):
+        validate_simulation_inputs(subpath, mode="scalar", tensor_file=None)
 
 
 def test_anisotropic_dry_run_records_contract(tmp_path: Path) -> None:
@@ -320,11 +355,17 @@ def test_run_tdcs_completes_and_masks_outputs(monkeypatch, tmp_path: Path) -> No
         return [Path("mesh.msh"), np.int64(2)]
 
     _install_simnibs(monkeypatch, runner=runner)
+    stale = tmp_path / "out/vn/stale.txt"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("stale\n", encoding="utf-8")
     result = run_tdcs(
         subpath, tmp_path / "out", mode="vn", tensor_file=tensor, cpus=2
     )
     assert result["status"] == "completed"
     assert result["outputs"] == ["mesh.msh", 2]
+    assert result["artifacts"]
+    assert not stale.exists()
+    assert all("sha256" in artifact for artifact in result["artifacts"])
     masked = np.asanyarray(nib.load(result["masked_subject_volumes"][0]).dataobj)
     assert np.all(masked[tissues == 5] == 0)
 
@@ -343,3 +384,44 @@ def test_run_tdcs_records_solver_failure(monkeypatch, tmp_path: Path) -> None:
     )
     assert manifest["status"] == "failed"
     assert manifest["error_type"] == "RuntimeError"
+    assert manifest["failed_phase"] == "solve"
+
+
+def test_run_tdcs_records_build_and_postprocess_failures(monkeypatch, tmp_path: Path) -> None:
+    subpath, _ = _make_subject(tmp_path)
+    _install_simnibs(monkeypatch, runner=lambda _session, _cpus: [])
+    monkeypatch.setattr(
+        simulation,
+        "build_tdcs_session",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad montage")),
+    )
+    build_root = tmp_path / "build_failure"
+    with pytest.raises(ValueError, match="bad montage"):
+        run_tdcs(subpath, build_root, mode="scalar")
+    build_manifest = json.loads(
+        (build_root / "scalar/dwi2cond_xp_simulation.json").read_text()
+    )
+    assert build_manifest["status"] == "failed"
+    assert build_manifest["failed_phase"] == "build_session"
+
+    monkeypatch.undo()
+    subpath, _ = _make_subject(tmp_path / "post")
+
+    def runner(session, cpus):
+        output = Path(session.pathfem) / "subject_volumes"
+        output.mkdir(parents=True)
+        nib.save(
+            nib.Nifti1Image(np.ones((2, 2, 2, 3), dtype=np.float32), np.eye(4)),
+            output / "bad_grid_E.nii.gz",
+        )
+        return []
+
+    _install_simnibs(monkeypatch, runner=runner)
+    post_root = tmp_path / "post_failure"
+    with pytest.raises(ValueError, match="does not match"):
+        run_tdcs(subpath, post_root, mode="scalar")
+    post_manifest = json.loads(
+        (post_root / "scalar/dwi2cond_xp_simulation.json").read_text()
+    )
+    assert post_manifest["status"] == "failed"
+    assert post_manifest["failed_phase"] == "postprocess_subject_volumes"

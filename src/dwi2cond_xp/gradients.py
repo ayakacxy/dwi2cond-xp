@@ -7,6 +7,60 @@ from pathlib import Path
 import numpy as np
 
 
+def _fsl_shell_groups(
+    bvals: np.ndarray,
+    *,
+    shell_tolerance: float = 100.0,
+) -> tuple[tuple[np.ndarray, ...], np.ndarray]:
+    """Reproduce FSL EDDY's template, mean, and reassignment shell grouping."""
+
+    values = np.asarray(bvals, dtype=np.float64).reshape(-1)
+    if values.size == 0 or not np.all(np.isfinite(values)):
+        raise ValueError("b-values must be a nonempty finite array")
+    if shell_tolerance <= 0.0:
+        raise ValueError("shell tolerance must be positive")
+
+    template_indices = [0]
+    for index in range(1, values.size):
+        if not any(
+            abs(float(values[template]) - float(values[index]))
+            < shell_tolerance
+            for template in template_indices
+        ):
+            template_indices.append(index)
+
+    means = np.empty(len(template_indices), dtype=np.float64)
+    for group, template in enumerate(template_indices):
+        selected = np.abs(values - values[template]) < shell_tolerance
+        means[group] = float(np.mean(values[selected], dtype=np.float64))
+    means.sort()
+
+    groups = tuple(
+        np.flatnonzero(np.abs(values - mean) <= shell_tolerance)
+        for mean in means
+    )
+    assigned = sum(group.size for group in groups)
+    if assigned != values.size:
+        raise ValueError("FSL shell grouping found inconsistent b-values")
+    return groups, means
+
+
+def _is_single_fsl_shell(
+    bvals: np.ndarray,
+    *,
+    shell_tolerance: float = 100.0,
+) -> bool:
+    """Return whether FSL EDDY grouping assigns every value to one shell."""
+
+    try:
+        groups, _means = _fsl_shell_groups(
+            bvals, shell_tolerance=shell_tolerance
+        )
+    except ValueError:
+        return False
+    return len(groups) == 1 and groups[0].size == np.asarray(bvals).size
+
+
 def load_gradients(
     bvals_file: str | Path,
     bvecs_file: str | Path,
@@ -71,7 +125,9 @@ def validate_single_shell_volumes(
     if np.count_nonzero(diffusion) < 6:
         raise ValueError("The single-shell input has fewer than six directions")
     shell_values = values[diffusion]
-    if float(np.max(shell_values) - np.min(shell_values)) > shell_tolerance:
+    if not _is_single_fsl_shell(
+        shell_values, shell_tolerance=shell_tolerance
+    ):
         raise ValueError(
             "Multishell input is not accepted implicitly; run select-shell first"
         )

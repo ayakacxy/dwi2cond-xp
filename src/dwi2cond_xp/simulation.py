@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
+import shutil
 from typing import Any
 
 import nibabel as nib
@@ -60,6 +62,16 @@ def validate_simulation_inputs(
     if missing:
         raise FileNotFoundError("The CHARM head model is incomplete:\n" + "\n".join(missing))
 
+    t1_img = nib.load(str(t1_file))
+    tissues_img = nib.load(str(final_tissues))
+    tissues_shape = tissues_img.shape
+    if len(tissues_shape) == 4 and tissues_shape[-1] == 1:
+        tissues_shape = tissues_shape[:3]
+    if len(t1_img.shape) != 3 or tissues_shape != t1_img.shape or not np.allclose(
+        tissues_img.affine, t1_img.affine, rtol=0.0, atol=1.0e-6
+    ):
+        raise ValueError("T1 and final_tissues must share one three-dimensional grid")
+
     tensor_path: Path | None = None
     tensor_contract: dict[str, Any] | None = None
     if mode != "scalar":
@@ -77,16 +89,19 @@ def validate_simulation_inputs(
         if not tensor_path.is_file():
             raise FileNotFoundError(f"Tensor file does not exist: {tensor_path}")
         tensor_img = nib.load(str(tensor_path))
-        t1_img = nib.load(str(t1_file))
         if tensor_img.shape != t1_img.shape[:3] + (6,):
             raise ValueError("Tensor shape must equal the CHARM T1 shape plus six components")
         if not np.allclose(tensor_img.affine, t1_img.affine):
             raise ValueError("Tensor affine must match the CHARM T1 affine")
+        tensor_values = np.asanyarray(tensor_img.dataobj)
+        if not np.all(np.isfinite(tensor_values)):
+            raise ValueError("Tensor data contains NaN or Inf")
         tensor_contract = {
             "path": str(tensor_path),
             "shape": list(tensor_img.shape),
             "affine": tensor_img.affine.tolist(),
             "component_order": ["Dxx", "Dxy", "Dxz", "Dyy", "Dyz", "Dzz"],
+            "finite_components_checked": int(tensor_values.size),
         }
     return {
         "subpath": str(subject_path),
@@ -96,6 +111,10 @@ def validate_simulation_inputs(
         "eeg_cap": str(eeg_cap),
         "mode": mode,
         "tensor": tensor_contract,
+        "grid": {
+            "shape": list(t1_img.shape),
+            "affine": t1_img.affine.tolist(),
+        },
     }
 
 
@@ -189,6 +208,51 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _sha256_file(path: Path) -> str:
+    """Hash one simulation artifact without loading it into memory."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def inventory_simulation_outputs(
+    output_directory: str | Path,
+    *,
+    manifest_path: str | Path,
+) -> list[dict[str, Any]]:
+    """Record every dynamic FEM artifact needed for cache validation."""
+
+    output = Path(output_directory).resolve()
+    manifest = Path(manifest_path).resolve()
+    artifacts: list[dict[str, Any]] = []
+    for path in sorted(candidate for candidate in output.rglob("*") if candidate.is_file()):
+        resolved = path.resolve()
+        if resolved == manifest or path.name.endswith(".tmp"):
+            continue
+        entry: dict[str, Any] = {
+            "path": str(resolved),
+            "relative_path": str(resolved.relative_to(output)),
+            "type": "file",
+            "bytes": resolved.stat().st_size,
+            "sha256": _sha256_file(resolved),
+        }
+        if resolved.name.endswith((".nii", ".nii.gz")):
+            image = nib.load(str(resolved))
+            entry.update(
+                {
+                    "type": "nifti",
+                    "shape": list(image.shape),
+                    "affine": image.affine.tolist(),
+                    "dtype": str(image.get_data_dtype()),
+                }
+            )
+        artifacts.append(entry)
+    return artifacts
+
+
 def mask_subject_volume_outputs(
     output_directory: str | Path,
     final_tissues_file: str | Path,
@@ -247,6 +311,9 @@ def run_tdcs(
         raise ValueError("cpus must be a positive integer")
     contract = validate_simulation_inputs(subpath, mode=mode, tensor_file=tensor_file)
     output_directory = Path(output_root).resolve() / mode
+    if not dry_run and output_directory.exists():
+        shutil.rmtree(output_directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
     manifest_path = output_directory / "dwi2cond_xp_simulation.json"
     manifest: dict[str, Any] = {
         "schema_version": 1,
@@ -272,35 +339,45 @@ def run_tdcs(
     if dry_run:
         return manifest
 
-    session = build_tdcs_session(
-        contract,
-        output_directory,
-        anode=anode,
-        cathode=cathode,
-        current_ma=current_ma,
-        shape=shape,
-        dimensions=dimensions,
-        thickness=thickness,
-        fields=fields,
-        solver=solver,
-        volume_tissues=volume_tissues,
-    )
+    phase = "build_session"
     try:
+        session = build_tdcs_session(
+            contract,
+            output_directory,
+            anode=anode,
+            cathode=cathode,
+            current_ma=current_ma,
+            shape=shape,
+            dimensions=dimensions,
+            thickness=thickness,
+            fields=fields,
+            solver=solver,
+            volume_tissues=volume_tissues,
+        )
+        phase = "solve"
         from simnibs import run_simnibs
 
         outputs = run_simnibs(session, cpus=cpus)
+        phase = "postprocess_subject_volumes"
+        masked_subject_volumes = mask_subject_volume_outputs(
+            output_directory,
+            contract["final_tissues"],
+            volume_tissues,
+        )
+        phase = "inventory_outputs"
+        artifacts = inventory_simulation_outputs(
+            output_directory, manifest_path=manifest_path
+        )
     except Exception as exc:
         manifest["status"] = "failed"
+        manifest["failed_phase"] = phase
         manifest["error_type"] = type(exc).__name__
         manifest["error"] = str(exc)
         _write_manifest(manifest_path, manifest)
         raise
     manifest["status"] = "completed"
     manifest["outputs"] = _json_safe(outputs)
-    manifest["masked_subject_volumes"] = mask_subject_volume_outputs(
-        output_directory,
-        contract["final_tissues"],
-        volume_tissues,
-    )
+    manifest["masked_subject_volumes"] = masked_subject_volumes
+    manifest["artifacts"] = artifacts
     _write_manifest(manifest_path, manifest)
     return manifest

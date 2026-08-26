@@ -9,6 +9,16 @@ versions follow semantic versioning.
 
 ### Fixed
 
+- Closed the post-remediation re-audit findings `D2C-030-015..041`, including
+  EDDY interspersed-b0 initialization, post-PEAS final repol, no-repol
+  estimation semantics, FSL shell grouping, TOPUP common output scaling, and
+  MCFLIRT thin-volume `fix2D` control flow.
+- Corrected strict-FSL partial-NaN and float-mask behavior, world-to-FSL tensor
+  reorientation basis, negative vecreg masks, DTIFIT metadata, and early
+  rejection of non-finite tensors and gradient-deviation fields.
+- Made raw QA lineage, nonlinear post-masking, simulation grid validation,
+  dynamic FEM inventories, failed-stage cleanup, numerical-runtime cache
+  identity, and FEM manifest transactions explicit and testable.
 - Corrected GRE displacement/premat coordinate composition and made raw GRE
   registration consume the brain-masked nodif image; a non-identity real-FSL
   `applywarp` regression now locks the composition order.
@@ -56,6 +66,9 @@ versions follow semantic versioning.
 
 ### Added
 
+- Added the post-remediation independent re-audit and its issue-by-issue
+  closure report, including discriminative EDDY no-repol evidence and direct
+  FSL gates for DTIFIT, TOPUP, vecreg, and thin-volume MCFLIRT.
 - Added the independent v0.3.0 audit, its issue-by-issue remediation report,
   and a 16-threshold executable legacy/FSL stage and final-output comparison.
 - Added `run-prefit-pipeline` and a complete reverse-PE `run-pipeline` branch.

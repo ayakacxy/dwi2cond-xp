@@ -240,6 +240,37 @@ def test_fused_smoothed_sampler_is_bitwise_equal_to_scipy_reference() -> None:
         expected = np.sum(expected, dtype=np.float32)
         assert actual == expected
 
+
+def test_anisotropic_rigid_grid_rejects_invalid_spacing_smoothing_and_axes() -> None:
+    for spacing in ((1.0, 2.0), (1.0, np.nan, 1.0), (1.0, 0.0, 1.0)):
+        with pytest.raises(ValueError, match="spacing_mm"):
+            rigid_module._spacing_vector(spacing)
+
+    moving = np.ones((3, 3, 3), dtype=np.float32)
+    weights = np.zeros_like(moving)
+    samples = np.zeros_like(moving)
+    with pytest.raises(ValueError, match="smooth_voxels"):
+        rigid_module._sample_smoothed_linear(
+            moving,
+            np.eye(4),
+            (1.0, 1.0, 1.0),
+            0.0,
+            np.asarray(moving.shape, dtype=np.float64) - 1.0001,
+            weights,
+            samples,
+        )
+    with pytest.raises(ValueError, match="parameter_axes"):
+        rigid_module._optimize_one_stage(
+            moving,
+            moving,
+            (1.0, 1.0, 1.0),
+            np.eye(4),
+            1.0,
+            center=np.zeros(3),
+            parameter_axes=(),
+        )
+
+
 def test_estimate_rigid_transform_recovers_synthetic_motion() -> None:
     reference = _phantom()
     affine = _affine()

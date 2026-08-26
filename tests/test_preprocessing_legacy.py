@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
 
 import nibabel as nib
 import numpy as np
 import pytest
+from scipy.ndimage import rotate, shift
 
 import dwi2cond_xp.preprocessing.legacy as legacy
 from dwi2cond_xp.preprocessing.flirt_registration import FlirtRegistrationResult
+
+
+FSL_MCFLIRT = Path(os.environ.get("FSL_MCFLIRT", "/path/not/configured/mcflirt"))
 
 
 def _volume(value: float = 1.0) -> np.ndarray:
@@ -83,7 +89,7 @@ def test_register_series_contract_and_progress(monkeypatch) -> None:
     matrices, evaluations, costs = legacy._register_mcflirt_series(
         values,
         values[0],
-        np.eye(4),
+        np.diag((1.0, 1.0, 3.0, 1.0)),
         degrees_of_freedom=6,
         workers=2,
         stages_mm=(8.0, 4.0),
@@ -98,7 +104,7 @@ def test_register_series_contract_and_progress(monkeypatch) -> None:
     threaded, _, _ = legacy._register_mcflirt_series(
         values,
         values[0],
-        np.eye(4),
+        np.diag((1.0, 1.0, 3.0, 1.0)),
         degrees_of_freedom=6,
         workers=2,
         stages_mm=(8.0, 4.0),
@@ -121,9 +127,157 @@ def test_register_series_contract_and_progress(monkeypatch) -> None:
     with pytest.raises(ValueError, match="only finite"):
         legacy._register_mcflirt_series([bad], values[0], np.eye(4), degrees_of_freedom=6, workers=1)
     with pytest.raises(RuntimeError, match="evaluation limit"):
-        legacy._register_mcflirt_series(
-            values[:1], values[0], np.eye(4), degrees_of_freedom=6, workers=1, stages_mm=(8,), max_evaluations=1
+            legacy._register_mcflirt_series(
+                values[:1],
+                values[0],
+                np.diag((1.0, 1.0, 3.0, 1.0)),
+                degrees_of_freedom=6,
+                workers=1,
+                stages_mm=(8,),
+                max_evaluations=1,
+            )
+
+
+def test_mcflirt_thin_volume_uses_official_fix2d_contract(monkeypatch) -> None:
+    volume = _volume(1.0)[..., :2]
+    captured_grids: list[tuple[tuple[int, ...], tuple[float, ...]]] = []
+    captured_optimizations: list[
+        tuple[tuple[int, ...], tuple[int, ...], tuple[float, ...], dict[str, object]]
+    ] = []
+
+    def resample(values, voxel_sizes, _spacing):
+        captured_grids.append(
+            (values.shape, tuple(float(value) for value in voxel_sizes))
         )
+        return values
+
+    def optimize(fixed, moving, spacing, initial, *_args, **kwargs):
+        captured_optimizations.append(
+            (
+                fixed.shape,
+                moving.shape,
+                tuple(float(value) for value in np.asarray(spacing).reshape(-1)),
+                kwargs,
+            )
+        )
+        return initial.copy(), 0.0, 1
+
+    monkeypatch.setattr(legacy, "_isotropic_resample", resample)
+    monkeypatch.setattr(
+        legacy,
+        "_intensity_center_scaled_mm",
+        lambda _values, _spacing: np.zeros(3),
+    )
+    monkeypatch.setattr(legacy, "_optimize_one_stage", optimize)
+    class InlineProcessPool:
+        def __init__(self, *, max_workers):
+            assert max_workers == 2
+
+        def map(self, function, payloads):
+            return map(function, payloads)
+
+        def shutdown(self):
+            return None
+
+    monkeypatch.setattr(legacy, "ProcessPoolExecutor", InlineProcessPool)
+    monkeypatch.setattr(legacy.sys, "platform", "linux")
+
+    matrices, evaluations, _costs = legacy._register_mcflirt_series(
+        [volume, volume.copy()],
+        volume,
+        np.diag((1.0, 1.0, 5.0, 1.0)),
+        degrees_of_freedom=6,
+        workers=2,
+        stages_mm=(4.0, 4.0),
+    )
+
+    assert len(matrices) == 2
+    assert evaluations == [2, 2]
+    assert all(shape[-1] == 2 for shape, _spacing in captured_grids)
+    assert all(spacing[-1] == 5.0 for _shape, spacing in captured_grids)
+    assert len(captured_optimizations) == 4
+    for fixed_shape, moving_shape, spacing, kwargs in captured_optimizations:
+        assert fixed_shape == moving_shape == volume.shape[:2] + (4,)
+        assert spacing == (4.0, 4.0, 8.0)
+        assert kwargs == {"parameter_axes": (2, 3, 4), "smooth_mm": 0.1}
+
+
+@pytest.mark.skipif(
+    not FSL_MCFLIRT.is_file(),
+    reason="FSL reference disabled; set FSL_MCFLIRT to a local mcflirt executable",
+)
+def test_mcflirt_thin_volume_matches_fsl_fix2d_matrices(tmp_path: Path) -> None:
+    x, y = np.indices((32, 32), dtype=np.float32)
+    base = np.exp(-((x - 15.3) ** 2 + (y - 16.1) ** 2) / 45.0)
+    base += 0.55 * np.exp(-((x - 9.0) ** 2 + (y - 23.0) ** 2) / 12.0)
+    reference = np.stack([base, base * 0.92], axis=2).astype(np.float32) * 800.0
+    perturbations = ((0.0, 0.0, 0.0), (1.2, -0.7, 1.1), (-0.8, 1.0, -0.9), (0.5, 0.6, 0.7))
+    volumes = []
+    for dx, dy, angle in perturbations:
+        volume = np.empty_like(reference)
+        for z in range(reference.shape[2]):
+            volume[..., z] = shift(
+                rotate(
+                    reference[..., z],
+                    angle,
+                    reshape=False,
+                    order=1,
+                    mode="constant",
+                ),
+                (dx, dy),
+                order=1,
+                mode="constant",
+            )
+        volumes.append(volume)
+    data = np.stack(volumes, axis=3)
+    affine = np.diag((-2.0, 2.0, 5.0, 1.0))
+    affine[0, 3] = 62.0
+    dwi_file = tmp_path / "thin_dwi.nii.gz"
+    reference_file = tmp_path / "thin_reference.nii.gz"
+    nib.save(nib.Nifti1Image(data, affine), dwi_file)
+    nib.save(nib.Nifti1Image(reference, affine), reference_file)
+
+    environment = os.environ.copy()
+    environment["FSLDIR"] = str(FSL_MCFLIRT.parent.parent)
+    environment["FSLOUTPUTTYPE"] = "NIFTI_GZ"
+    prefix = tmp_path / "fsl"
+    subprocess.run(
+        [
+            str(FSL_MCFLIRT),
+            "-in",
+            str(dwi_file),
+            "-out",
+            str(prefix),
+            "-dof",
+            "6",
+            "-reffile",
+            str(reference_file),
+            "-mats",
+            "-plots",
+        ],
+        check=True,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    actual, _evaluations, _costs = legacy._register_mcflirt_series(
+        volumes,
+        reference,
+        affine,
+        degrees_of_freedom=6,
+        workers=1,
+    )
+    expected = [
+        np.loadtxt(tmp_path / f"fsl.mat/MAT_{index:04d}")
+        for index in range(len(volumes))
+    ]
+    actual_stack = np.stack(actual)
+    expected_stack = np.stack(expected)
+    assert np.linalg.norm(actual_stack - expected_stack) / np.linalg.norm(
+        expected_stack
+    ) < 0.06
+    assert np.max(np.abs(actual_stack - expected_stack)) < 0.2
+    np.testing.assert_allclose(actual_stack[:, 2, :], expected_stack[:, 2, :], atol=1e-12)
 
 
 def test_resample_series_rotate_bvecs_and_save(tmp_path, monkeypatch) -> None:

@@ -548,12 +548,6 @@ def test_spherical_gp_hyperparameter_estimator_runs_fsl_simplex() -> None:
             ),
             "bvecs",
         ),
-        (
-            lambda: detect_eddy_slice_outliers(
-                EddySliceStatistics(np.zeros((1, 1)), np.zeros((1, 1)), np.ones((1, 1)))
-            ),
-            "eligible",
-        ),
     ],
 )
 def test_eddy_primitives_reject_invalid_contracts(call: object, message: str) -> None:
@@ -649,8 +643,9 @@ def test_eddy_remaining_gp_transform_and_outlier_validation_paths() -> None:
     constant = EddySliceStatistics(
         np.ones((2, 2)), np.ones((2, 2)), np.full((2, 2), 300)
     )
-    with pytest.raises(ValueError, match="variance must be nonzero"):
-        detect_eddy_slice_outliers(constant)
+    degenerate = detect_eddy_slice_outliers(constant)
+    assert not np.any(degenerate.outlier_map)
+    assert np.all(np.isnan(degenerate.n_standard_deviations))
     with pytest.raises(ValueError, match="matching shape"):
         eddy_slice_statistics(np.ones((2, 2, 2)), np.ones((2, 2, 2)), np.ones((2, 2, 2)))
     with pytest.raises(ValueError, match="mask must be"):
@@ -1002,13 +997,20 @@ def test_complete_eddy_runner_covers_single_b0_serial_and_pe_alignment(
 
     def fake_dwi(values, vectors, *_args, **_kwargs):
         count = values.shape[3]
+        movement = np.zeros((count, 6))
+        movement = _kwargs["post_location_movement_transform"](
+            movement,
+            np.zeros((count, 10)),
+            np.asarray(values),
+        )
         return eddy.EddyDwiRegistrationResult(
-            np.zeros((count, 6)),
+            movement,
             np.zeros((count, 10)),
             np.asarray(values),
             np.asarray(vectors),
             (),
             np.ones(values.shape[:3], dtype=np.uint8),
+            formal_scan_space_scans=np.asarray(values) * np.float32(7.0),
         )
 
     monkeypatch.setattr(eddy, "transform_eddy_scan_to_model", identity_transform)
@@ -1031,6 +1033,8 @@ def test_complete_eddy_runner_covers_single_b0_serial_and_pe_alignment(
     )
     assert result.corrected_scans.shape == scans.shape
     assert np.array_equal(result.joint_mask, np.ones(scans.shape[:3], dtype=np.uint8))
+    assert np.array_equal(result.corrected_scans[..., 0], scans[..., 0])
+    assert np.array_equal(result.corrected_scans[..., 1:], np.full_like(scans[..., 1:], 7.0))
 
 
 def test_outlier_volume_selection_and_restore_are_explicit() -> None:
@@ -1051,3 +1055,143 @@ def test_outlier_volume_selection_and_restore_are_explicit() -> None:
     assert np.all(scans[:, :, 0, 0] == 4.0)
     assert np.all(scans[:, :, 1, 0] == 9.0)
     assert np.array_equal(stored[0], current)
+
+
+def test_interspersed_b0_movement_matches_fsl_global_index_interpolation() -> None:
+    b0_indices = np.asarray([0, 6, 11])
+    dwi_indices = np.asarray([1, 2, 3, 4, 5, 7, 8, 9, 10])
+    b0_movement = np.zeros((3, 6), dtype=np.float64)
+    b0_movement[:, 3] = b0_indices
+
+    interpolated = eddy._interpolate_interspersed_b0_movement(
+        b0_indices, dwi_indices, b0_movement, 12
+    )
+    assert interpolated is not None
+    np.testing.assert_allclose(interpolated[:, 3], dwi_indices)
+    assert (
+        eddy._interpolate_interspersed_b0_movement(
+            np.asarray([0, 1]), dwi_indices, b0_movement[:2], 12
+        )
+        is None
+    )
+    edge_movement = np.zeros((3, 6), dtype=np.float64)
+    edge_movement[:, 0] = (1.0, 6.0, 10.0)
+    extrapolated = eddy._interpolate_interspersed_b0_movement(
+        np.asarray([1, 6, 10]), np.asarray([0, 11]), edge_movement, 12
+    )
+    assert extrapolated is not None
+    np.testing.assert_array_equal(extrapolated[:, 0], [1.0, 10.0])
+    with pytest.raises(ValueError, match="shape"):
+        eddy._interpolate_interspersed_b0_movement(
+            np.asarray([1, 6, 10]),
+            np.asarray([2]),
+            np.zeros((2, 6)),
+            12,
+        )
+    with pytest.raises(ValueError, match="indices"):
+        eddy._interpolate_interspersed_b0_movement(
+            np.asarray([-1, 6, 10]),
+            np.asarray([2]),
+            edge_movement,
+            12,
+        )
+
+
+@pytest.mark.parametrize("value", (0.01, 0.2))
+def test_eddy_readout_accepts_fsl_endpoints(value: float) -> None:
+    assert eddy._validate_eddy_readout_seconds(value) == value
+
+
+@pytest.mark.parametrize("value", (0.009, 0.201, np.nan))
+def test_eddy_readout_rejects_values_outside_fsl_interval(value: float) -> None:
+    with pytest.raises(ValueError, match=r"\[0.01, 0.2\]"):
+        eddy._validate_eddy_readout_seconds(value)
+
+
+def test_final_outlier_check_runs_after_peas_with_fudge_one_without_repol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directions = _fixture_directions(8)
+    grid = np.indices((7, 7, 7), dtype=np.float32)
+    scans = np.empty((7, 7, 7, 8), dtype=np.float32)
+    for volume in range(8):
+        scans[..., volume] = np.asarray(
+            100.0
+            + directions[0, volume] * grid[0]
+            + directions[1, volume] * grid[1]
+            + directions[2, volume] * grid[2],
+            dtype=np.float32,
+        )
+    events: list[tuple[str, float | None]] = []
+    original_estimate = eddy.estimate_spherical_gp_hyperparameters
+
+    def record_estimate(*args, error_variance_fudge_factor=10.0, **kwargs):
+        events.append(("gp", float(error_variance_fudge_factor)))
+        return original_estimate(
+            *args,
+            error_variance_fudge_factor=error_variance_fudge_factor,
+            **kwargs,
+        )
+
+    def forced_outlier(statistics, **_kwargs):
+        events.append(("detect", None))
+        outlier_map = np.zeros(statistics.mean_difference.shape, dtype=bool)
+        outlier_map[0, 0] = True
+        return eddy.EddyOutlierResult(
+            outlier_map,
+            np.zeros(statistics.mean_difference.shape),
+            np.zeros(statistics.mean_difference.shape),
+        )
+
+    def peas(movement, _eddy_parameters, _scans):
+        events.append(("peas", None))
+        return movement
+
+    monkeypatch.setattr(
+        eddy, "estimate_spherical_gp_hyperparameters", record_estimate
+    )
+    monkeypatch.setattr(eddy, "detect_eddy_slice_outliers", forced_outlier)
+    result = run_eddy_dwi_iterations(
+        scans,
+        directions,
+        np.ones(scans.shape[:3], dtype=np.uint8),
+        (2.0, 2.0, 2.0),
+        1,
+        1,
+        0.05,
+        number_of_iterations=1,
+        number_of_hyperparameter_voxels=40,
+        random_seed=1,
+        workers=1,
+        replace_outliers=False,
+        post_location_movement_transform=peas,
+    )
+
+    assert events == [
+        ("gp", 10.0),
+        ("detect", None),
+        ("peas", None),
+        ("gp", 1.0),
+        ("detect", None),
+    ]
+    assert result.outlier_map is not None
+    assert result.outlier_map[0, 0]
+    assert result.outlier_free_scans is None
+    assert result.formal_scan_space_scans is not None
+    np.testing.assert_array_equal(result.formal_scan_space_scans, scans)
+    with pytest.raises(ValueError, match="post-location movement transform"):
+        run_eddy_dwi_iterations(
+            scans,
+            directions,
+            np.ones(scans.shape[:3], dtype=np.uint8),
+            (2.0, 2.0, 2.0),
+            1,
+            1,
+            0.05,
+            number_of_iterations=1,
+            number_of_hyperparameter_voxels=40,
+            random_seed=1,
+            workers=1,
+            replace_outliers=False,
+            post_location_movement_transform=lambda *_args: np.zeros((1, 6)),
+        )

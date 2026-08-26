@@ -56,6 +56,12 @@ def tensor_to_mesh_conductivity(
         matrices = correct_fsl_tensor_basis(matrices, tensor_img.affine)
 
     tetrahedra = mesh.elm.get_tetrahedra()
+    tetrahedra_array = np.asarray(tetrahedra)
+    tetrahedra_count = (
+        int(np.count_nonzero(tetrahedra_array))
+        if tetrahedra_array.dtype == np.bool_
+        else int(tetrahedra_array.size)
+    )
     tags = np.asarray(mesh.elm.tag1[tetrahedra], dtype=np.int32)
     volumes = np.asarray(mesh.elements_volumes_and_areas().value[tetrahedra], float)
     if scalar_conductivity is None:
@@ -96,7 +102,7 @@ def tensor_to_mesh_conductivity(
             "tensor_file": str(tensor_file),
             "mesh_file": str(mesh_file),
             "output_mesh_file": str(output_path),
-            "tetrahedra": int(len(tetrahedra)),
+            "tetrahedra": tetrahedra_count,
             "anisotropic_tissues": list(anisotropic_tissues),
             "correct_fsl": correct_fsl,
             "max_ratio": max_ratio,

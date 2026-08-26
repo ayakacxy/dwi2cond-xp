@@ -994,6 +994,79 @@ def test_fnirt_tiny_sigma_and_explicit_binary_mask_paths():
     assert np.all(prepared.reference_mask)
 
 
+def test_fnirt_self_registration_uses_identity_fast_path():
+    values = np.arange(7 * 6 * 5, dtype=np.float32).reshape(7, 6, 5) + 1.0
+    result = fnirt_module.run_simnibs46_fnirt(
+        values,
+        values.copy(),
+        np.eye(4),
+        np.eye(4),
+        np.eye(4),
+        reference_mask=np.ones_like(values, dtype=np.uint8),
+        moving_mask=np.ones_like(values, dtype=np.uint8),
+    )
+
+    assert result.levels == ()
+    assert result.jacobian_ranges == ()
+    assert not np.any(result.coefficients)
+    assert not np.any(result.expansion.displacement)
+    np.testing.assert_array_equal(
+        result.expansion.nonlinear_jacobian_determinant, 1.0
+    )
+    np.testing.assert_array_equal(
+        result.intensity_mapping.global_coefficients,
+        [0.0, 1.0, 0.0, 0.0, 0.0],
+    )
+
+
+def test_fnirt_nifti_self_registration_publishes_identity_outputs(tmp_path):
+    shape = (7, 6, 5)
+    affine = np.diag((-2.0, 2.0, 2.0, 1.0))
+    fa = np.arange(np.prod(shape), dtype=np.float32).reshape(shape) + 1.0
+    tensor = _diagonal_tensor(shape).astype(np.float32)
+    mask = np.ones(shape, dtype=np.uint8)
+    fa_file = tmp_path / "fa.nii.gz"
+    tensor_file = tmp_path / "tensor.nii.gz"
+    reference_file = tmp_path / "reference.nii.gz"
+    mask_file = tmp_path / "mask.nii.gz"
+    matrix_file = tmp_path / "identity.mat"
+    output = tmp_path / "identity-output"
+    nib.save(nib.Nifti1Image(fa, affine), fa_file)
+    nib.save(nib.Nifti1Image(tensor, affine), tensor_file)
+    nib.save(nib.Nifti1Image(fa.copy(), affine), reference_file)
+    nib.save(nib.Nifti1Image(mask, affine), mask_file)
+    np.savetxt(matrix_file, np.eye(4))
+
+    qa = register_tensor_fnirt_nifti(
+        fa_file,
+        tensor_file,
+        reference_file,
+        matrix_file,
+        output,
+        brain_mask_file=mask_file,
+        workers=2,
+    )
+
+    assert qa["identity_fast_path"] is True
+    assert qa["levels"] == []
+    assert not np.any(np.asarray(nib.load(output / "FA2T1_warp.nii.gz").dataobj))
+    np.testing.assert_array_equal(
+        np.asarray(nib.load(output / "FA2T1_field.nii.gz").dataobj), 0.0
+    )
+    np.testing.assert_array_equal(
+        np.asarray(nib.load(output / "FA2T1_jacobian.nii.gz").dataobj), 1.0
+    )
+    np.testing.assert_array_equal(
+        np.asarray(nib.load(output / "DTI_FA_nonlin.nii.gz").dataobj), fa
+    )
+    np.testing.assert_allclose(
+        np.asarray(nib.load(output / "DTI_coregT1_tensor.nii.gz").dataobj),
+        tensor,
+        rtol=0.0,
+        atol=1.0e-7,
+    )
+
+
 def test_fnirt_topology_constraint_is_applied_after_each_level(monkeypatch):
     values = np.ones((17, 17, 17), dtype=np.float32)
     constrained: list[int] = []
@@ -1024,7 +1097,7 @@ def test_fnirt_topology_constraint_is_applied_after_each_level(monkeypatch):
     )
     monkeypatch.setattr(fnirt_module, "_constrain_fnirt_warpfield", fake_constrain)
     result = fnirt_module.run_simnibs46_fnirt(
-        values, values, np.eye(4), np.eye(4), np.eye(4)
+        values, values * np.float32(2.0), np.eye(4), np.eye(4), np.eye(4)
     )
 
     assert constrained == [5, 10, 10, 10]
@@ -1052,7 +1125,7 @@ def test_fnirt_complete_schedule_can_be_audited_without_optimizer_cost(monkeypat
     monkeypatch.setattr(fnirt_module, "optimize_fnirt_level", preserve_initial_state)
     result = fnirt_module.run_simnibs46_fnirt(
         values,
-        values,
+        values * np.float32(2.0),
         np.eye(4),
         np.eye(4),
         np.eye(4),
@@ -1093,7 +1166,7 @@ def test_fnirt_schedule_derives_displacement_spacing_from_reference_voxels(
     affine = np.diag((0.7, 0.7, 0.7, 1.0))
     result = fnirt_module.run_simnibs46_fnirt(
         values,
-        values,
+        values * np.float32(2.0),
         affine,
         affine,
         np.eye(4),
@@ -1136,10 +1209,10 @@ def test_nonlinear_nifti_writes_tensor_derivatives_and_qa(tmp_path):
     warp_image.header.set_intent("vector")
     nib.save(warp_image, warp_file)
     nib.save(
-        nib.Nifti1Image(np.ones(shape, dtype=np.uint8), np.eye(4)), source_mask_file
+        nib.Nifti1Image(-np.ones(shape, dtype=np.float32), np.eye(4)), source_mask_file
     )
     nib.save(
-        nib.Nifti1Image(np.ones(shape, dtype=np.uint8), np.eye(4)), reference_mask_file
+        nib.Nifti1Image(-np.ones(shape, dtype=np.float32), np.eye(4)), reference_mask_file
     )
     qa = register_tensor_nonlinear_nifti(
         tensor_file,
@@ -1197,8 +1270,9 @@ def test_nonlinear_output_mask_matches_post_vecreg_source_order(tmp_path):
     warp_file = tmp_path / "warp.nii.gz"
     output_mask_file = tmp_path / "T1_brainmask.nii.gz"
     output_file = tmp_path / "registered.nii.gz"
-    mask = np.ones(shape, dtype=np.uint8)
+    mask = np.ones(shape, dtype=np.float32)
     mask[0] = 0
+    mask[1] = -1
     nib.save(nib.Nifti1Image(_diagonal_tensor(shape), np.eye(4)), tensor_file)
     nib.save(nib.Nifti1Image(np.ones(shape), np.eye(4)), reference_file)
     nib.save(nib.Nifti1Image(np.zeros(shape + (3,)), np.eye(4)), warp_file)
@@ -1367,6 +1441,10 @@ def test_fnirt_nifti_runner_rejects_all_early_file_contract_errors(tmp_path):
     nib.save(nib.Nifti1Image(_diagonal_tensor(shape), np.eye(4)), tensor_file)
     nib.save(nib.Nifti1Image(np.ones(shape), np.eye(4)), reference_file)
     np.savetxt(affine_file, np.eye(4))
+    with pytest.raises(ValueError, match="brain_mask_file is required"):
+        register_tensor_fnirt_nifti(
+            fa_file, tensor_file, reference_file, affine_file, tmp_path
+        )
     with pytest.raises(ValueError, match="workers"):
         register_tensor_fnirt_nifti(
             fa_file, tensor_file, reference_file, affine_file, tmp_path, workers=0
@@ -1402,6 +1480,7 @@ def test_fnirt_nifti_runner_writes_complete_contract_with_mocked_optimizer(
     fa_file = tmp_path / "fa.nii.gz"
     tensor_file = tmp_path / "tensor.nii.gz"
     reference_file = tmp_path / "reference.nii.gz"
+    brain_mask_file = tmp_path / "brain_mask.nii.gz"
     affine_file = tmp_path / "affine.mat"
     output = tmp_path / "output"
     nib.save(nib.Nifti1Image(np.ones(shape, dtype=np.float32), np.eye(4)), fa_file)
@@ -1410,6 +1489,10 @@ def test_fnirt_nifti_runner_writes_complete_contract_with_mocked_optimizer(
     nib.save(
         nib.Nifti1Image(np.ones(shape, dtype=np.float32), reference_affine),
         reference_file,
+    )
+    nib.save(
+        nib.Nifti1Image(np.ones(shape, dtype=np.uint8), reference_affine),
+        brain_mask_file,
     )
     affine_matrix = np.eye(4)
     affine_matrix[:3, 3] = (1.0, -2.0, 3.0)
@@ -1460,7 +1543,13 @@ def test_fnirt_nifti_runner_writes_complete_contract_with_mocked_optimizer(
         },
     )
     qa = register_tensor_fnirt_nifti(
-        fa_file, tensor_file, reference_file, affine_file, output, workers=2
+        fa_file,
+        tensor_file,
+        reference_file,
+        affine_file,
+        output,
+        brain_mask_file=brain_mask_file,
+        workers=2,
     )
     assert qa["status"] == "completed"
     assert len(qa["levels"]) == 4

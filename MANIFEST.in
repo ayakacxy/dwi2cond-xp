@@ -7,6 +7,9 @@ include README.zh-CN.md
 include environment.yml
 include constraints-simnibs46.txt
 recursive-include docs *.md
+# Ship the self-contained post-remediation audit artifacts with the source archive.
+include docs/V0.3.0_POST_REMEDIATION_REAUDIT_REPORT_2026-08-26.html
+include docs/V0.3.0_POST_REMEDIATION_REAUDIT_ARTIFACT_2026-08-26.json
 recursive-include scripts *.py
 recursive-include tests *.json
 recursive-include tools *.py

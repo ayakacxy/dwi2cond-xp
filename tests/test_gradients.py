@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from dwi2cond_xp.gradients import (
+    _fsl_shell_groups,
     load_gradients,
     select_dti_volumes,
     validate_single_shell_volumes,
@@ -71,3 +72,27 @@ def test_shell_parameter_validation_and_missing_b0():
 def test_strict_single_shell_validation_errors(bvals, kwargs, message):
     with pytest.raises(ValueError, match=message):
         validate_single_shell_volumes(bvals, **kwargs)
+
+
+def test_single_shell_validation_uses_fsl_template_mean_reassignment() -> None:
+    values = np.asarray([0.0, 1000.0, 901.0, 1099.0] * 2)
+    selected = validate_single_shell_volumes(values)
+    assert np.array_equal(selected, np.arange(values.size))
+
+    groups, means = _fsl_shell_groups(np.asarray([1000.0, 901.0, 1099.0]))
+    assert len(groups) == 1
+    np.testing.assert_array_equal(groups[0], np.arange(3))
+    np.testing.assert_array_equal(means, np.asarray([1000.0]))
+
+
+def test_fsl_shell_grouping_preserves_source_order_semantics() -> None:
+    with pytest.raises(ValueError, match="inconsistent"):
+        _fsl_shell_groups(np.asarray([901.0, 1000.0, 1099.0]))
+
+
+@pytest.mark.parametrize("values", (np.asarray([]), np.asarray([np.nan])))
+def test_fsl_shell_grouping_rejects_empty_or_nonfinite_values(values) -> None:
+    with pytest.raises(ValueError, match="nonempty finite"):
+        _fsl_shell_groups(values)
+    with pytest.raises(ValueError, match="tolerance"):
+        _fsl_shell_groups(np.asarray([1000.0]), shell_tolerance=0.0)

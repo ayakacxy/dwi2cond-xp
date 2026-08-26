@@ -459,7 +459,7 @@ def register_tensor_nonlinear_nifti(
             source_mask_image.affine, tensor_image.affine, rtol=0.0, atol=1e-5
         ):
             raise ValueError("The source mask must match the tensor grid")
-        source_mask = np.asarray(source_mask_image.dataobj) > 0
+        source_mask = np.asarray(source_mask_image.dataobj) != 0
     reference_mask = None
     if reference_mask_file is not None:
         reference_mask_image = nib.load(str(reference_mask_file))
@@ -470,7 +470,7 @@ def register_tensor_nonlinear_nifti(
             atol=1e-5,
         ):
             raise ValueError("The reference mask must match the reference grid")
-        reference_mask = np.asarray(reference_mask_image.dataobj) > 0
+        reference_mask = np.asarray(reference_mask_image.dataobj) != 0
     output_mask = None
     if output_mask_file is not None:
         output_mask_image = nib.load(str(output_mask_file))
@@ -481,7 +481,7 @@ def register_tensor_nonlinear_nifti(
             atol=1e-5,
         ):
             raise ValueError("The output mask must match the reference grid")
-        output_mask = np.asarray(output_mask_image.dataobj) > 0
+        output_mask = np.asarray(output_mask_image.dataobj) != 0
     loaded_at = time.perf_counter()
     result = resample_tensor_ppd_fsl(
         tensor,
@@ -654,6 +654,10 @@ def register_tensor_fnirt_nifti(
         raise ValueError("The FNIRT affine matrix could not be read") from error
     if affine_matrix.shape != (4, 4) or not np.all(np.isfinite(affine_matrix)):
         raise ValueError("The FNIRT affine matrix must be finite and 4x4")
+    if brain_mask_file is None:
+        raise ValueError(
+            "brain_mask_file is required by the SimNIBS 4.6 FNIRT tensor branch"
+        )
     reference = np.asarray(reference_image.dataobj, dtype=np.float32)
     fa = np.asarray(fa_image.dataobj, dtype=np.float32)
     reference_voxel_sizes = tuple(
@@ -729,14 +733,18 @@ def register_tensor_fnirt_nifti(
         moving_mask=fa != 0.0,
         reference_voxel_sizes_mm=reference_voxel_sizes,
     )
-    registered_fa = warp_fnirt_moving(
-        full_level,
-        reference_image.affine,
-        fa_image.affine,
-        affine_matrix,
-        result.expansion.nonlinear_displacement,
-        calculate_derivatives=False,
-    ).values
+    registered_fa = (
+        fa.copy()
+        if not result.levels
+        else warp_fnirt_moving(
+            full_level,
+            reference_image.affine,
+            fa_image.affine,
+            affine_matrix,
+            result.expansion.nonlinear_displacement,
+            calculate_derivatives=False,
+        ).values
+    )
     with ThreadPoolExecutor(max_workers=min(workers, 3)) as executor:
         futures = (
             executor.submit(save_reference, result.expansion.displacement, field_path),
@@ -769,15 +777,10 @@ def register_tensor_fnirt_nifti(
     completed_at = time.perf_counter()
     if progress is not None:
         progress(4, "finalize_qa", 2, 3, None)
-    qa: dict[str, object] = {
-        "status": "completed",
-        "mode": "nonlinear",
-        "algorithm": "SimNIBS 4.6 fixed FNIRT plus FSL vecreg PPD",
-        "fallback": "none",
-        "compatibility_mode": compatibility_mode,
-        "workers": int(workers),
-        "displacement_knot_spacing": list(result.expansion.knot_spacing),
-        "levels": [
+    level_records = (
+        []
+        if not result.levels
+        else [
             {
                 "level": index,
                 "subsampling": specification.subsampling,
@@ -792,7 +795,18 @@ def register_tensor_fnirt_nifti(
                 zip(SIMNIBS46_FNIRT_LEVELS, result.levels, strict=True),
                 start=1,
             )
-        ],
+        ]
+    )
+    qa: dict[str, object] = {
+        "status": "completed",
+        "mode": "nonlinear",
+        "algorithm": "SimNIBS 4.6 fixed FNIRT plus FSL vecreg PPD",
+        "fallback": "none",
+        "compatibility_mode": compatibility_mode,
+        "workers": int(workers),
+        "identity_fast_path": not result.levels,
+        "displacement_knot_spacing": list(result.expansion.knot_spacing),
+        "levels": level_records,
         "outputs": {
             "coefficients": str(coefficient_path),
             "displacement": str(field_path),

@@ -203,23 +203,40 @@ def _isotropic_resample(
     ).astype(np.float32, copy=False)
 
 
-def _intensity_center_scaled_mm(values: np.ndarray, spacing_mm: float) -> np.ndarray:
+def _spacing_vector(spacing_mm: float | Sequence[float]) -> np.ndarray:
+    """Normalize scalar or per-axis voxel spacing to a finite 3-vector."""
+
+    spacing = np.asarray(spacing_mm, dtype=np.float64)
+    if spacing.ndim == 0:
+        spacing = np.repeat(spacing, 3)
+    if spacing.shape != (3,) or not np.all(np.isfinite(spacing)) or np.any(spacing <= 0):
+        raise ValueError("spacing_mm must contain three positive finite values")
+    return spacing
+
+
+def _intensity_center_scaled_mm(
+    values: np.ndarray, spacing_mm: float | Sequence[float]
+) -> np.ndarray:
     weights = values.astype(np.float64) - float(np.min(values))
     total = float(np.sum(weights))
     if abs(total) < 1e-5:
         return np.zeros(3, dtype=np.float64)
+    spacing = _spacing_vector(spacing_mm)
     grid = np.indices(values.shape, dtype=np.float64)
     return np.array(
-        [float(np.sum(grid[axis] * weights) / total) * spacing_mm for axis in range(3)]
+        [
+            float(np.sum(grid[axis] * weights) / total) * spacing[axis]
+            for axis in range(3)
+        ]
     )
 
 
 @njit(cache=True, nogil=True)
-def _sample_smoothed_linear(
+def _sample_smoothed_linear_kernel(
     moving: np.ndarray,
     inverse_scaled: np.ndarray,
-    spacing_mm: float,
-    smooth_voxels: float,
+    spacing_mm: np.ndarray,
+    smooth_voxels: np.ndarray,
     upper: np.ndarray,
     full_weights: np.ndarray,
     full_moving: np.ndarray,
@@ -229,29 +246,29 @@ def _sample_smoothed_linear(
     nx, ny, nz = full_weights.shape
     valid_count = 0
     for x in range(nx):
-        x_mm = x * spacing_mm
+        x_mm = x * spacing_mm[0]
         for y in range(ny):
-            y_mm = y * spacing_mm
+            y_mm = y * spacing_mm[1]
             for z in range(nz):
-                z_mm = z * spacing_mm
+                z_mm = z * spacing_mm[2]
                 coordinate_x = (
                     inverse_scaled[0, 0] * x_mm
                     + inverse_scaled[0, 1] * y_mm
                     + inverse_scaled[0, 2] * z_mm
                     + inverse_scaled[0, 3]
-                ) / spacing_mm
+                ) / spacing_mm[0]
                 coordinate_y = (
                     inverse_scaled[1, 0] * x_mm
                     + inverse_scaled[1, 1] * y_mm
                     + inverse_scaled[1, 2] * z_mm
                     + inverse_scaled[1, 3]
-                ) / spacing_mm
+                ) / spacing_mm[1]
                 coordinate_z = (
                     inverse_scaled[2, 0] * x_mm
                     + inverse_scaled[2, 1] * y_mm
                     + inverse_scaled[2, 2] * z_mm
                     + inverse_scaled[2, 3]
-                ) / spacing_mm
+                ) / spacing_mm[2]
                 if (
                     coordinate_x < 0.0
                     or coordinate_y < 0.0
@@ -285,16 +302,48 @@ def _sample_smoothed_linear(
                 coordinates = (coordinate_x, coordinate_y, coordinate_z)
                 for axis in range(3):
                     coordinate = coordinates[axis]
-                    if coordinate < smooth_voxels:
-                        weight = np.float32(weight * (coordinate / smooth_voxels))
-                    distance_to_high = upper[axis] - coordinate
-                    if distance_to_high < smooth_voxels:
+                    if coordinate < smooth_voxels[axis]:
                         weight = np.float32(
-                            weight * (distance_to_high / smooth_voxels)
+                            weight * (coordinate / smooth_voxels[axis])
+                        )
+                    distance_to_high = upper[axis] - coordinate
+                    if distance_to_high < smooth_voxels[axis]:
+                        weight = np.float32(
+                            weight * (distance_to_high / smooth_voxels[axis])
                         )
                 full_weights[x, y, z] = max(weight, np.float32(0.0))
                 valid_count += 1
     return valid_count
+
+
+def _sample_smoothed_linear(
+    moving: np.ndarray,
+    inverse_scaled: np.ndarray,
+    spacing_mm: float | Sequence[float],
+    smooth_voxels: float | Sequence[float],
+    upper: np.ndarray,
+    full_weights: np.ndarray,
+    full_moving: np.ndarray,
+) -> int:
+    """Sample one volume on a scalar or anisotropic physical grid."""
+
+    spacing = _spacing_vector(spacing_mm)
+    smoothing = np.asarray(smooth_voxels, dtype=np.float64)
+    if smoothing.ndim == 0:
+        smoothing = np.repeat(smoothing, 3)
+    if smoothing.shape != (3,) or not np.all(np.isfinite(smoothing)) or np.any(
+        smoothing <= 0
+    ):
+        raise ValueError("smooth_voxels must contain three positive finite values")
+    return _sample_smoothed_linear_kernel(
+        moving,
+        inverse_scaled,
+        spacing,
+        smoothing,
+        upper,
+        full_weights,
+        full_moving,
+    )
 
 
 @njit(cache=True, nogil=True)
@@ -470,17 +519,17 @@ class _SmoothedNormCorr:
         self,
         reference: np.ndarray,
         moving: np.ndarray,
-        spacing_mm: float,
+        spacing_mm: float | Sequence[float],
         center: np.ndarray,
         degrees_of_freedom: int = 6,
         smooth_mm: float = 1.0,
     ) -> None:
         self.reference = reference.astype(np.float32, copy=False)
         self.moving = moving.astype(np.float32, copy=False)
-        self.spacing_mm = float(spacing_mm)
+        self.spacing_mm = _spacing_vector(spacing_mm)
         self.center = center
         self.degrees_of_freedom = degrees_of_freedom
-        self.smooth_voxels = smooth_mm / spacing_mm
+        self.smooth_voxels = smooth_mm / self.spacing_mm
         self.upper = np.asarray(self.moving.shape, dtype=np.float64) - 1.0001
         self.full_weights = np.zeros(self.reference.shape, dtype=np.float32)
         self.full_moving = np.zeros(self.reference.shape, dtype=np.float32)
@@ -668,11 +717,13 @@ def _line_search(
 def _optimize_one_stage(
     reference: np.ndarray,
     moving: np.ndarray,
-    spacing_mm: float,
+    spacing_mm: float | Sequence[float],
     initial_transform: np.ndarray,
     tolerance_multiplier: float,
     center: np.ndarray | None = None,
     degrees_of_freedom: int = 6,
+    parameter_axes: Sequence[int] | None = None,
+    smooth_mm: float = 1.0,
 ) -> tuple[np.ndarray, float, int]:
     center = (
         _intensity_center_scaled_mm(moving, spacing_mm) if center is None else center
@@ -688,13 +739,21 @@ def _optimize_one_stage(
         spacing_mm,
         center,
         degrees_of_freedom,
+        smooth_mm=smooth_mm,
     )
     tolerances = np.array(
         [0.005] * 3 + [0.2] * 3 + [0.002] * 3 + [0.001] * 3,
         dtype=np.float64,
     )[:degrees_of_freedom] * tolerance_multiplier
     cost = 0.0
-    for axis in range(degrees_of_freedom):
+    axes = (
+        tuple(range(degrees_of_freedom))
+        if parameter_axes is None
+        else tuple(int(axis) for axis in parameter_axes)
+    )
+    if not axes or any(axis < 0 or axis >= degrees_of_freedom for axis in axes):
+        raise ValueError("parameter_axes must select valid transform parameters")
+    for axis in axes:
         parameters, cost = _line_search(parameters, axis, tolerances, objective, cost)
     transform = (
         rigid_world_matrix(parameters, center)

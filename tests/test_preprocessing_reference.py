@@ -261,7 +261,8 @@ def test_frozen_reference_assets_are_public_safe_and_structurally_complete() -> 
         "synthetic_nomoco_reference.json",
         "synthetic_legacy_reference.json",
         "synthetic_fieldmap_reference.json",
-        "synthetic_eddy_reference.json",
+            "synthetic_eddy_reference.json",
+            "synthetic_eddy_interspersed_b0_reference.json",
         "synthetic_topup_reference.json",
         "synthetic_preprocessing_manifest.json",
         "synthetic_t1_registration_reference.json",
@@ -413,4 +414,4 @@ def test_reference_asset_audit_cli_passes_frozen_manifests() -> None:
         capture_output=True,
         text=True,
     )
-    assert json.loads(completed.stdout) == {"status": "passed", "manifests": 10}
+    assert json.loads(completed.stdout) == {"status": "passed", "manifests": 11}

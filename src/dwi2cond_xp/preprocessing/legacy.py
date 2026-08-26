@@ -40,25 +40,35 @@ def _optimize_stage_payload(
         int,
         np.ndarray,
         np.ndarray,
-        float,
+        float | np.ndarray,
         np.ndarray,
         float,
         np.ndarray,
         int,
+        tuple[int, ...] | None,
+        float,
     ],
 ) -> tuple[int, np.ndarray, float, int]:
     """Run an MCFLIRT stage without cross-volume dependencies in a separate worker."""
 
-    position, fixed, moving, spacing, initial, multiplier, center, dof = payload
-    matrix, cost, count = _optimize_one_stage(
-        fixed,
-        moving,
-        spacing,
-        initial,
-        multiplier,
-        center,
-        dof,
-    )
+    position, fixed, moving, spacing, initial, multiplier, center, dof, *extra = payload
+    if extra:
+        parameter_axes, smooth_mm = extra
+        matrix, cost, count = _optimize_one_stage(
+            fixed,
+            moving,
+            spacing,
+            initial,
+            multiplier,
+            center,
+            dof,
+            parameter_axes=parameter_axes,
+            smooth_mm=smooth_mm,
+        )
+    else:
+        matrix, cost, count = _optimize_one_stage(
+            fixed, moving, spacing, initial, multiplier, center, dof
+        )
     return position, matrix, cost, count
 
 
@@ -105,6 +115,9 @@ def _register_mcflirt_series(
         raise ValueError("Legacy registration inputs must contain only finite values")
 
     voxel_sizes = nib.affines.voxel_sizes(affine)
+    fix_2d = spatial_shape[2] < 3 or spatial_shape[2] * voxel_sizes[2] < 20.0
+    parameter_axes = (2, 3, 4) if fix_2d else None
+    smooth_mm = 0.1 if fix_2d else 1.0
     matrices = [np.eye(4, dtype=np.float64) for _ in volumes]
     evaluations = [0 for _ in volumes]
     costs = [0.0 for _ in volumes]
@@ -116,13 +129,29 @@ def _register_mcflirt_series(
     multipliers = (0.8, 0.8, 0.1)
     for stage_index, spacing in enumerate(stages_mm):
         key = float(spacing)
+        stage_voxel_sizes = (
+            np.asarray((spacing, spacing, 8.0), dtype=np.float64)
+            if fix_2d
+            else float(spacing)
+        )
         if key not in reference_cache:
-            reference_cache[key] = _isotropic_resample(reference, voxel_sizes, spacing)
-            volume_cache[key] = [
-                _isotropic_resample(volume, voxel_sizes, spacing) for volume in volumes
+            fixed_stage = _isotropic_resample(reference, voxel_sizes, spacing)
+            volume_stage = [
+                _isotropic_resample(volume, voxel_sizes, spacing)
+                for volume in volumes
             ]
+            if fix_2d:
+                fixed_stage = np.pad(
+                    fixed_stage, ((0, 0), (0, 0), (1, 1)), mode="edge"
+                )
+                volume_stage = [
+                    np.pad(volume, ((0, 0), (0, 0), (1, 1)), mode="edge")
+                    for volume in volume_stage
+                ]
+            reference_cache[key] = fixed_stage
+            volume_cache[key] = volume_stage
             center_cache[key] = [
-                _intensity_center_scaled_mm(volume, spacing)
+                _intensity_center_scaled_mm(volume, stage_voxel_sizes)
                 for volume in volume_cache[key]
             ]
         fixed = reference_cache[key]
@@ -131,15 +160,23 @@ def _register_mcflirt_series(
         stage_output = [matrix.copy() for matrix in matrices]
 
         def optimize(position: int) -> tuple[int, np.ndarray, float, int]:
-            matrix, cost, count = _optimize_one_stage(
+            arguments = (
                 fixed,
                 coarse[position],
-                spacing,
+                stage_voxel_sizes,
                 matrices[position],
                 multipliers[min(stage_index, 2)],
                 centers[position],
                 degrees_of_freedom,
             )
+            if fix_2d:
+                matrix, cost, count = _optimize_one_stage(
+                    *arguments,
+                    parameter_axes=parameter_axes,
+                    smooth_mm=smooth_mm,
+                )
+            else:
+                matrix, cost, count = _optimize_one_stage(*arguments)
             return position, matrix, cost, count
 
         positions = list(range(len(volumes)))
@@ -148,19 +185,21 @@ def _register_mcflirt_series(
             executor = None
         elif sys.platform.startswith("linux"):
             executor = ProcessPoolExecutor(max_workers=min(workers, len(volumes)))
-            payloads = [
-                (
+            payloads = []
+            for position in positions:
+                payload = (
                     position,
                     fixed,
                     coarse[position],
-                    spacing,
+                    stage_voxel_sizes,
                     matrices[position],
                     multipliers[min(stage_index, 2)],
                     centers[position],
                     degrees_of_freedom,
                 )
-                for position in positions
-            ]
+                if fix_2d:
+                    payload += (parameter_axes, smooth_mm)
+                payloads.append(payload)
             results = executor.map(_optimize_stage_payload, payloads)
         else:
             # Spawn entry points keep Windows and macOS cross-platform safe; Linux

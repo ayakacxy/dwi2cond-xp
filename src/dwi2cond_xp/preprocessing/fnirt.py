@@ -2363,6 +2363,51 @@ def run_simnibs46_fnirt(
         float(value) for value in np.linalg.norm(moving_transform[:3, :3], axis=0)
     )
     displacement_spacing = fsl_fnirt_full_resolution_knot_spacing(voxel_sizes)
+    same_masks = (
+        reference_mask is None
+        and moving_mask is None
+        or reference_mask is not None
+        and moving_mask is not None
+        and np.array_equal(reference_mask, moving_mask)
+    )
+    if (
+        np.array_equal(np.asarray(reference), np.asarray(moving))
+        and np.allclose(
+            reference_transform, moving_transform, rtol=0.0, atol=1.0e-12
+        )
+        and np.allclose(affine, np.eye(4), rtol=0.0, atol=1.0e-12)
+        and same_masks
+    ):
+        coefficients = np.zeros(
+            fsl_coefficient_shape(full_shape, displacement_spacing) + (3,),
+            dtype=np.float64,
+        )
+        bias_spacing = fsl_fnirt_bias_knot_spacing(voxel_sizes, 1)
+        bias_coefficients = fit_spline_coefficients(
+            np.ones(full_shape, dtype=np.float32), bias_spacing
+        )
+        mapping = FnirtIntensityMapping(
+            global_coefficients=np.asarray(
+                [0.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float64
+            ),
+            bias_coefficients=bias_coefficients,
+            bias_field=np.ones(full_shape, dtype=np.float32),
+            bias_knot_spacing=bias_spacing,
+        )
+        expansion = expand_fnirt_coefficients(
+            coefficients,
+            full_shape,
+            reference_transform,
+            affine,
+            knot_spacing=displacement_spacing,
+        )
+        return FnirtRunResult(
+            coefficients=coefficients,
+            intensity_mapping=mapping,
+            expansion=expansion,
+            levels=(),
+            jacobian_ranges=(),
+        )
     coefficients: np.ndarray | None = None
     mapping: FnirtIntensityMapping | None = None
     previous_images: FnirtLevelImages | None = None

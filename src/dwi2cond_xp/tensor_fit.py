@@ -162,17 +162,11 @@ def fit_tensor_wls(
     initial = _solve_wls(design, weights, initial_log)
 
     if compatibility_mode == "strict-fsl":
-        # NEWMAT MaximumAbsoluteValue and Sum skip NaN. All-NaN rows therefore
-        # start at zero and are subsequently replaced by the 0.01*S0 floor.
+        # NEWMAT MaximumAbsoluteValue skips NaN, while armawrap Sum propagates it.
+        # The two operations deliberately have different NaN semantics in FSL.
         finite = np.isfinite(signals)
         max_signal = np.max(np.where(finite, np.abs(signals), 0.0), axis=1)
-        finite_count = np.count_nonzero(finite, axis=1)
-        mean_signal = np.divide(
-            np.sum(np.where(finite, signals, 0.0), axis=1),
-            finite_count,
-            out=np.zeros(signals.shape[0], dtype=np.float64),
-            where=finite_count != 0,
-        )
+        mean_signal = np.sum(signals, axis=1) / float(signals.shape[1])
     else:
         max_signal = np.max(np.abs(signals), axis=1)
         mean_signal = np.mean(signals, axis=1)

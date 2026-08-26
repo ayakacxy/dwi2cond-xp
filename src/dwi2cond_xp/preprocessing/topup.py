@@ -2591,8 +2591,8 @@ def run_simnibs46_topup(
         coefficients, values.shape[:3], previous_spacing
     ).astype(np.float32)
     corrected_scans = final_state.corrected_scans.copy()
-    for index in range(2):
-        corrected_scans[..., index] *= np.float32(input_means[index] / 100.0)
+    common_mean = np.mean(input_means, dtype=np.float32)
+    corrected_scans *= np.float32(common_mean / 100.0)
     return TopupRunResult(
         coefficients,
         field_hz,
