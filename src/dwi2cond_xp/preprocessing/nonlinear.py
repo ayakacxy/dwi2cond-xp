@@ -854,7 +854,7 @@ def register_tensor_fnirt_nifti(
             return [final_path(item) for item in value]
         if isinstance(value, str):
             prefix = str(output.resolve())
-            if value == prefix or value.startswith(prefix + "/"):
+            if value == prefix or value.startswith(prefix + os.sep):
                 return str(final_output.resolve()) + value[len(prefix) :]
         return value
 

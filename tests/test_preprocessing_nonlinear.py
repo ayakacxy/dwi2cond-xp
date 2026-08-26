@@ -1602,6 +1602,10 @@ def test_fnirt_nifti_runner_writes_complete_contract_with_mocked_optimizer(
     )
     assert qa["status"] == "completed"
     assert len(qa["levels"]) == 4
+    assert ".fnirt-attempt" not in json.dumps(qa)
+    assert ".fnirt-attempt" not in (
+        output / "nonlinear_registration_qa.json"
+    ).read_text(encoding="utf-8")
     coefficient_image = nib.load(output / "FA2T1_warp.nii.gz")
     coefficient_header = coefficient_image.header
     assert int(coefficient_header["intent_code"]) == 2007

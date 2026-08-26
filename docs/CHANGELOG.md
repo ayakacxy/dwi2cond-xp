@@ -17,7 +17,7 @@ versions follow semantic versioning.
 - Aligned standalone exact-zero QA, low-level PPD nonzero masks, FNIRT identity
   detection, and TOPUP double-precision means; made FEM dry-run/finalization,
   actual SimNIBS cache identity, ignored inputs, all-zero anisotropic tissues,
-  and FNIRT prevalidation/attempt publication explicit and testable.
+  and portable FNIRT prevalidation/attempt publication explicit and testable.
 - Made the interspersed-b0 EDDY fixture gate portable across CPU architectures:
   the Linux x86_64 input hash remains frozen as FSL A/B provenance, while the
   generated DWI is also checked by affine, dtype, numerical summaries, samples,
