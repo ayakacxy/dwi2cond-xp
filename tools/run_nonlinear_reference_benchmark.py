@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""运行带源码与输入指纹的固定 nonlinear 官方对照基准。"""
+"""Run the fixed nonlinear official reference benchmark with source and input fingerprints."""
 
 from __future__ import annotations
 
@@ -21,16 +21,16 @@ from dwi2cond_xp.preprocessing import (
 
 
 def _positive_float(value: str) -> float:
-    """解析严格大于零的浮点参数。"""
+    """Parse a strictly positive floating-point parameter."""
 
     parsed = float(value)
     if parsed <= 0:
-        raise argparse.ArgumentTypeError("数值必须大于零")
+        raise argparse.ArgumentTypeError("value must be greater than zero")
     return parsed
 
 
 def _atomic_json(path: Path, payload: dict[str, object]) -> None:
-    """在同一目录原子写入 JSON，避免长任务留下半份合同。"""
+    """Write JSON atomically in the same directory to avoid leaving a partial contract after a long task."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -42,7 +42,7 @@ def _atomic_json(path: Path, payload: dict[str, object]) -> None:
 
 
 def _sha256(path: Path) -> str:
-    """以固定分块计算文件内容哈希。"""
+    """Compute a file-content hash in fixed-size blocks."""
 
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -52,7 +52,7 @@ def _sha256(path: Path) -> str:
 
 
 def _git_commit(root: Path) -> str | None:
-    """记录当前提交；非 Git 源码包返回空值。"""
+    """Record the current commit; return an empty value for a non-Git source package."""
 
     completed = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -65,7 +65,7 @@ def _git_commit(root: Path) -> str | None:
 
 
 def _cpu_affinity() -> list[int] | None:
-    """读取 Linux 进程亲和性；其他平台明确返回空值。"""
+    """Read Linux process affinity; explicitly return an empty value on other platforms."""
 
     getter = getattr(os, "sched_getaffinity", None)
     if getter is None:
@@ -74,7 +74,7 @@ def _cpu_affinity() -> list[int] | None:
 
 
 def _physical_cores(cpus: list[int] | None) -> list[list[int]] | None:
-    """把 Linux 逻辑 CPU 映射为 package/core 对，供 8 物理核门禁审计。"""
+    """Map Linux logical CPUs to package/core pairs for the eight-physical-core gate audit."""
 
     if cpus is None:
         return None
@@ -91,14 +91,15 @@ def _physical_cores(cpus: list[int] | None) -> list[list[int]] | None:
 
 
 def _simnibs_external_directory(explicit: Path | None) -> Path:
-    """解析 SimNIBS external 源码目录，不依赖当前 shell 的 PATH。"""
+    """Resolve the SimNIBS external source directory without relying on the current shell's PATH."""
 
     if explicit is not None:
         return explicit.resolve()
     spec = find_spec("simnibs")
     if spec is None or not spec.submodule_search_locations:
         raise FileNotFoundError(
-            "当前环境找不到 SimNIBS；请用 --simnibs-external 指定 4.6 external 目录"
+            "SimNIBS was not found in the current environment; use --simnibs-external "
+            "to specify the SimNIBS 4.6 external directory"
         )
     return Path(next(iter(spec.submodule_search_locations))) / "external"
 
@@ -108,7 +109,7 @@ def _source_files(
     fsl_dir: Path,
     simnibs_external: Path,
 ) -> tuple[Path, ...]:
-    """返回决定当前 nonlinear 算法合同的上游与本地源码。"""
+    """Return the upstream and local sources that define the current nonlinear algorithm contract."""
 
     candidates = (
         simnibs_external / "dwi2cond",
@@ -126,13 +127,13 @@ def _source_files(
     missing = [path for path in candidates if not path.is_file()]
     if missing:
         raise FileNotFoundError(
-            "缺少 nonlinear 源码审计文件：" + ", ".join(str(path) for path in missing)
+            "Missing nonlinear source-audit files: " + ", ".join(str(path) for path in missing)
         )
     return candidates
 
 
 def _source_summary(paths: tuple[Path, ...]) -> list[dict[str, object]]:
-    """冻结源码名称、大小和哈希，不把私有绝对路径写入合同。"""
+    """Freeze source names, sizes, and hashes without writing private absolute paths into the contract."""
 
     return [
         {
@@ -145,7 +146,7 @@ def _source_summary(paths: tuple[Path, ...]) -> list[dict[str, object]]:
 
 
 def _build_contract(args: argparse.Namespace, root: Path) -> dict[str, object]:
-    """构建计时外的同输入、同算法源码合同。"""
+    """Build the same-input, same-algorithm source contract outside the timing interval."""
 
     affinity = _cpu_affinity()
     physical = _physical_cores(affinity)
@@ -192,14 +193,14 @@ def _build_contract(args: argparse.Namespace, root: Path) -> dict[str, object]:
 
 
 def _validate_fresh_output(path: Path) -> None:
-    """拒绝复用已有 artifact，保证 fresh-output 计时边界。"""
+    """Reject reuse of an existing artifact to guarantee a fresh-output timing boundary."""
 
     if path.exists() and (not path.is_dir() or any(path.iterdir())):
-        raise ValueError(f"基准输出目录必须不存在或为空：{path}")
+        raise ValueError(f"Benchmark output directory must not exist or must be empty: {path}")
 
 
 def _python_artifacts() -> tuple[ReferenceArtifact, ...]:
-    """列出 Python nonlinear 产品边界的必需输出。"""
+    """List the required outputs at the Python nonlinear product boundary."""
 
     return (
         ReferenceArtifact("FA2T1_warp.nii.gz", "nifti"),
@@ -217,7 +218,7 @@ def _python_artifacts() -> tuple[ReferenceArtifact, ...]:
 
 
 def _fsl_artifacts() -> tuple[ReferenceArtifact, ...]:
-    """列出原始 FSL nonlinear 分支实际写出的共同科学输出。"""
+    """List the shared scientific outputs actually written by the original FSL nonlinear branch."""
 
     return (
         ReferenceArtifact("FA2T1_warp.nii.gz", "nifti"),
@@ -232,7 +233,7 @@ def _fsl_artifacts() -> tuple[ReferenceArtifact, ...]:
 
 
 def main() -> int:
-    """冻结合同，并按显式实现运行一次 fresh-output nonlinear 阶段。"""
+    """Freeze the contract and run one fresh-output nonlinear stage through the explicit implementation."""
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--implementation", choices=("python", "fsl"), required=True)
@@ -252,11 +253,11 @@ def main() -> int:
     parser.add_argument(
         "--allow-unpinned",
         action="store_true",
-        help="仅供预检或 smoke；正式性能运行不得使用",
+        help="For preflight or smoke tests only; do not use for formal performance runs",
     )
     args = parser.parse_args()
     if args.workers <= 0:
-        parser.error("--workers 必须大于零")
+        parser.error("--workers must be greater than zero")
 
     root = Path(__file__).resolve().parents[1]
     contract_path = (
@@ -276,8 +277,9 @@ def main() -> int:
 
     if not contract["runtime"]["strict_worker_affinity"] and not args.allow_unpinned:
         parser.error(
-            "正式运行要求进程已被限制为与 --workers 相同数量的独立物理核；"
-            "请先使用 taskset 绑定，smoke 才可传 --allow-unpinned"
+            "Formal runs require the process to be pinned to the same number of independent "
+            "physical cores as --workers; bind it with taskset first, and use "
+            "--allow-unpinned only for smoke tests"
         )
     work = args.work.resolve()
     _validate_fresh_output(work)

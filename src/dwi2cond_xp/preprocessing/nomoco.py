@@ -27,7 +27,7 @@ def _prepare_fitting_input(
     *,
     z_chunk: int = 8,
 ) -> tuple[Path, dict[str, object]]:
-    """验证可直接读取的原始 DWI，必要时只做无插值存储重排。"""
+    """Validate a raw DWI that can be read directly, applying only a storage-order rearrangement when necessary."""
 
     source = Path(data_file)
     image = nib.load(str(source), mmap=True)
@@ -141,7 +141,7 @@ def run_nomoco_nifti(
 
     b0 registration is used only to construct the reference mean and brain mask;
     the diffusion volumes themselves receive no motion, eddy, or fieldmap correction.
-    原始 b0、BET 与配准均保留负值；只在所有校正完成后的拟合边界截零。
+    The original b0, BET, and registration stages preserve negative values; clamp to zero only at the fitting boundary after all corrections are complete.
     """
 
     if workers <= 0:

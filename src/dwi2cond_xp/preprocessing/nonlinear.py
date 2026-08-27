@@ -504,7 +504,7 @@ def register_tensor_nonlinear_nifti(
     output_tensor = result.tensor
     output_valid_mask = result.valid_mask
     if output_mask is not None:
-        # 原始 dwi2cond 在 vecreg 完成后、tensor_decomp 前应用 T1 brain mask。
+        # The original dwi2cond applies the T1 brain mask after vecreg and before tensor_decomp.
         output_tensor = result.tensor.copy()
         output_tensor[~output_mask] = 0.0
         output_valid_mask = result.valid_mask & output_mask

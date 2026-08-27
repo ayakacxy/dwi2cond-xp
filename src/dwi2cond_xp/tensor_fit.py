@@ -14,7 +14,7 @@ def _validate_gradients(bvals: np.ndarray, bvecs: np.ndarray) -> tuple[np.ndarra
 
 
 def _normalize_bvecs_fsl(bvecs: np.ndarray) -> np.ndarray:
-    """按 ``dtifit`` 的读取顺序单位化所有非零 b-vector。"""
+    """Normalize all nonzero b-vectors in the order used by ``dtifit`` when reading them."""
 
     vectors = np.asarray(bvecs, dtype=np.float64).copy()
     norms = np.linalg.norm(vectors, axis=1)
@@ -68,7 +68,7 @@ def form_design_matrix(
         return design
 
     transform = _gradient_transform(grad_dev)
-    # 原始方向先按 dtifit 单位化；梯度非线性后的模长通过 b*g*g 自然保留。
+    # Normalize the original directions as dtifit does; gradient nonlinearity naturally preserves the magnitude through b*g*g.
     h = np.einsum("vij,nj->vni", transform, bvecs, optimize=True)
     scaled = bvals[None, :]
     design = np.empty((grad_dev.shape[0], bvals.size, 7), dtype=np.float64)

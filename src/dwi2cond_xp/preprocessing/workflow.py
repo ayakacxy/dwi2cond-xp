@@ -75,7 +75,7 @@ class Dwi2CondPipelineResult:
 
 
 def _required_m2m_files(m2m: Path, *, require_fem: bool = False) -> dict[str, Path]:
-    """按实际启用阶段解析 CHARM 输入，避免无 FEM 时要求无关文件。"""
+    """Resolve CHARM inputs based on the enabled stages, avoiding unrelated files when FEM is disabled."""
 
     subject = m2m.name.removeprefix("m2m_")
     mesh = m2m / f"{subject}.msh"
@@ -248,7 +248,7 @@ def _validate_config(config: Dwi2CondPipelineConfig) -> dict[str, Path]:
 
 
 def _write_nonnegative_nifti(source: Path, destination: Path) -> Path:
-    """在所有校正结束后执行与 ``fslmaths -thr 0`` 相同的截零。"""
+    """Apply the same zero-clamping as ``fslmaths -thr 0`` after all corrections are complete."""
 
     image = nib.load(str(source))
     values = np.asarray(image.dataobj, dtype=np.float32)
@@ -264,7 +264,7 @@ def _write_nonnegative_nifti(source: Path, destination: Path) -> Path:
 
 
 def _sha256(path: Path) -> str:
-    """分块计算发布产物哈希。"""
+    """Compute release-artifact hashes in blocks."""
 
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -274,7 +274,7 @@ def _sha256(path: Path) -> str:
 
 
 def _simnibs_runtime_identity() -> dict[str, object]:
-    """记录 FEM cache 实际绑定的 SimNIBS 版本与入口模块哈希。"""
+    """Record the SimNIBS version and entry-module hash actually bound to the FEM cache."""
 
     try:
         version = importlib.metadata.version("simnibs")
@@ -295,7 +295,7 @@ def _simnibs_runtime_identity() -> dict[str, object]:
 
 
 def _publish_tensor_to_m2m(source: Path, m2m: Path, version: str) -> dict[str, object]:
-    """以失败可回滚事务发布官方张量及其来源记录。"""
+    """Publish the official tensor and its provenance record in a transaction that rolls back on failure."""
 
     destination = m2m / "DTI_coregT1_tensor.nii.gz"
     provenance = m2m / "DTI_coregT1_tensor.provenance.json"
@@ -368,7 +368,7 @@ def _save_array_like(
     output_file: Path,
     dtype: np.dtype,
 ) -> Path:
-    """保存与参考图像完全一致的 qform/sform 几何。"""
+    """Preserve qform/sform geometry exactly as in the reference image."""
 
     header = reference.header.copy()
     header.set_data_dtype(dtype)
@@ -380,7 +380,7 @@ def _save_array_like(
 
 
 def _import_prefit_tensor(source: Path, output: Path) -> dict[str, object]:
-    """复现官方 pre-fitted tensor 的 copy、reorient 与 tensor_decomp。"""
+    """Reproduce the official pre-fitted tensor copy, reorientation, and tensor_decomp steps."""
 
     output.mkdir(parents=True, exist_ok=True)
     tensor_file = write_fsl_reoriented(
@@ -1332,7 +1332,7 @@ def run_dwi2cond_pipeline(
         implementation_files=implementation_files,
     )
     results = runner.run(stages)
-    # 汇总 QA 已读取上游数组；这里只复核发布与 QA 终点，避免再次解码大型 DWI。
+    # Aggregate QA has already read the upstream arrays; here, recheck only the publication and QA endpoints to avoid decoding the large DWI again.
     final_validation_stages = [stages[-1]]
     if publish_dependency is not None:
         final_validation_stages.insert(

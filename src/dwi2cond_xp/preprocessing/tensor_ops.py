@@ -15,7 +15,7 @@ def decompose_tensor6(
     requested: tuple[str, ...] | None = None,
     return_eigenvalue_range: bool = False,
 ) -> dict[str, np.ndarray] | tuple[dict[str, np.ndarray], tuple[float | None, float | None]]:
-    """按 ``fslmaths`` 或 ``dtifit`` 语义分解六分量张量。"""
+    """Decompose a six-component tensor according to ``fslmaths`` or ``dtifit`` semantics."""
 
     values = np.asarray(tensor)
     if values.ndim < 1 or values.shape[-1] != 6:
@@ -40,7 +40,7 @@ def decompose_tensor6(
     eigenvalues, eigenvectors = np.linalg.eigh(matrices)
     eigenvalues = eigenvalues[:, ::-1]
     eigenvectors = eigenvectors[:, :, ::-1]
-    # fslmaths 以最大特征值门控；dtifit 对掩膜内已拟合体素无条件写出。
+    # fslmaths gates on the largest eigenvalue; dtifit writes fitted voxels inside the mask unconditionally.
     write_values = (
         eigenvalues[:, 0] > 0
         if semantics == "fslmaths"

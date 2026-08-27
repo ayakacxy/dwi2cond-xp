@@ -73,7 +73,7 @@ def _anisotropic_intensity_scale(
     mean_determinant: Mapping[int, float],
     conductivities: Mapping[int, float],
 ) -> float:
-    """由各组织平均行列式计算强度校正比例并拒绝退化输入。"""
+    """Compute the intensity-correction scale from each tissue's mean determinant and reject degenerate inputs."""
 
     numerator = 0.0
     denominator = 0.0

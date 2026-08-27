@@ -158,7 +158,7 @@ def test_small_nifti_matches_fsl_wls_with_grad_dev(tmp_path):
     reason="FSL reference disabled; set FSL_DTIFIT to a local dtifit executable",
 )
 def test_strict_mode_matches_fsl_nonpositive_and_nan_edge_cases(tmp_path):
-    """用真实 FSL 固定非正信号与 NaN 的兼容行为。"""
+    """Verify the fixed FSL behavior for nonpositive signals and NaNs using real FSL."""
 
     bvals, bvecs = _gradient_fixture()
     shape = (3, 1, 1)

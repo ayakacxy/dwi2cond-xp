@@ -239,7 +239,7 @@ def fit_dti_nifti(
     valid_mask_file: str | Path | None = None,
     qa_file: str | Path | None = None,
 ) -> Path:
-    """分块拟合 NIfTI，并显式记录 strict-FSL 或 robust 输入合同。"""
+    """Fit a NIfTI in blocks and explicitly record the strict-FSL or robust input contract."""
     if compatibility_mode not in {"strict-fsl", "robust"}:
         raise ValueError("compatibility_mode must be strict-fsl or robust")
     if z_chunk <= 0 or voxel_batch <= 0 or workers <= 0:

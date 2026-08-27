@@ -1,4 +1,4 @@
-"""SimNIBS 4.6 reverse-PE、TOPUP 与 EDDY 的组合闭环。"""
+"""Closed-loop reverse-PE, TOPUP, and EDDY pipeline for SimNIBS 4.6."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ TopupEddyProgress = Callable[[str, int, int], None]
 
 
 def _save_first_corrected_b0(pair_file: Path, output_file: Path) -> Path:
-    """从 TOPUP corrected pair 取官方用于 BET 的第一幅 b0。"""
+    """Take the first b0 from the TOPUP-corrected pair, as used by the official BET stage."""
 
     image = nib.load(str(pair_file))
     if image.shape[-1] != 2:
@@ -50,7 +50,7 @@ def run_topup_eddy_nifti(
     bet_backend: str = "optimized",
     progress: TopupEddyProgress | None = None,
 ) -> dict[str, object]:
-    """执行官方 reverse 4D preparation、TOPUP、BET 与 EDDY 顺序。"""
+    """Execute the official reverse 4D preparation, TOPUP, BET, and EDDY sequence."""
 
     if not np.isfinite(readout_seconds) or not 0.01 <= readout_seconds <= 0.2:
         raise ValueError("readout seconds must be finite and within [0.01, 0.2]")

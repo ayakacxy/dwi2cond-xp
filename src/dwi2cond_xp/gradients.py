@@ -113,7 +113,7 @@ def validate_single_shell_volumes(
     b0_threshold: float = 0.0,
     shell_tolerance: float = 100.0,
 ) -> np.ndarray:
-    """验证官方调用者已准备好的单壳输入，并返回全部 volume。"""
+    """Validate the single-shell input prepared by the official caller and return all volumes."""
 
     values = np.asarray(bvals, dtype=np.float64).reshape(-1)
     if b0_threshold < 0 or shell_tolerance <= 0:

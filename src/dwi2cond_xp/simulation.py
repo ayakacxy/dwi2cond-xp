@@ -27,7 +27,7 @@ def _validate_tdcs_parameters(
     solver: str,
     volume_tissues: tuple[int, ...],
 ) -> None:
-    """在创建 SimNIBS 对象前验证固定电极与求解参数。"""
+    """Validate the fixed electrodes and solver parameters before creating the SimNIBS object."""
 
     if not anode or not cathode or anode == cathode:
         raise ValueError("Anode and cathode must be distinct nonempty positions")

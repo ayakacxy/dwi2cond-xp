@@ -1,4 +1,4 @@
-"""验证官方 reverse-PE、TOPUP、BET、EDDY 组合闭环。"""
+"""Verify the official reverse-PE, TOPUP, BET, and EDDY closed loop."""
 
 from __future__ import annotations
 

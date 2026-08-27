@@ -341,7 +341,7 @@ def _replace_mask_with_corrected(
     reference_image: nib.spatialimages.SpatialImage,
     output_file: Path,
 ) -> None:
-    """验证并写入与 corrected DWI 同网格的场图 mask。"""
+    """Validate and write a field-map mask on the same grid as the corrected DWI."""
 
     corrected_mask_image = nib.load(str(corrected_mask_file))
     corrected_mask = np.asarray(corrected_mask_image.dataobj) != 0
