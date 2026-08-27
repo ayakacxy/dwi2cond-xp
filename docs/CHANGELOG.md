@@ -5,6 +5,15 @@ versions follow semantic versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Simplified the public documentation set around the current contracts,
+  validation, benchmarks, and the final v0.3.0 independent re-audit/remediation
+  pair; removed superseded audit snapshots, completed planning documents, and
+  generated audit HTML/JSON artifacts.
+- Standardized public source comments, docstrings, CLI help, and error messages
+  on English.
+
 ## [0.3.0] - 2026-08-26
 
 ### Fixed

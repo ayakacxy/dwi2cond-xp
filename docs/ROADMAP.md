@@ -42,8 +42,7 @@ starts from its tag only when a backport is needed.
   same-boundary measurement for each supported branch being discussed.
 - Do not expand the project into a general FSL command replacement.
 
-The quantitative constraints and current bottleneck evidence are documented in
-the [end-to-end performance feasibility report](DWI2COND_10X_PERFORMANCE_FEASIBILITY_REPORT.md).
-Feature proposals and performance reports should use the repository issue
-templates and include a shareable reproducer, numerical A/B, timing boundary,
-hardware, worker count, and peak memory.
+Current measured results are maintained in [Benchmarks](BENCHMARKS.md). Feature
+proposals and performance reports should use the repository issue templates and
+include a shareable reproducer, numerical A/B, timing boundary, hardware,
+worker count, and peak memory.

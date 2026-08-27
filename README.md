@@ -79,11 +79,11 @@ included. It also repairs the workflow lineage, masking, fitting semantics,
 TOPUP-to-EDDY closure, official defaults, pre-fitted tensor import, and m2m
 publication defects found by the v0.2.0 audit. FSL is retained only as an
 optional local numerical reference; it is not called by the released runtime.
-The independent audits' confirmed defects, including the later post-remediation
-findings `D2C-030-015..041`, are closed in the replacement candidate. This does
-not assert bitwise equality for every FSL optimizer or a new full-subject
-official A/B; the current numerical boundary is documented in the
-[post-re-audit closure report](docs/V0.3.0_POST_REAUDIT_REMEDIATION_REPORT_2026-08-26.md).
+The final-tag independent re-audit's `6 P1 + 9 P2/P3` finding clusters are
+closed in the published v0.3.0 release. This does not assert bitwise equality
+for every FSL optimizer or a new full-subject official A/B; the current
+numerical boundary is documented in the
+[final remediation report](docs/V0.3.0_LATEST_TAG_REMEDIATION_REPORT_2026-08-27.md).
 
 The pure-Python DTI and tensor-mapping core uses NumPy, SciPy, NiBabel, h5py,
 and tqdm. Mesh conductivity, FEM, and lead-field workflows require exactly
@@ -523,8 +523,8 @@ These are priorities rather than promised performance results. Optimizations
 must preserve the SimNIBS 4.6/FSL 6.0.4 algorithm, resolution, iteration and
 stopping rules, output contracts, and numerical A/B gates. The project does not
 currently claim that every complete preprocessing branch is 10x faster than
-FSL. See the maintained [project roadmap](docs/ROADMAP.md) and the detailed
-[performance feasibility report](docs/DWI2COND_10X_PERFORMANCE_FEASIBILITY_REPORT.md).
+FSL. See the maintained [project roadmap](docs/ROADMAP.md) and
+[benchmarks](docs/BENCHMARKS.md).
 
 ## 🗂️ Documentation and community
 

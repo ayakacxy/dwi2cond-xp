@@ -16,36 +16,14 @@
 - [Validation](VALIDATION.md): numerical, cross-platform, packaging, and
   end-to-end evidence with explicit limits.
 - [Benchmarks](BENCHMARKS.md): timing boundaries and hardware-specific results.
-- [Overall completion and performance report](DWI2COND_COMPLETION_AND_PERFORMANCE_REPORT.md):
-  P0--P11 completion, numerical fidelity, performance boundaries, and the
-  `v0.2.0` release audit.
 - [FSL reference contract](FSL_REFERENCE_CONTRACT.md): frozen source
   provenance, stage artifacts, manifest fields, and failure semantics.
 
 ## Project status
 
 - [Roadmap](ROADMAP.md): post-`v0.3.0` priorities and explicit non-goals.
-- [End-to-end performance feasibility report](DWI2COND_10X_PERFORMANCE_FEASIBILITY_REPORT.md):
-  historical performance planning, branch-specific budgets, and nonlinear
-  bottlenecks; the work is deferred to `v0.4.0+` and is not a completed claim.
 - [v0.2.0 algorithm audit](V0.2.0_ALGORITHM_AUDIT_REPORT_2026-08-25.md):
   workflow and numerical defects that motivated the v0.3.0 correctness release.
-- [v0.3.0 remediation audit](V0.3.0_ALGORITHM_EQUIVALENCE_AUDIT_2026-08-26.md):
-  the release-time remediation record; its end-to-end equivalence conclusion is
-  superseded by the independent post-release audit below.
-- [v0.3.0 independent algorithm audit](V0.3.0_INDEPENDENT_ALGORITHM_AUDIT_REPORT_2026-08-26.md):
-  official workflow comparison, confirmed computational defects, current FSL A/B,
-  evidence gaps, and the ordered remediation/acceptance plan.
-- [v0.3.0 audit remediation](V0.3.0_AUDIT_REMEDIATION_REPORT_2026-08-26.md):
-  issue-by-issue fixes, executable FSL gates, current numerical results, and
-  remaining non-equivalence boundaries for the replacement release.
-- [v0.3.0 post-remediation re-audit](V0.3.0_POST_REMEDIATION_REAUDIT_REPORT_2026-08-26.md):
-  frozen discovery report for issues `D2C-030-015..041`, including official
-  control-flow and counterexample evidence.
-- [v0.3.0 post-re-audit closure](V0.3.0_POST_REAUDIT_REMEDIATION_REPORT_2026-08-26.md):
-  issue classification, fixes, real-FSL gates, complete test evidence, and the
-  remaining optimizer and end-to-end boundaries; its all-closed conclusion is
-  superseded by the latest-tag independent re-audit below.
 - [v0.3.0 latest-tag independent re-audit](V0.3.0_LATEST_TAG_INDEPENDENT_REAUDIT_REPORT_2026-08-26.md):
   final-tag workflow composition, legacy optimizer control flow, residual
   scientific QA/cache/API contracts, real-FSL probes, and the ordered repair
@@ -53,8 +31,6 @@
 - [v0.3.0 latest-tag remediation](V0.3.0_LATEST_TAG_REMEDIATION_REPORT_2026-08-27.md):
   issue-by-issue closure of the latest `6 P1 + 9 P2/P3` findings, discriminative
   tests, complete coverage evidence, and remaining evidence boundaries.
-- [FSL subset reimplementation plan](FSL_SUBSET_REIMPLEMENTATION_PLAN.md): the
-  completed P0--P11 implementation and acceptance ledger.
 - [Changelog](CHANGELOG.md): released and unreleased user-visible changes.
 - [Release process](RELEASE_PROCESS.md): version, tag, asset, provenance, and
   post-publication verification gates.

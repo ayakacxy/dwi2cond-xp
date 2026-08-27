@@ -12,7 +12,7 @@
 [![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
-[English](README.md) · [文档](docs/README.md) · [验证](docs/VALIDATION.md) · [路线图](docs/ROADMAP.md) · [总报告](docs/DWI2COND_COMPLETION_AND_PERFORMANCE_REPORT.md) · [更新记录](docs/CHANGELOG.md)
+[English](README.md) · [文档](docs/README.md) · [验证](docs/VALIDATION.md) · [路线图](docs/ROADMAP.md) · [更新记录](docs/CHANGELOG.md)
 
 🧠 **DTI 拟合** · ⚡ **运行时无 FSL** · 🧭 **张量重定向** · ⚡ **各向异性 FEM** · 🧪 **100% 语句覆盖**
 
@@ -71,10 +71,9 @@ GRE/FUGUE分支、固定TOPUP分支，以及支持可选TOPUP场的单壳EDDY `-
 本版本还修复了 v0.2.0 审计发现的产物流向、mask、拟合语义、TOPUP→EDDY 闭环、
 官方默认值、预拟合 tensor 导入和 m2m 发布问题。FSL 仅作为可选的本地数值
 reference 保留，不会被正式预处理运行路径调用。
-两次独立 v0.3.0 审计确认的缺陷，包括整改后复审的 `D2C-030-015..041`，均已在
-替换候选中关闭；这不等于所有 FSL optimizer 逐位一致，也不冒充新的真实被试完整
-官方 A/B。当前数值边界见
-[整改后复审闭环报告](docs/V0.3.0_POST_REAUDIT_REMEDIATION_REPORT_2026-08-26.md)。
+最终 tag 独立复审记录的 `6 P1 + 9 P2/P3` 问题簇均已在正式发布的 v0.3.0 中关闭；
+这不等于所有 FSL optimizer 逐位一致，也不冒充新的真实被试完整官方 A/B。当前数值
+边界见[最终整改报告](docs/V0.3.0_LATEST_TAG_REMEDIATION_REPORT_2026-08-27.md)。
 
 纯 Python DTI/tensor 映射核心依赖 NumPy、SciPy、NiBabel、h5py 和 tqdm。Mesh
 电导率、FEM 与 lead field 固定要求 `SimNIBS 4.6.0 + Python 3.11`；完整流程的平台
@@ -381,8 +380,7 @@ panel 共用对称色标；切片只由 brain mask 最大面积决定，不根�
 这些是研发优先级，不是预先承诺的性能结果。所有优化必须保持 SimNIBS 4.6/FSL 6.0.4
 算法、分辨率、迭代与停止规则、输出合同和逐阶段数值 A/B 门禁不变。项目目前不宣称
 每条完整预处理分支都比 FSL 快 10 倍。维护中的任务边界见
-[项目路线图](docs/ROADMAP.md)，定量分析见
-[性能可行性报告](docs/DWI2COND_10X_PERFORMANCE_FEASIBILITY_REPORT.md)。
+[项目路线图](docs/ROADMAP.md)，现有定量结果见[基准记录](docs/BENCHMARKS.md)。
 
 ## 🗂️ 文档与社区
 

@@ -1,13 +1,13 @@
 # Validation
 
-The post-re-audit `v0.3.0` correctness gate completed with `618 passed, 6 skipped`
-and `13,204/13,204` executable statements covered (`100.00%`), including cold-cache
-synthetic TOPUP, EDDY, and FNIRT/PPD E2E paths plus direct FSL 6.0.4 `dtifit`
-comparisons. The six visible skips are optional FSL executable probes; the
-explicitly configured local FSL probes all passed. Cross-platform CI enforces
-the same source, coverage, documentation, CLI, and package gates. A replacement
-tag is published only after main CI succeeds; the tag-triggered Release workflow
-then repeats the release gate before publishing assets, SBOM, and attestations.
+The final `v0.3.0` correctness gate completed with `617 passed, 13 skipped` in
+the ordinary local batch and `13,370/13,370` executable statements covered
+(`100.00%`). With the available FSL 6.0.4 references configured, the main batch
+completed with `627 passed, 3 skipped`; all `630/630` available reference probes
+passed after the separate FSLMATHS checks. Cross-platform CI enforces the same
+source, coverage, documentation, CLI, and package gates. A replacement tag is
+published only after main CI succeeds; the tag-triggered Release workflow then
+repeats the release gate before publishing assets, SBOM, and attestations.
 
 ## Automated contracts
 
@@ -33,24 +33,16 @@ verified independently.
 
 ## Numerical references
 
-The post-audit public legacy gate now executes candidate stages and compares
-them with the same-input FSL 6.0.4 reference. Corrected-DWI and corrected-mean
-relative L2 are `0.00544438` and `0.00773141`; final matrix max-absolute error
-is `0.0442867 mm`, and mask Dice is `0.9931947`. All 16 frozen stage/final
-thresholds pass. The near-zero tensor and SSE relative errors on this sharp
-synthetic fixture are retained as regression indicators, not as whole-grid
-tensor equivalence claims. Full details are in the
-[v0.3.0 audit remediation report](V0.3.0_AUDIT_REMEDIATION_REPORT_2026-08-26.md).
-
-The later post-remediation re-audit found 27 additional issue records spanning
-official control flow, public APIs, cache/failure transactions, QA, and metadata.
-All are closed in the
-[post-re-audit remediation report](V0.3.0_POST_REAUDIT_REMEDIATION_REPORT_2026-08-26.md).
-Its strongest new official gates include a deterministic interspersed-b0 EDDY
-fixture (`0.00154220` corrected-DWI relative L2 and an exact final outlier map),
-unequal-mean TOPUP, oblique-basis vecreg, and thin-volume MCFLIRT. The EDDY
-commands, hashes, and metrics are frozen in
-[`synthetic_eddy_interspersed_b0_reference.json`](../tests/fixtures/reference/synthetic_eddy_interspersed_b0_reference.json).
+The final-tag independent re-audit identified `6 P1 + 9 P2/P3` finding clusters
+across workflow composition, legacy MCFLIRT control flow, scientific QA/cache
+lineage, FEM transactions, and public API boundaries. The
+[independent re-audit](V0.3.0_LATEST_TAG_INDEPENDENT_REAUDIT_REPORT_2026-08-26.md)
+records the discriminative counterexamples, and the
+[final remediation report](V0.3.0_LATEST_TAG_REMEDIATION_REPORT_2026-08-27.md)
+records their fixes and acceptance gates. The final release retains explicit
+limits: EDDY/FNIRT optimizer trajectories are not claimed bitwise-identical for
+arbitrary inputs, and no new full HCP TOPUP-to-EDDY-to-FNIRT-to-FEM run is
+inferred from synthetic stage evidence.
 
 A non-identity 90-degree premat plus one-voxel GRE shift was also compared with
 real FSL `convertwarp` and `applywarp`; the corrected Python trilinear result is
