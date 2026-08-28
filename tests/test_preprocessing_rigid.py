@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+import subprocess
 
 import nibabel as nib
 import numpy as np
@@ -15,6 +18,10 @@ from dwi2cond_xp.preprocessing.rigid import (
     rigid_world_matrix,
     write_aligned_b0_mean,
 )
+
+
+FSL_MCFLIRT = Path(os.environ.get("FSL_MCFLIRT", "/path/not/configured/mcflirt"))
+FSL_MATHS = Path(os.environ.get("FSL_MATHS", "/path/not/configured/fslmaths"))
 
 
 def _phantom(shape: tuple[int, int, int] = (33, 31, 29)) -> np.ndarray:
@@ -338,7 +345,7 @@ def test_estimate_rigid_transform_validation_and_evaluation_limit() -> None:
 
 
 def _write_dwi(tmp_path):
-    reference = _phantom((17, 17, 17))
+    reference = _phantom((17, 17, 25))
     affine = np.eye(4)
     center = (np.asarray(reference.shape) - 1) / 2
     shift = rigid_world_matrix(np.array([0, 0, 0, 1.0, 0, 0]), center)
@@ -395,6 +402,157 @@ def test_write_aligned_b0_mean_outputs_qa_and_progress(tmp_path) -> None:
     assert qa["registration"] == "mcflirt_6dof_compat46"
     assert qa["workers"] == 2
     assert qa["volumes"][1]["message"] == "reference volume"
+
+
+def test_write_aligned_b0_mean_uses_raw_moving_and_official_fix2d(
+    tmp_path, monkeypatch
+) -> None:
+    shape = (9, 8, 2)
+    base = np.arange(np.prod(shape), dtype=np.float32).reshape(shape) + 1.0
+    data = np.stack((base, base + 1.0, base + 2.0), axis=3)
+    affine = np.diag((1.0, 1.0, 5.0, 1.0))
+    dwi = tmp_path / "thin.nii.gz"
+    bvals = tmp_path / "bvals"
+    nib.save(nib.Nifti1Image(data, affine), dwi)
+    np.savetxt(bvals, [[0, 0, 0]], fmt="%d")
+    resampled_shapes: list[tuple[int, ...]] = []
+    optimizations: list[tuple[tuple[int, ...], tuple[int, ...], tuple, dict]] = []
+
+    def resample(values, _voxel_sizes, _spacing):
+        resampled_shapes.append(values.shape)
+        return values
+
+    def optimize(fixed, moving, spacing, initial, *_args, **kwargs):
+        optimizations.append((fixed.shape, moving.shape, tuple(spacing), kwargs))
+        return initial.copy(), 0.0, 1
+
+    monkeypatch.setattr(rigid_module, "_isotropic_resample", resample)
+    monkeypatch.setattr(rigid_module, "_optimize_one_stage", optimize)
+    monkeypatch.setattr(
+        rigid_module,
+        "_intensity_center_scaled_mm",
+        lambda _values, _spacing: np.zeros(3),
+    )
+
+    write_aligned_b0_mean(
+        dwi,
+        bvals,
+        tmp_path / "aligned.nii.gz",
+        stages_mm=(4.0,),
+        workers=1,
+    )
+
+    assert resampled_shapes == [shape]
+    assert len(optimizations) == 2
+    for fixed_shape, moving_shape, spacing, kwargs in optimizations:
+        assert fixed_shape == (9, 8, 6)
+        assert moving_shape == (9, 8, 4)
+        assert spacing == (4.0, 4.0, 8.0)
+        assert kwargs["parameter_axes"] == (2, 3, 4)
+        assert kwargs["smooth_mm"] == 0.1
+        assert tuple(kwargs["moving_spacing_mm"]) == (1.0, 1.0, 8.0)
+
+
+@pytest.mark.skipif(
+    not FSL_MCFLIRT.is_file() or not FSL_MATHS.is_file(),
+    reason="FSL MCFLIRT and fslmaths are unavailable",
+)
+def test_write_aligned_b0_mean_matches_real_fsl_raw_moving_contract(
+    tmp_path: Path,
+) -> None:
+    shape = (33, 31, 29)
+    reference = _phantom(shape)
+    affine = _affine()
+    center = nib.affines.apply_affine(
+        affine, (np.asarray(shape, dtype=np.float64) - 1.0) / 2.0
+    )
+    parameters = (
+        (0.0, 0.0, 0.025, 1.2, -0.6, 0.3),
+        (0.012, -0.008, 0.014, 0.5, 0.7, -0.4),
+        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        (-0.01, 0.006, -0.018, -0.8, 0.4, 0.5),
+        (0.008, 0.01, 0.02, -1.1, -0.7, -0.2),
+    )
+    volumes = []
+    for values in parameters:
+        transform = rigid_world_matrix(np.asarray(values), center)
+        volumes.append(
+            resample_rigid(
+                reference,
+                affine,
+                shape,
+                affine,
+                np.linalg.inv(transform),
+                mode="nearest",
+            )
+        )
+    data = np.stack(volumes, axis=3)
+    dwi_file = tmp_path / "b0_all.nii.gz"
+    bvals_file = tmp_path / "bvals"
+    nib.save(nib.Nifti1Image(data, affine), dwi_file)
+    np.savetxt(bvals_file, [np.zeros(len(volumes), dtype=int)], fmt="%d")
+    environment = os.environ.copy()
+    environment["FSLDIR"] = str(FSL_MCFLIRT.parent.parent)
+    environment["FSLOUTPUTTYPE"] = "NIFTI_GZ"
+    fsl_prefix = tmp_path / "fsl_nodif"
+    subprocess.run(
+        [
+            str(FSL_MCFLIRT),
+            "-in",
+            str(dwi_file),
+            "-out",
+            str(fsl_prefix),
+            "-dof",
+            "6",
+            "-mats",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    fsl_mean = tmp_path / "fsl_mean.nii.gz"
+    subprocess.run(
+        [str(FSL_MATHS), str(fsl_prefix), "-Tmean", str(fsl_mean)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    local_mean = tmp_path / "local_mean.nii.gz"
+    local_qa = tmp_path / "local_qa.json"
+    write_aligned_b0_mean(
+        dwi_file,
+        bvals_file,
+        local_mean,
+        workers=1,
+        qa_file=local_qa,
+    )
+
+    expected_mean = np.asarray(nib.load(fsl_mean).dataobj, dtype=np.float32)
+    actual_mean = np.asarray(nib.load(local_mean).dataobj, dtype=np.float32)
+    mean_relative_l2 = np.linalg.norm((actual_mean - expected_mean).ravel()) / np.linalg.norm(
+        expected_mean.ravel()
+    )
+    expected_matrices = np.stack(
+        [
+            np.loadtxt(tmp_path / f"fsl_nodif.mat/MAT_{index:04d}")
+            for index in range(len(volumes))
+        ]
+    )
+    qa = json.loads(local_qa.read_text(encoding="utf-8"))
+    actual_matrices = np.asarray(
+        [entry["scaled_mm_transform"] for entry in qa["volumes"]],
+        dtype=np.float64,
+    )
+    matrix_relative_l2 = np.linalg.norm(actual_matrices - expected_matrices) / np.linalg.norm(
+        expected_matrices
+    )
+
+    assert mean_relative_l2 < 1.5e-3
+    assert np.max(np.abs(actual_mean - expected_mean)) < 2.0
+    assert matrix_relative_l2 < 0.03
+    assert np.max(np.abs(actual_matrices - expected_matrices)) < 0.15
 
 
 def test_write_aligned_b0_mean_validation_and_failure(tmp_path) -> None:

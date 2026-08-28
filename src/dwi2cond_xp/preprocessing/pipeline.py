@@ -510,6 +510,20 @@ class PipelineRunner:
                     "cache_hit": False,
                 },
             }
+            producer_failure_manifest = getattr(
+                error, "dwi2cond_xp_failure_manifest", None
+            )
+            if isinstance(producer_failure_manifest, str):
+                failed_manifest["producer_failure_manifest"] = (
+                    producer_failure_manifest
+                )
+                producer_payload = json.loads(
+                    Path(producer_failure_manifest).read_text(encoding="utf-8")
+                )
+                failed_manifest["producer_failure"] = producer_payload
+                failed_manifest["failed_phase"] = producer_payload.get(
+                    "failed_phase"
+                )
             _atomic_json(manifest_path, failed_manifest)
             if self.progress is not None:
                 self.progress(stage.name, 0, 1, "failed")

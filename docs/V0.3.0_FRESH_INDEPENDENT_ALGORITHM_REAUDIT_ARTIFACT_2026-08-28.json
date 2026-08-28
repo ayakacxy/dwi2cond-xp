@@ -1,0 +1,623 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "dwi2cond-xp v0.3.0 独立算法审计",
+    "description": "SimNIBS 4.6.0 / FSL 6.0.4 对照下，对 dwi2cond-xp v0.3.0 流程、算法与计算逻辑的独立复现性审计。",
+    "generatedAt": "2026-08-28T15:57:25+08:00",
+    "charts": [
+      {
+        "id": "severity-chart",
+        "title": "已确认问题按严重度分布",
+        "subtitle": "2026年8月28日独立审计；7 个问题簇，P0=0",
+        "intent": "comparison",
+        "question": "本轮确认的问题主要是主路径还是低风险边界？",
+        "rationale": "四个有序严重度类别和一个计数，使用从零开始的竖向条形图最直接；精确问题明细由后续表格承担。",
+        "comparisonContext": {
+          "denominator": "7 个经 E2/E3 确认的问题簇",
+          "grain": "severity",
+          "unit": "问题簇"
+        },
+        "type": "bar",
+        "dataset": "severity_summary",
+        "sourceId": "severity-source",
+        "encodings": {
+          "x": {
+            "field": "severity",
+            "type": "ordinal",
+            "label": "严重度"
+          },
+          "y": {
+            "field": "confirmed_count",
+            "type": "quantitative",
+            "aggregate": "none",
+            "label": "确认问题簇",
+            "format": "number"
+          },
+          "tooltip": [
+            {
+              "field": "scope",
+              "type": "text",
+              "label": "范围"
+            },
+            {
+              "field": "downstream_risk",
+              "type": "text",
+              "label": "影响"
+            }
+          ]
+        },
+        "valueFormat": "number",
+        "layout": "full",
+        "maxRows": 4,
+        "palette": {
+          "kind": "sequential",
+          "name": "blue"
+        },
+        "labels": {
+          "values": "all"
+        },
+        "settings": {
+          "sort": "custom",
+          "showValues": true
+        },
+        "compatibleTypes": [
+          "bar",
+          "horizontalBar"
+        ],
+        "surface": {
+          "surface": "export",
+          "showControls": false,
+          "viewMode": "both"
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "finding-register",
+        "title": "确认问题登记表",
+        "subtitle": "按整改顺序排列；影响列说明正式数据路径或受限触发条件",
+        "dataset": "finding_register",
+        "defaultSort": {
+          "field": "repair_order",
+          "direction": "asc"
+        },
+        "density": "spacious",
+        "sourceId": "finding-source",
+        "layout": "full",
+        "columns": [
+          {
+            "field": "id",
+            "label": "编号",
+            "type": "text"
+          },
+          {
+            "field": "severity",
+            "label": "严重度",
+            "type": "text"
+          },
+          {
+            "field": "evidence",
+            "label": "证据",
+            "type": "text"
+          },
+          {
+            "field": "title",
+            "label": "问题",
+            "type": "text"
+          },
+          {
+            "field": "trigger",
+            "label": "触发范围",
+            "type": "text"
+          },
+          {
+            "field": "impact",
+            "label": "下游影响",
+            "type": "text"
+          },
+          {
+            "field": "repair_order",
+            "label": "顺序",
+            "type": "number"
+          }
+        ]
+      },
+      {
+        "id": "flow-map",
+        "title": "官方流程与本地 v0.3.0 节点映射",
+        "subtitle": "“未发现新问题”仅代表本轮已审计证据范围，不代表任意输入 bitwise 等价",
+        "dataset": "flow_map",
+        "defaultSort": {
+          "field": "order",
+          "direction": "asc"
+        },
+        "density": "spacious",
+        "sourceId": "flow-source",
+        "layout": "full",
+        "columns": [
+          {
+            "field": "order",
+            "label": "顺序",
+            "type": "number"
+          },
+          {
+            "field": "stage",
+            "label": "阶段",
+            "type": "text"
+          },
+          {
+            "field": "official_contract",
+            "label": "官方合同",
+            "type": "text"
+          },
+          {
+            "field": "current_result",
+            "label": "本轮判定",
+            "type": "text"
+          },
+          {
+            "field": "issue",
+            "label": "关联问题",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "local-source",
+        "label": "dwi2cond-xp v0.3.0 source snapshot at 3d899f4ee10cc44f254f92624c8527dbc4614a5d",
+        "path": "src/dwi2cond_xp"
+      },
+      {
+        "id": "simnibs-source",
+        "label": "SimNIBS 4.6.0 dwi2cond shell implementation",
+        "path": "references/SimNIBS-4.6.0/external/dwi2cond"
+      },
+      {
+        "id": "fsl-source",
+        "label": "FSL 6.0.4:ddd0a010 source and executable oracle",
+        "path": "references/FSL-6.0.4/src"
+      },
+      {
+        "id": "audit-probes",
+        "label": "2026-08-28 discriminative FSL/local audit findings and reviewed metrics",
+        "path": "docs/V0.3.0_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_ARTIFACT_2026-08-28.json"
+      },
+      {
+        "id": "test-suite",
+        "label": "v0.3.0 explicit-reference pytest suite: 631 main plus 12 montage tests",
+        "path": "tests"
+      },
+      {
+        "id": "severity-source",
+        "label": "Severity counts derived from the confirmed issue register",
+        "query": {
+          "engine": "SQLite",
+          "language": "SQL",
+          "sql": "WITH findings(issue_id, severity) AS (\n  VALUES\n    ('D2C-030-046', 'P1'),\n    ('D2C-030-047', 'P1'),\n    ('D2C-030-048', 'P1'),\n    ('D2C-030-049', 'P1'),\n    ('D2C-030-050', 'P2'),\n    ('D2C-030-051', 'P3'),\n    ('D2C-030-052', 'P2')\n), severity_order(severity, rank, scope, downstream_risk) AS (\n  VALUES\n    ('P0', 0, '普通全链灾难性错误', '本轮未发现'),\n    ('P1', 1, '有效正式科学路径', '可改变 mask、warp、tensor 或 conductivity/FEM 输入'),\n    ('P2', 2, '精确数值边界或失败事务', '受限分支或可恢复性/诊断'),\n    ('P3', 3, '非默认异常自定义输入', '自动官方 0/1 mask 不受影响')\n)\nSELECT s.severity,\n       COUNT(f.issue_id) AS confirmed_count,\n       s.rank,\n       s.scope,\n       s.downstream_risk\nFROM severity_order AS s\nLEFT JOIN findings AS f ON f.severity = s.severity\nGROUP BY s.severity, s.rank, s.scope, s.downstream_risk\nORDER BY s.rank",
+          "description": "Count the seven confirmed audit findings by ordered severity, retaining scope and downstream-risk context.",
+          "executed_at": "2026-08-28T15:57:25+08:00",
+          "filters": [
+            "Only E2/E3 confirmed findings from the 2026-08-28 audit"
+          ],
+          "metric_definitions": [
+            "confirmed_count = count of distinct numbered issue clusters at each severity"
+          ]
+        }
+      },
+      {
+        "id": "finding-source",
+        "label": "Confirmed issue register in remediation order",
+        "query": {
+          "engine": "SQLite",
+          "language": "SQL",
+          "sql": "WITH findings(id,severity,evidence,title,trigger,impact,repair_order) AS (\n  VALUES\n    ('D2C-030-049','P1','E3','positive-det FNIRT x 梯度反号','默认 nonlinear；moving affine det>0','warp→PPD tensor→conductivity/FEM',1),\n    ('D2C-030-046','P1','E3','raw-b0 MCFLIRT moving 双插值、无 fix2D','所有 raw 分支的 aligned b0 helper','BET/mask/raw-final fit/QA',2),\n    ('D2C-030-047','P1','E3','MCFLIRT/FLIRT/APPLYWARP sinc 合同混用','legacy pass2、non-GRE final、GRE final','MI trajectory、corrected DWI、tensor',3),\n    ('D2C-030-048','P1','E3','TOPUP iout 未应用 final joint mask','reverse-PE TOPUP','corrected b0→BET→EDDY mask/tensor',4),\n    ('D2C-030-050','P2','E3','affine vecreg -0.5 mask rounding','rigid/affine 且坐标精确落负半整数','边界 support；共同 support 数值一致',5),\n    ('D2C-030-051','P3','E3','post-mask 负值按 !=0 而非 >0','自定义含负值 output mask','单点/区域错误保留；自动 0/1 mask 不受影响',6),\n    ('D2C-030-052','P2','E3','FEM producer 失败证据和旧有效目录不保留','FEM stage 失败/重跑','诊断、可恢复性、last-known-good',7)\n)\nSELECT * FROM findings ORDER BY repair_order",
+          "description": "Materialize the reviewed seven-row audit issue register in the recommended remediation order.",
+          "executed_at": "2026-08-28T15:57:25+08:00",
+          "filters": [
+            "Only findings with completed source closure and a discriminative runtime result"
+          ]
+        }
+      },
+      {
+        "id": "flow-source",
+        "label": "Official-to-local workflow mapping reviewed on 2026-08-28",
+        "query": {
+          "engine": "SQLite",
+          "language": "SQL",
+          "sql": "WITH flow_map(\"order\",stage,official_contract,current_result,issue) AS (\n  VALUES\n    (1,'canonical raw + gradients','reorientation、bvals/bvecs、fixed single-shell boundary','大顺序一致；未发现新问题','—'),\n    (2,'exact b0→MCFLIRT→mean→BET','raw moving、fix2D、trilinear/extraslice','内部计算不一致','046'),\n    (3,'raw WLS FA/SSE QA','correction 前 DTIFIT WLS','顺序已对齐；受 046 上游影响','046'),\n    (4,'nomoco','不做 correction，保留正式 raw products','主逻辑未见新问题；aligned b0 受影响','046'),\n    (5,'legacy / GRE','MCFLIRT、MI、FLIRT/FUGUE/APPLYWARP','sinc caller/boundary 不一致','046,047'),\n    (6,'TOPUP→BET','iout mask 外 exact zero','public corrected pair 漏清零','046,048'),\n    (7,'EDDY','五轮 b0/DWI、PEAS、final repol、joint mask','主控制流未发现新问题；不声明 bitwise','—'),\n    (8,'thr0→final WLS tensor','校正后截零、DTIFIT --wls --sse --save_tensor','本轮未发现新问题；会消费上游差异','046-048'),\n    (9,'T1 rigid/affine vecreg','implicit mask、FSL half-away rounding','精确 half-tie support 差异','050'),\n    (10,'FNIRT→PPD→post-mask','scaled-mm derivative、warp、vecreg、positive mask','positive-det gradient P1；negative custom mask P3','049,051'),\n    (11,'conductivity→m2m→FEM','正确 tensor 下 dir/vn/mc；SimNIBS solver','公式未见新问题；会消费错误 tensor；失败事务残留','049,052')\n)\nSELECT * FROM flow_map ORDER BY \"order\"",
+          "description": "Materialize the ordered SimNIBS 4.6 workflow stages and the v0.3.0 audit verdict for each stage.",
+          "executed_at": "2026-08-28T15:57:25+08:00",
+          "filters": [
+            "Fixed SimNIBS 4.6.0 and FSL 6.0.4 subset"
+          ]
+        }
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "# dwi2cond-xp v0.3.0 独立算法审计"
+      },
+      {
+        "id": "technical-summary",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 结论不是“只剩小问题”\n\n本轮没有发现 P0，也没有发现 DTIFIT/WLS、张量特征分解或 conductivity 核心公式在普通输入上整体失效；但确认了 **4 个 P1、2 个 P2 和 1 个 P3**。其中 4 个 P1 都位于正式科学路径，不能归为无关紧要的小瑕疵：raw-b0 MCFLIRT、legacy/GRE sinc 重采样、TOPUP corrected-pair 输出 mask，以及正行列式图像上的 FNIRT x 梯度。\n\n- **最需要立即处理的是 FNIRT。** 正行列式输入上，解析 x 导数与同一 cost 的有限差分 60/60 体素反号；24×23×22 同输入端到端中，FSL 把 raw-warp→reference relative L2 从 0.2556 降到 0.0224，本地反而升到 0.2971。\n- **raw-b0 helper 不是上一轮已经修好的 legacy MCFLIRT producer。** 它仍把 moving 预粗化后再次插值、缺少 fix2D，并被 nomoco、legacy、TOPUP/EDDY mask 和 raw QA 正式调用。\n- **TOPUP 和 sinc 问题会改变正式下游。** TOPUP mask 外 1680/1680 个本地输出元素全部非零；统一 sinc 实现又把官方 Blackman/Hanning 和三类边界合同混在一起。\n- 其余三项是受限边界：affine vecreg 的 -0.5 tie、含负值自定义 post-mask，以及 FEM 失败事务/诊断保留。它们应修，但不能与四个 P1 混为同一风险等级。\n\n因此，对用户问题的直接回答是：**不是“已经没什么大问题、只剩很小问题”；更准确的是“没有 P0，但还有 4 个需要按主路径问题整改的 P1”。** 本轮只读审计，没有修改算法代码、提交、推送、tag 或 Release。"
+      },
+      {
+        "id": "severity-takeaway",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 四个 P1 决定当前不能声明“与官方同逻辑”\n\n下图统计的是本轮已由双侧源码和判别运行证据确认的问题簇，不是静态可疑点。P0 为零说明没有证据表明普通全链发生普遍性灾难；P1 为四则说明正式科学输出仍会在有效分支上偏离官方。图只用于风险概览，逐项触发条件和证据以随后审计表为准。"
+      },
+      {
+        "id": "severity-chart-block",
+        "type": "chart",
+        "chartId": "severity-chart",
+        "layout": "full"
+      },
+      {
+        "id": "finding-register-title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 七项确认问题与整改优先级\n\n严重度按“是否进入正式科学路径、触发范围、是否改变下游数组或失败事务”确定。E3 表示已获得运行时反例或真实 FSL 同输入证据；E2 表示双侧源码和控制流已经闭合。"
+      },
+      {
+        "id": "finding-register-table-block",
+        "type": "table",
+        "tableId": "finding-register",
+        "layout": "full"
+      },
+      {
+        "id": "baseline",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 基线已锁定到公开 v0.3.0，而不是当前文字整理提交\n\n| 对象 | 固定值 |\n|---|---|\n| 审计算法 | annotated \\`v0.3.0^{}\\` = \\`3d899f4ee10cc44f254f92624c8527dbc4614a5d\\` |\n| 远端主线 | \\`origin/main\\` = 同一提交 |\n| 当前 HEAD | \\`52db0edb043399c2e447923ffdbe66f87e1077f0\\` |\n| 官方脚本 | SimNIBS 4.6.0 |\n| 官方数值实现 | FSL \\`6.0.4:ddd0a010\\` |\n\n\\`v0.3.0..HEAD\\` 的生产源码差异只涉及英文 docstring、注释、错误文本及报告/文档整理，没有改变算法语句；所以问题同时适用于公开 tag 的算法和当前工作区实现。官方脚本 SHA-256 为：\\`dwi2cond 0978b26a…6340\\`、\\`prepro 4671e6f7…f78\\`、\\`functions b133dd7e…5932\\`、\\`t1reg 539d1951…05d\\`；SimNIBS 的 \\`b02b0_nosubsamp.cnf\\` 为 \\`5461c722…a6a\\`。",
+        "sourceId": "local-source"
+      },
+      {
+        "id": "methodology",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 审计先恢复官方流程，再核对计算语义\n\n审计按四层证据推进：\n\n1. 从安装版 SimNIBS 4.6.0 shell 恢复 raw/prefit、b0/BET、raw WLS、correction branch、final WLS、T1 registration、post-mask、decomposition 与 QA 的真实顺序；\n2. 对 MCFLIRT、FLIRT/NEWIMAGE/APPLYWARP、TOPUP、EDDY、FNIRT、VECREG、FSLMATHS 和 DTIFIT 的 FSL 6.0.4 源码逐段核对；\n3. 追踪本地 producer→workflow runner→published tensor→conductivity/FEM 的实际组合与失败清理；\n4. 对普通 fixture 不敏感的分支构造同输入探针，并把 interior、boundary、support 和 downstream endpoint 分开计算。\n\nE1 静态疑点不进入最终问题数；只有 E2 双侧闭合或 E3 运行反例才编号。没有用“测试通过数”替代算法等价，也没有把合成小图误外推为真实 HCP 的误差幅度。"
+      },
+      {
+        "id": "flow-title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 主流程没有缺失整段，但四个算法节点仍不等价\n\n本地 DAG 的大顺序已经覆盖官方 raw→correction→final fit→T1 registration→post-mask→tensor decomposition；问题集中在若干关键节点的内部计算或输出合同。给定正确 warp 的 PPD 不能抵消错误 FNIRT warp，给定正确 corrected DWI 的 WLS 也不能抵消上游 b0/TOPUP/legacy 差异。"
+      },
+      {
+        "id": "flow-table-block",
+        "type": "table",
+        "tableId": "flow-map",
+        "layout": "full"
+      },
+      {
+        "id": "issue-046",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## D2C-030-046：raw-b0 MCFLIRT helper 仍不是官方 objective（P1，E3）\n\n**本地 \\`write_aligned_b0_mean\\` 先把全部 moving volume 预重采样到 stage grid，再把 coarse moving 交给优化器进行第二次插值。** \\`rigid.py:902-930\\` 构建 reference 和 moving 的共同 pyramid；FSL \\`mcflirt.cc:690,720\\` 只重采样 reference，\\`correct():427-445\\` 始终从原始 \\`timeseries[i]\\` 采样。非整数候选变换下，两者不是同一个 cost。\n\n该 helper 还没有 FSL \\`fix2D\\`：官方在薄层/小 z-FOV 下复制 reference 和 moving 的 z 层，并只优化 \\`Rz/Tx/Ty\\`（\\`mcflirt.cc:227-243,367-445\\`）；本地无此分支。最终输出又用 SciPy linear + \\`mode=nearest\\`（\\`rigid.py:973-980\\`），而官方 MCFLIRT 是 trilinear + \\`extraslice\\`。\n\n**同输入 A/B。** 公开 generator 的 33×31×29×5、2 mm b0 motion fixture，reference position 2：\n\n| 输出 | 指标 | 结果 |\n|---|---|---:|\n| aligned mean | relative L2 | 0.0021427371 |\n| aligned mean | max abs | 2.4753723 |\n| 4×4 matrices | relative L2 | 0.0418603842 |\n| 4×4 matrices | max abs | 0.17324809 |\n| 3-voxel edge band | relative L2 | 0.0037126145 |\n\n该值不等于“误差很小所以逻辑相同”；matrix 差异证明 optimizer trajectory 已分叉。正式调用覆盖 \\`nomoco.py:190\\`、\\`legacy.py:486\\`、\\`topup_eddy.py:89-105\\`、无 TOPUP 的 EDDY mask，以及 \\`workflow.py:823\\` raw QA，因此会传播到 BET mask、raw/final fit 或 QA。\n\n**为何上一轮没抓到。** 上一轮修复的是 legacy producer 内部 \\`_register_mcflirt_series\\`；这个独立 raw-b0 helper 没有复用该实现，现有测试只断言“配准后更好”，没有把正式 helper 与真实 MCFLIRT matrix+mean 作判别门禁。\n\n**修复/验收。** 复用 raw-moving cost 语义，同时补齐内部 reference 的正反传播、首级初始化、\\`fix2D\\` 双端复制/三参数限制和最终 trilinear+extraslice。新增 normal anisotropic、z-FOV 20/21/24 mm、首尾传播三组真实 MCFLIRT A/B；比较每级 cost、matrix、mean 和边缘 support，不能只保留终点宽容差。",
+        "sourceId": "audit-probes"
+      },
+      {
+        "id": "issue-047",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## D2C-030-047：一个 sinc 实现混用了三个不同官方合同（P1，E3）\n\n本地 \\`resampling.py:17-30,115-168\\` 只有 width-7 Hanning 窗，并在采样中心越出 \\`[0,n-1]\\` 时直接写零；但官方三个调用上下文并不相同：\n\n| 正式上下文 | 官方窗口 | 官方边界 | 当前本地 |\n|---|---|---|---|\n| MCFLIRT \\`-sinc_final\\` / legacy pass2 | NEWIMAGE 默认 Blackman width 7 | extraslice | Hanning + hard centre-zero |\n| FLIRT final non-GRE | Hanning width 7 | \\`-paddingsize 1\\` | interior 窗正确，边界错误 |\n| GRE \\`applywarp --interp=sinc\\` | NEWIMAGE 默认 Blackman width 7 | padding 0 + extraslice + valid mask | 窗和边界都错误 |\n\n官方证据分别位于 \\`mcflirt.cc:783-786\\`、\\`newimage.cc:573-581\\`、\\`flirt/globaloptions.h:296-299\\`、\\`flirt.cc:125-136\\`、\\`applywarp.cc:346-355,401-418\\`；SimNIBS shell 的 non-GRE/GRE 终点位于 \\`dwi2cond.functions.source.sh:282-297\\`。本地 \\`legacy.py:559-565,600-608\\` 和 \\`fieldmap.py:467-475\\` 都调用同一个泛化 \\`\"sinc\"\\`。\n\n**判别探针。** 17×16×15 float32 ramp+noise、affine diag(-2,2,2)、非整数平移 (0.73,-0.41,0.27)：\n\n- local vs FSL Hanning interior：relative L2 \\`5.2541e-7\\`，max abs \\`3.8147e-5\\`；证明本地 interior Hanning 实现本身接近正确。\n- local vs FSL Blackman interior：relative L2 \\`0.0555918\\`，max abs \\`4.72343\\`；证明窗口不能互换。\n- full local vs FSL Hanning：relative L2 \\`0.400183\\`，max abs \\`97.7376\\`；FSL 非零而 local 为零共 \\`720\\` voxels，首个差异 local=0、FSL=-40.8072；证明边界合同也不同。\n\n**影响。** legacy pass2 的临时 mean 会进入后续 MI registration，改变 \\`meanDWI2nodif\\` 和最终所有 volume/matrix；non-GRE 最终输出主要在边缘分叉；GRE applywarp 同时影响最终校正 DWI 和 mask/support，随后进入 final WLS/tensor。\n\n**修复/验收。** 不再用一个字符串代表所有 sinc：显式拆成 MCFLIRT Blackman/extraslice、FLIRT Hanning/padding1、APPLYWARP Blackman/padding0+valid-mask 三个策略。每个策略分别用 interior ramp、非零边框、大位移和正式 producer 端点与 FSL 比较。",
+        "sourceId": "audit-probes"
+      },
+      {
+        "id": "issue-048",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## D2C-030-048：TOPUP iout 没有清零 final joint mask 外输出（P1，E3）\n\nFSL \\`topup_costfunctions.cpp:1104-1127\\` 的 \\`WriteUnwarped\\` 在公共尺度恢复后获取 \\`_sm.GetMask(_field)\\`，把 mask 外所有 volume 精确置零；\\`topup.cpp:227-236\\` 用它写 \\`--iout\\`。本地 periodic cubic sampler 会为 invalid 坐标产生数值并单独记录 mask（\\`topup.py:329-425\\`），但 \\`topup.py:2593-2602\\` 恢复 scale 后直接返回 corrected scans，没有应用自己的 \\`final_state.joint_mask\\`。\n\n**同输入证据。** 16×14×12 nonzero-border forward/reverse PE pair，voxel size (2,2.2,2.5)，readout 0.05 s：\n\n- 本地 joint-mask invalid：840 spatial voxels / 1680 volume entries；\n- 本地 1680/1680 全部非零，max abs \\`196.34445\\`；\n- FSL 在重叠 invalid support 的 1678 entries 精确为零；另 2 entries 是 FSL/local mask 本身相差一个 voxel，不是 FSL 泄漏；\n- full relative L2 \\`0.301692\\`，限制到 local-valid support 后为 \\`0.0190905\\`；\n- 两侧 inferred support 只相差 3 spatial voxels，进一步说明全图大差异主要来自本地漏清零。\n\n\\`topup_eddy.py:22-36,122-125\\` 会直接取 corrected pair 第一卷进入 BET；官方也是 iout→ROI→BET。因此这不只是未消费的辅助输出，可能改变 brain mask、EDDY joint mask 和最终 tensor。\n\n**最小修复。** 保持 optimizer/objective 不动，在公共 scale 恢复后执行 \\`corrected_scans[final_state.joint_mask == 0, :] = 0\\`。验收必须同时检查：本地 mask-out exact zero、FSL/local support 边界、corrected-pair→BET mask；不能用 full relative L2 一个数混淆输出泄漏和三 voxel 的 mask trajectory 差异。",
+        "sourceId": "audit-probes"
+      },
+      {
+        "id": "issue-049",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## D2C-030-049：正行列式 NIfTI 的 FNIRT x 梯度方向相反（P1，E3）\n\n**这是本轮最明确、影响最大的计算错误。** 本地 \\`transforms.py:235-253\\` 对 positive-determinant neurological NIfTI 建立带 x 翻转的 FSL scaled-mm 网格；\\`fnirt.py:233-264\\` 也用 \\`moving_mm_to_voxel\\` 正确地让 +x mm displacement 映射到更小的 NumPy x 坐标。但 \\`fnirt.py:269-274\\` 仍无条件写成 \\`dx / positive_voxel_size\\`，漏掉链式法则中的负号。\n\n该错误导数进入 displacement gradient（\\`fnirt.py:926-980\\`）和 Gauss-Newton Hessian/cross blocks（\\`fnirt.py:1639-1669\\`）。FSL 在 \\`generalio.cc:266-306\\` 读入 neurological NIfTI 时实际翻转数据到内部 radiological order，再由 \\`fnirt_costfunctions.cpp:583-600,948-1063\\` 求导、除 voxel size并组装 gradient/Hessian，所以不会丢掉这个符号。\n\n**独立有限差分，排除优化器和小图退化。** 9×8×7 全支持线性斜坡，内部 60 voxels：\n\n| moving affine | analytic x mean | finite-difference mean | 同号比例 |\n|---|---:|---:|---:|\n| det=+8 | +1.5 | -1.50012958 | 0.0 |\n| det=-8 | +1.5 | +1.50012958 | 1.0 |\n\n正行列式解析导数不是当前 cost 的导数；这不是“FSL/NumPy optimizer 轨迹略有不同”。\n\n**24×23×22 真实 FSL endpoint。** 同一 positive-det 2 mm reference/moving、identity affine、官方 \\`--subsamp=8,4,2,2\\`，固定共同 support 9234 voxels，无强度映射 raw pull：\n\n| raw warp→reference | Identity | FSL | 本地 |\n|---|---:|---:|---:|\n| relative L2 | 0.255564 | 0.0224267 | 0.297108 |\n| normalized RMS | 34.455 | 5.112 | 39.961 |\n\n本地比不做 nonlinear warp 更差。local dense field vs FSL relative L2 \\`1.097753\\`、max \\`3.406145 mm\\`；Jacobian relative L2 \\`0.0390445\\`；两侧 raw warp relative L2 \\`0.307664\\`。\n\n**比较方向/单位已经验证。** 常量 +2 mm x relative field 的 FSL applywarp 与本地中心线均为 \\`[0,0,1,2,3,4,5]\\`、max difference 0；FSL field 由本地 applicator 重放也能复现 FSL iout。故 field 单位和 pull direction 不是假差来源，错误位于 optimizer 导数。\n\n**正式影响。** 默认 nonlinear pipeline 和 \\`register-t1-nonlinear\\` 都进入 \\`run_simnibs46_fnirt\\`；错误 coefficient/field 继续污染 registered FA、Jacobian、PPD tensor、FA/V1/valid mask、m2m tensor、conductivity、FEM 与 leadfield。\n\n**修复/验收。** 将 voxel-space 插值梯度完整链式转换到 scaled-mm displacement：\\`gradient_voxel @ moving_mm_to_voxel[:3,:3]\\`；当前对角合同下 x 分量等价于 \\`dx * moving_mm_to_voxel[0,0]\\`。新增正/负 determinant 三轴 gradient finite difference、xy/xz Hessian finite difference、24×23×22 FSL endpoint 和 nonlinear producer→PPD→conductivity composition。修完符号后仍必须重跑 A/B，不能直接宣布 FNIRT 全闭合。",
+        "sourceId": "audit-probes"
+      },
+      {
+        "id": "bounded-findings",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 三个受限边界问题需要修，但风险低于四个 P1\n\n### D2C-030-050：affine vecreg 的 -0.5 mask tie 不同（P2，E3）\n\n正式 rigid/affine T1 路径会用 \\`source_mask_mode=\"fsl-vecreg\"\\`。本地 \\`registration.py:164-176\\` 依赖 SciPy order-0 nearest；FSL \\`vecreg.cc:290-295\\` 用 \\`MISCMATHS::round\\`，而 \\`miscmaths.cc:467-476\\` 是 half-away-from-zero。在 source coordinate -0.5，SciPy 保留 voxel 0，FSL round 到 -1 后视为越界。\n\n7×6×5、world translation (-0.5,+0.5,0) 的真实 vecreg probe：FSL support 150、本地 180、XOR 30；共同 support tensor max abs \\`1.1921e-7\\`、relative L2 \\`2.4661e-8\\`。说明 PPD/插值在共同 support 对齐，差异只在精确 half-tie 平面。默认 nonlinear 模式不走此实现。修复应显式复现 FSL round-away-from-zero。\n\n### D2C-030-051：post-vecreg 自定义负 mask 的语义不同（P3，E3）\n\n本地 \\`nonlinear.py:476-486,506-510\\` 用 \\`mask != 0\\`；官方 shell 的 \\`fslmaths -mas\\` 在 \\`fslmaths.cc:471-475\\` 只保留正值 mask。5³ identity warp、中心 mask=-1 时，本地保留 \\`[3,0,0,2,0,1]\\`，FSL 全零。自动 CHARM brain mask 是 uint8 0/1，因此官方默认 pipeline 不受影响；只需把 post-mask 改为 \\`>0\\`，不要顺带改变 source/reference mask 的 \\`!=0\\` 合同。\n\n### D2C-030-052：FEM 失败 manifest 被 runner 删除，旧有效目录也先被清掉（P2，E3）\n\n\\`simulation.py:394-453\\` 会写包含 \\`failed_phase\\` 的 producer manifest；workflow 又把它声明为 stage output（\\`workflow.py:1105-1143\\`）。但 \\`pipeline.py:490-513\\` 在异常后删除声明输出，再写一个不含 producer phase 的通用 failed manifest。故障组合探针得到：\\`producer_failed_manifest_exists=False\\`、\\`pipeline_stage_manifest_exists=True\\`、\\`producer_failed_phase_preserved=False\\`。\n\n此外 \\`simulation.py:365-369\\` 在新 solve 开始前递归清掉该 mode 的旧目录；若新 solve 失败，last-known-good 结果也丢失。这不改变成功科学数组，也不是 SimNIBS 算法差异，但会破坏失败诊断和结果事务。建议 attempt-specific staging，成功后发布；失败时保留 producer manifest/phase，并保留旧有效目录。",
+        "sourceId": "audit-probes"
+      },
+      {
+        "id": "positive-findings",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 其余关键模块没有在本轮发现新的确定性错误\n\n- **EDDY 固定单壳主控制流已重新逐段对齐。** b0/DWI threshold/group、b0 五轮、interspersed-b0 movement interpolation、DWI 五轮、detect/temporary replace、GP ff=10、TOPUP offset separation、PEAS、final ff=1 repol、no-repol output restore、periodic cubic/Jacobian/joint mask 和 inverse-movement bvec 顺序均与 \\`eddy.cpp\\` 对应。冻结 fixture 记录 corrected DWI relative L2 \\`0.0015422\\`、outlier-free \\`0.000110918\\`、movement \\`0.01213\\`、EC9 \\`0.02463\\`、bvec \\`0.0007533\\`、outlier map exact；但本轮没有把冻结 JSON 冒充重新执行的真实 FSL endpoint。\n- **DTIFIT/WLS、grad-dev、tensor decomposition、给定正确 warp 的 PPD、\\`dir/vn/mc\\` conductivity** 在本轮源码复查与既有判别门禁中未出现新的确认问题。这里的正结论仅限已审计的 finite/fixed-subset 输入，不是任意输入 bitwise 声明。\n- **主 DAG 阶段顺序已基本恢复。** raw QA 位于 correction 前；final \\`-thr 0\\` 后 WLS；T1 linear/nonlinear vecreg 后执行 mandatory brain mask，再 tensor decomposition；m2m tensor 最终被 conductivity/FEM 消费。\n- **FNIRT 的 field application/PPD primitive 不是本轮根因。** 常量场和 cross-applicator 门禁通过；出错的是 positive-det optimizer derivative，所以下游即使忠实也会消费错误 warp。"
+      },
+      {
+        "id": "regression-evidence",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 643 项全绿仍没有覆盖这些判别分支\n\ntag snapshot 在显式配置全部本机可用 FSL reference 后：\n\n| 批次 | 结果 |\n|---|---:|\n| 主测试 | 631 passed in 199.13 s |\n| montage（\\`NUMBA_DISABLE_JIT=1\\`） | 12 passed in 2.96 s |\n| 合计 | 643 passed |\n\n全绿与四个 P1 并存，原因可定位：raw-b0 tests 只要求配准改善；sinc tests 没区分三个 caller context 和边界；TOPUP fixture 边缘接近零，full relative threshold 掩盖漏清零；FNIRT optimizer tests 使用负行列式 affine，正好绕开 x sign；workflow failure tests 没保留 producer failed manifest。\n\nSimNIBS 版本通过 distribution metadata 确认为 4.6.0。直接 import SimNIBS 在受限沙箱触发 MPI socket \\`Operation not permitted\\`，所以本轮没有声称完成真实 SimNIBS FEM solver run；该环境错误也没有归因到项目代码。FSL MCFLIRT/FLIRT/TOPUP/FNIRT/VECREG/FSLMATHS 探针均实际执行。",
+        "sourceId": "test-suite"
+      },
+      {
+        "id": "limitations",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 结论边界：问题已确认，真实被试误差幅度仍未量化\n\n本轮足以否定“v0.3.0 已完整同逻辑”和“只剩小问题”，但不支持以下过度外推：\n\n- 没有运行新的真实 HCP TOPUP→EDDY→FNIRT→conductivity→FEM 全链；24×23×22 FNIRT probe 证明方向错误，不代表真实 HCP 的误差幅度。\n- 没有证明 EDDY/FNIRT 在修复已知问题后对所有输入 bitwise 等价；优化器 tie、停止顺序、病态 LAPACK/GP 和任意 orientation 仍是证据边界。\n- 17³ FNIRT probe 的首级欠约束，故只用于辅助；正式定性依赖全支持有限差分和独立 24×23×22 endpoint。\n- \\`/tmp\\` 探针属于本轮临时证据。整改前应把最小 fixture、命令、期望指标和上述脚本 SHA-256 固化到 tests/fixtures 或正式 evidence 目录。\n- 本轮没有修改或重新发布 v0.3.0；是否替换 tag/Release 必须在问题整改和完整验收后由用户另行授权。"
+      },
+      {
+        "id": "recommendations",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 建议按“FNIRT→raw-b0→sinc→TOPUP→边界/事务”逐项整改\n\n1. **先修 D2C-030-049。** 只改 scaled-mm derivative chain，先通过正/负 determinant gradient/Hessian finite difference，再跑 24×23×22 FSL endpoint；随后用真实尺寸 nonlinear producer→PPD→conductivity A/B。不要同时重写 optimizer。\n2. **再修 D2C-030-046。** 把 raw-b0 helper 收敛到官方 raw-moving MCFLIRT cost/fix2D/output boundary；以 stage matrix、mean、edge support 和 20/21/24 mm 判别 gate 验收。\n3. **拆分 D2C-030-047 的三个 sinc 策略。** 每次只接一个 caller，先做内核/边界微型 A/B，再跑 legacy non-GRE 和 GRE 正式 producer。\n4. **修 D2C-030-048。** 只在 TOPUP public iout scale 后应用 final joint mask；把 corrected-pair→BET mask 加入真实组合测试。\n5. **最后处理 050/051/052。** 显式 half-away rounding；post-mask 改 \\`>0\\`；FEM 改 attempt staging 并保留失败 phase/旧有效结果。\n6. **全链复验后再决定发布动作。** 运行完整 explicit-FSL suite、producer→runner composition、正/负 orientation FNIRT、legacy/GRE、TOPUP→EDDY、真实 HCP nonlinear/cond/FEM；报告应绑定修复 commit。只有这些门禁关闭后，才能重新评估“与官方相同逻辑”的表述。"
+      },
+      {
+        "id": "further-questions",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## 修完后仍需回答的两个问题\n\n1. 在覆盖 neurological/radiological、轴置换和真实 HCP 尺寸后，FNIRT/EDDY 剩余 endpoint 差异是否仍能全部解释为浮点/优化器轨迹，而非新的控制流缺口？\n2. 在四个 P1 的判别 fixture 全部转为持续 FSL gate 后，真实 HCP fixed-subset producer→tensor→conductivity→FEM 的误差、mask Dice、方向角和最终场差异是否达到项目预先定义的验收阈值？\n\n在这两个问题有新的同输入证据前，应使用“已修复已知缺陷、在已测试 fixture 上对齐”的有限表述，而不是“任意输入完整等价”。"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-28T15:57:25+08:00",
+    "status": "ready",
+    "datasets": {
+      "severity_summary": [
+        {
+          "severity": "P0",
+          "confirmed_count": 0,
+          "rank": 0,
+          "scope": "普通全链灾难性错误",
+          "downstream_risk": "本轮未发现"
+        },
+        {
+          "severity": "P1",
+          "confirmed_count": 4,
+          "rank": 1,
+          "scope": "有效正式科学路径",
+          "downstream_risk": "可改变 mask、warp、tensor 或 conductivity/FEM 输入"
+        },
+        {
+          "severity": "P2",
+          "confirmed_count": 2,
+          "rank": 2,
+          "scope": "精确数值边界或失败事务",
+          "downstream_risk": "受限分支或可恢复性/诊断"
+        },
+        {
+          "severity": "P3",
+          "confirmed_count": 1,
+          "rank": 3,
+          "scope": "非默认异常自定义输入",
+          "downstream_risk": "自动官方 0/1 mask 不受影响"
+        }
+      ],
+      "finding_register": [
+        {
+          "id": "D2C-030-049",
+          "severity": "P1",
+          "evidence": "E3",
+          "title": "positive-det FNIRT x 梯度反号",
+          "trigger": "默认 nonlinear；moving affine det>0",
+          "impact": "warp→PPD tensor→conductivity/FEM",
+          "repair_order": 1
+        },
+        {
+          "id": "D2C-030-046",
+          "severity": "P1",
+          "evidence": "E3",
+          "title": "raw-b0 MCFLIRT moving 双插值、无 fix2D",
+          "trigger": "所有 raw 分支的 aligned b0 helper",
+          "impact": "BET/mask/raw-final fit/QA",
+          "repair_order": 2
+        },
+        {
+          "id": "D2C-030-047",
+          "severity": "P1",
+          "evidence": "E3",
+          "title": "MCFLIRT/FLIRT/APPLYWARP sinc 合同混用",
+          "trigger": "legacy pass2、non-GRE final、GRE final",
+          "impact": "MI trajectory、corrected DWI、tensor",
+          "repair_order": 3
+        },
+        {
+          "id": "D2C-030-048",
+          "severity": "P1",
+          "evidence": "E3",
+          "title": "TOPUP iout 未应用 final joint mask",
+          "trigger": "reverse-PE TOPUP",
+          "impact": "corrected b0→BET→EDDY mask/tensor",
+          "repair_order": 4
+        },
+        {
+          "id": "D2C-030-050",
+          "severity": "P2",
+          "evidence": "E3",
+          "title": "affine vecreg -0.5 mask rounding",
+          "trigger": "rigid/affine 且坐标精确落负半整数",
+          "impact": "边界 support；共同 support 数值一致",
+          "repair_order": 5
+        },
+        {
+          "id": "D2C-030-051",
+          "severity": "P3",
+          "evidence": "E3",
+          "title": "post-mask 负值按 !=0 而非 >0",
+          "trigger": "自定义含负值 output mask",
+          "impact": "单点/区域错误保留；自动 0/1 mask 不受影响",
+          "repair_order": 6
+        },
+        {
+          "id": "D2C-030-052",
+          "severity": "P2",
+          "evidence": "E3",
+          "title": "FEM producer 失败证据和旧有效目录不保留",
+          "trigger": "FEM stage 失败/重跑",
+          "impact": "诊断、可恢复性、last-known-good",
+          "repair_order": 7
+        }
+      ],
+      "flow_map": [
+        {
+          "order": 1,
+          "stage": "canonical raw + gradients",
+          "official_contract": "reorientation、bvals/bvecs、fixed single-shell boundary",
+          "current_result": "大顺序一致；未发现新问题",
+          "issue": "—"
+        },
+        {
+          "order": 2,
+          "stage": "exact b0→MCFLIRT→mean→BET",
+          "official_contract": "raw moving、fix2D、trilinear/extraslice",
+          "current_result": "内部计算不一致",
+          "issue": "046"
+        },
+        {
+          "order": 3,
+          "stage": "raw WLS FA/SSE QA",
+          "official_contract": "correction 前 DTIFIT WLS",
+          "current_result": "顺序已对齐；受 046 上游影响",
+          "issue": "046"
+        },
+        {
+          "order": 4,
+          "stage": "nomoco",
+          "official_contract": "不做 correction，保留正式 raw products",
+          "current_result": "主逻辑未见新问题；aligned b0 受影响",
+          "issue": "046"
+        },
+        {
+          "order": 5,
+          "stage": "legacy / GRE",
+          "official_contract": "MCFLIRT、MI、FLIRT/FUGUE/APPLYWARP",
+          "current_result": "sinc caller/boundary 不一致",
+          "issue": "046,047"
+        },
+        {
+          "order": 6,
+          "stage": "TOPUP→BET",
+          "official_contract": "iout mask 外 exact zero",
+          "current_result": "public corrected pair 漏清零",
+          "issue": "046,048"
+        },
+        {
+          "order": 7,
+          "stage": "EDDY",
+          "official_contract": "五轮 b0/DWI、PEAS、final repol、joint mask",
+          "current_result": "主控制流未发现新问题；不声明 bitwise",
+          "issue": "—"
+        },
+        {
+          "order": 8,
+          "stage": "thr0→final WLS tensor",
+          "official_contract": "校正后截零、DTIFIT --wls --sse --save_tensor",
+          "current_result": "本轮未发现新问题；会消费上游差异",
+          "issue": "046-048"
+        },
+        {
+          "order": 9,
+          "stage": "T1 rigid/affine vecreg",
+          "official_contract": "implicit mask、FSL half-away rounding",
+          "current_result": "精确 half-tie support 差异",
+          "issue": "050"
+        },
+        {
+          "order": 10,
+          "stage": "FNIRT→PPD→post-mask",
+          "official_contract": "scaled-mm derivative、warp、vecreg、positive mask",
+          "current_result": "positive-det gradient P1；negative custom mask P3",
+          "issue": "049,051"
+        },
+        {
+          "order": 11,
+          "stage": "conductivity→m2m→FEM",
+          "official_contract": "正确 tensor 下 dir/vn/mc；SimNIBS solver",
+          "current_result": "公式未见新问题；会消费错误 tensor；失败事务残留",
+          "issue": "049,052"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "local-source",
+      "label": "dwi2cond-xp v0.3.0 source snapshot at 3d899f4ee10cc44f254f92624c8527dbc4614a5d",
+      "path": "src/dwi2cond_xp"
+    },
+    {
+      "id": "simnibs-source",
+      "label": "SimNIBS 4.6.0 dwi2cond shell implementation",
+      "path": "references/SimNIBS-4.6.0/external/dwi2cond"
+    },
+    {
+      "id": "fsl-source",
+      "label": "FSL 6.0.4:ddd0a010 source and executable oracle",
+      "path": "references/FSL-6.0.4/src"
+    },
+    {
+      "id": "audit-probes",
+      "label": "2026-08-28 discriminative FSL/local audit findings and reviewed metrics",
+      "path": "docs/V0.3.0_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_ARTIFACT_2026-08-28.json"
+    },
+    {
+      "id": "test-suite",
+      "label": "v0.3.0 explicit-reference pytest suite: 631 main plus 12 montage tests",
+      "path": "tests"
+    },
+    {
+      "id": "severity-source",
+      "label": "Severity counts derived from the confirmed issue register",
+      "query": {
+        "engine": "SQLite",
+        "language": "SQL",
+        "sql": "WITH findings(issue_id, severity) AS (\n  VALUES\n    ('D2C-030-046', 'P1'),\n    ('D2C-030-047', 'P1'),\n    ('D2C-030-048', 'P1'),\n    ('D2C-030-049', 'P1'),\n    ('D2C-030-050', 'P2'),\n    ('D2C-030-051', 'P3'),\n    ('D2C-030-052', 'P2')\n), severity_order(severity, rank, scope, downstream_risk) AS (\n  VALUES\n    ('P0', 0, '普通全链灾难性错误', '本轮未发现'),\n    ('P1', 1, '有效正式科学路径', '可改变 mask、warp、tensor 或 conductivity/FEM 输入'),\n    ('P2', 2, '精确数值边界或失败事务', '受限分支或可恢复性/诊断'),\n    ('P3', 3, '非默认异常自定义输入', '自动官方 0/1 mask 不受影响')\n)\nSELECT s.severity,\n       COUNT(f.issue_id) AS confirmed_count,\n       s.rank,\n       s.scope,\n       s.downstream_risk\nFROM severity_order AS s\nLEFT JOIN findings AS f ON f.severity = s.severity\nGROUP BY s.severity, s.rank, s.scope, s.downstream_risk\nORDER BY s.rank",
+        "description": "Count the seven confirmed audit findings by ordered severity, retaining scope and downstream-risk context.",
+        "executed_at": "2026-08-28T15:57:25+08:00",
+        "filters": [
+          "Only E2/E3 confirmed findings from the 2026-08-28 audit"
+        ],
+        "metric_definitions": [
+          "confirmed_count = count of distinct numbered issue clusters at each severity"
+        ]
+      }
+    },
+    {
+      "id": "finding-source",
+      "label": "Confirmed issue register in remediation order",
+      "query": {
+        "engine": "SQLite",
+        "language": "SQL",
+        "sql": "WITH findings(id,severity,evidence,title,trigger,impact,repair_order) AS (\n  VALUES\n    ('D2C-030-049','P1','E3','positive-det FNIRT x 梯度反号','默认 nonlinear；moving affine det>0','warp→PPD tensor→conductivity/FEM',1),\n    ('D2C-030-046','P1','E3','raw-b0 MCFLIRT moving 双插值、无 fix2D','所有 raw 分支的 aligned b0 helper','BET/mask/raw-final fit/QA',2),\n    ('D2C-030-047','P1','E3','MCFLIRT/FLIRT/APPLYWARP sinc 合同混用','legacy pass2、non-GRE final、GRE final','MI trajectory、corrected DWI、tensor',3),\n    ('D2C-030-048','P1','E3','TOPUP iout 未应用 final joint mask','reverse-PE TOPUP','corrected b0→BET→EDDY mask/tensor',4),\n    ('D2C-030-050','P2','E3','affine vecreg -0.5 mask rounding','rigid/affine 且坐标精确落负半整数','边界 support；共同 support 数值一致',5),\n    ('D2C-030-051','P3','E3','post-mask 负值按 !=0 而非 >0','自定义含负值 output mask','单点/区域错误保留；自动 0/1 mask 不受影响',6),\n    ('D2C-030-052','P2','E3','FEM producer 失败证据和旧有效目录不保留','FEM stage 失败/重跑','诊断、可恢复性、last-known-good',7)\n)\nSELECT * FROM findings ORDER BY repair_order",
+        "description": "Materialize the reviewed seven-row audit issue register in the recommended remediation order.",
+        "executed_at": "2026-08-28T15:57:25+08:00",
+        "filters": [
+          "Only findings with completed source closure and a discriminative runtime result"
+        ]
+      }
+    },
+    {
+      "id": "flow-source",
+      "label": "Official-to-local workflow mapping reviewed on 2026-08-28",
+      "query": {
+        "engine": "SQLite",
+        "language": "SQL",
+        "sql": "WITH flow_map(\"order\",stage,official_contract,current_result,issue) AS (\n  VALUES\n    (1,'canonical raw + gradients','reorientation、bvals/bvecs、fixed single-shell boundary','大顺序一致；未发现新问题','—'),\n    (2,'exact b0→MCFLIRT→mean→BET','raw moving、fix2D、trilinear/extraslice','内部计算不一致','046'),\n    (3,'raw WLS FA/SSE QA','correction 前 DTIFIT WLS','顺序已对齐；受 046 上游影响','046'),\n    (4,'nomoco','不做 correction，保留正式 raw products','主逻辑未见新问题；aligned b0 受影响','046'),\n    (5,'legacy / GRE','MCFLIRT、MI、FLIRT/FUGUE/APPLYWARP','sinc caller/boundary 不一致','046,047'),\n    (6,'TOPUP→BET','iout mask 外 exact zero','public corrected pair 漏清零','046,048'),\n    (7,'EDDY','五轮 b0/DWI、PEAS、final repol、joint mask','主控制流未发现新问题；不声明 bitwise','—'),\n    (8,'thr0→final WLS tensor','校正后截零、DTIFIT --wls --sse --save_tensor','本轮未发现新问题；会消费上游差异','046-048'),\n    (9,'T1 rigid/affine vecreg','implicit mask、FSL half-away rounding','精确 half-tie support 差异','050'),\n    (10,'FNIRT→PPD→post-mask','scaled-mm derivative、warp、vecreg、positive mask','positive-det gradient P1；negative custom mask P3','049,051'),\n    (11,'conductivity→m2m→FEM','正确 tensor 下 dir/vn/mc；SimNIBS solver','公式未见新问题；会消费错误 tensor；失败事务残留','049,052')\n)\nSELECT * FROM flow_map ORDER BY \"order\"",
+        "description": "Materialize the ordered SimNIBS 4.6 workflow stages and the v0.3.0 audit verdict for each stage.",
+        "executed_at": "2026-08-28T15:57:25+08:00",
+        "filters": [
+          "Fixed SimNIBS 4.6.0 and FSL 6.0.4 subset"
+        ]
+      }
+    }
+  ]
+}

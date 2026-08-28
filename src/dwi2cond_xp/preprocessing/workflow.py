@@ -1140,6 +1140,7 @@ def run_dwi2cond_pipeline(
                     },
                     backend="simnibs-4.6.0",
                     implementation_version=version,
+                    preserve_outputs_on_attempt=True,
                 )
             )
             fem_dependencies.append(stage_name)

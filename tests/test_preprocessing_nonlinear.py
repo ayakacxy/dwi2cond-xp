@@ -7,6 +7,7 @@ from dataclasses import replace
 import nibabel as nib
 import numpy as np
 import pytest
+from scipy.ndimage import map_coordinates
 from scipy.sparse import csr_matrix, kron
 
 import dwi2cond_xp.preprocessing.fnirt as fnirt_module
@@ -54,6 +55,7 @@ FSL_VECREG = Path(os.environ.get("FSL_VECREG", "/path/not/configured/vecreg"))
 FSL_CONVERTWARP = Path(
     os.environ.get("FSL_CONVERTWARP", "/path/not/configured/convertwarp")
 )
+FSL_FNIRT = Path(os.environ.get("FSL_FNIRT", "/path/not/configured/fnirt"))
 
 
 def _diagonal_tensor(shape=(9, 8, 7)):
@@ -311,6 +313,251 @@ def test_fnirt_affine_pull_and_masks_have_explicit_contracts():
     assert not result.warped_moving_mask[0, 0, 0]
     assert not result.mask[0, 0, 0]
     assert not result.data_mask[-1, -1, -1]
+
+
+@pytest.mark.parametrize("x_scale", [2.0, -2.0])
+def test_fnirt_scaled_mm_derivatives_match_three_axis_finite_differences(x_scale):
+    shape = (9, 8, 7)
+    grid = np.indices(shape, dtype=np.float32)
+    moving = 10.0 + 3.0 * grid[0] + 2.0 * grid[1] + grid[2]
+    mask = np.ones(shape, dtype=bool)
+    level = FnirtLevelImages(
+        reference=moving.copy(),
+        moving=moving,
+        reference_mask=mask,
+        moving_mask=mask,
+        reference_voxel_sizes_mm=(2.0, 2.0, 2.0),
+    )
+    affine = np.diag((x_scale, 2.0, 2.0, 1.0))
+    zero = np.zeros(shape + (3,), dtype=np.float32)
+    analytic = warp_fnirt_moving(
+        level,
+        affine,
+        affine,
+        np.eye(4),
+        zero,
+        calculate_derivatives=True,
+    ).derivatives_per_mm
+    epsilon = np.float32(1.0e-3)
+    interior = (slice(1, -1), slice(1, -1), slice(1, -1))
+
+    for component in range(3):
+        positive = zero.copy()
+        negative = zero.copy()
+        positive[..., component] = epsilon
+        negative[..., component] = -epsilon
+        positive_values = warp_fnirt_moving(
+            level,
+            affine,
+            affine,
+            np.eye(4),
+            positive,
+            calculate_derivatives=False,
+        ).values
+        negative_values = warp_fnirt_moving(
+            level,
+            affine,
+            affine,
+            np.eye(4),
+            negative,
+            calculate_derivatives=False,
+        ).values
+        numeric = (positive_values - negative_values) / (2.0 * epsilon)
+        np.testing.assert_allclose(
+            analytic[interior + (component,)],
+            numeric[interior],
+            rtol=2.0e-3,
+            atol=2.0e-3,
+        )
+
+
+def test_fnirt_coefficients_are_mapped_from_internal_radiological_grid():
+    shape = (9, 8, 7)
+    spacing = (2, 2, 2)
+    rng = np.random.default_rng(61)
+    coefficients = rng.normal(
+        size=fsl_coefficient_shape(shape, spacing) + (3,)
+    )
+    radiological = expand_fnirt_coefficients(
+        coefficients,
+        shape,
+        np.diag((-2.0, 2.0, 2.0, 1.0)),
+        np.eye(4),
+        knot_spacing=spacing,
+    )
+    neurological = expand_fnirt_coefficients(
+        coefficients,
+        shape,
+        np.diag((2.0, 2.0, 2.0, 1.0)),
+        np.eye(4),
+        knot_spacing=spacing,
+    )
+
+    np.testing.assert_array_equal(
+        neurological.nonlinear_displacement,
+        np.flip(radiological.nonlinear_displacement, axis=0),
+    )
+    np.testing.assert_array_equal(
+        neurological.nonlinear_jacobian,
+        np.flip(radiological.nonlinear_jacobian, axis=0),
+    )
+
+
+def test_fnirt_canonicalizes_only_neurological_moving_grid(monkeypatch):
+    original = fnirt_module.run_simnibs46_fnirt
+    reference = np.arange(5 * 4 * 3, dtype=np.float32).reshape(5, 4, 3)
+    moving = reference + np.float32(10.0)
+    canonical = object()
+    captured = {}
+
+    def canonical_kernel(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return canonical
+
+    monkeypatch.setattr(fnirt_module, "run_simnibs46_fnirt", canonical_kernel)
+    result = original(
+        reference,
+        moving,
+        np.diag((-2.0, 2.0, 2.0, 1.0)),
+        np.diag((2.0, 2.0, 2.0, 1.0)),
+        np.eye(4),
+        moving_mask=np.ones_like(moving, dtype=np.uint8),
+    )
+
+    assert result is canonical
+    np.testing.assert_array_equal(captured["args"][0], reference)
+    np.testing.assert_array_equal(captured["args"][1], np.flip(moving, axis=0))
+    assert np.linalg.det(captured["args"][3][:3, :3]) < 0
+    np.testing.assert_array_equal(
+        captured["kwargs"]["moving_mask"],
+        np.ones_like(moving, dtype=np.uint8),
+    )
+
+
+@pytest.mark.skipif(not FSL_FNIRT.is_file(), reason="FSL FNIRT is unavailable")
+def test_positive_determinant_fnirt_endpoint_matches_real_fsl(tmp_path: Path):
+    shape = (24, 23, 22)
+    grid = np.indices(shape, dtype=np.float32)
+    normalized = [
+        (grid[axis] - np.float32((shape[axis] - 1) / 2.0))
+        / np.float32(shape[axis])
+        for axis in range(3)
+    ]
+    reference = (
+        np.float32(80.0)
+        + np.float32(35.0) * normalized[0]
+        - np.float32(20.0) * normalized[1]
+        + np.float32(15.0) * normalized[2]
+        + np.float32(140.0)
+        * np.exp(
+            -(
+                ((normalized[0] + np.float32(0.14)) / np.float32(0.12)) ** 2
+                + ((normalized[1] - np.float32(0.08)) / np.float32(0.15)) ** 2
+                + ((normalized[2] + np.float32(0.05)) / np.float32(0.11)) ** 2
+            )
+        )
+        + np.float32(95.0)
+        * np.exp(
+            -(
+                ((normalized[0] - np.float32(0.18)) / np.float32(0.10)) ** 2
+                + ((normalized[1] + np.float32(0.15)) / np.float32(0.12)) ** 2
+                + ((normalized[2] - np.float32(0.10)) / np.float32(0.14)) ** 2
+            )
+        )
+    ).astype(np.float32)
+    shift_x = (
+        np.float32(1.15)
+        * np.sin(
+            np.float32(2.0 * np.pi)
+            * (grid[1] / np.float32(shape[1] - 1))
+        )
+        * np.cos(
+            np.float32(np.pi) * (grid[2] / np.float32(shape[2] - 1))
+        )
+    )
+    moving = map_coordinates(
+        reference,
+        np.asarray([grid[0] + shift_x, grid[1], grid[2]], dtype=np.float32),
+        order=1,
+        mode="constant",
+        cval=0.0,
+        prefilter=False,
+    ).astype(np.float32)
+    affine = np.diag((2.0, 2.0, 2.0, 1.0))
+    reference_file = tmp_path / "reference.nii.gz"
+    moving_file = tmp_path / "moving.nii.gz"
+    affine_file = tmp_path / "identity.mat"
+    nib.save(nib.Nifti1Image(reference, affine), reference_file)
+    nib.save(nib.Nifti1Image(moving, affine), moving_file)
+    np.savetxt(affine_file, np.eye(4), fmt="%.17g")
+    environment = os.environ.copy()
+    environment["FSLDIR"] = str(FSL_FNIRT.parent.parent)
+    environment["FSLOUTPUTTYPE"] = "NIFTI_GZ"
+    subprocess.run(
+        [
+            str(FSL_FNIRT),
+            f"--in={moving_file}",
+            f"--ref={reference_file}",
+            f"--aff={affine_file}",
+            f"--cout={tmp_path / 'fsl_warp'}",
+            f"--fout={tmp_path / 'fsl_field'}",
+            f"--jout={tmp_path / 'fsl_jacobian'}",
+            f"--iout={tmp_path / 'fsl_iout'}",
+            f"--logout={tmp_path / 'fnirt.log'}",
+            "--subsamp=8,4,2,2",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    local = fnirt_module.run_simnibs46_fnirt(
+        reference,
+        moving,
+        affine,
+        affine,
+        np.eye(4),
+        workers=1,
+    )
+    level = FnirtLevelImages(
+        reference=reference,
+        moving=moving,
+        reference_mask=reference != 0,
+        moving_mask=moving != 0,
+        reference_voxel_sizes_mm=(2.0, 2.0, 2.0),
+    )
+    local_result = warp_fnirt_moving(
+        level,
+        affine,
+        affine,
+        np.eye(4),
+        local.expansion.displacement,
+        calculate_derivatives=False,
+    )
+    fsl_field = np.asarray(
+        nib.load(tmp_path / "fsl_field.nii.gz").dataobj, dtype=np.float32
+    )
+    fsl_result = warp_fnirt_moving(
+        level,
+        affine,
+        affine,
+        np.eye(4),
+        fsl_field,
+        calculate_derivatives=False,
+    )
+    common = local_result.mask & fsl_result.mask & (reference != 0)
+    local_to_fsl = np.linalg.norm(
+        (local_result.values[common] - fsl_result.values[common]).ravel()
+    ) / np.linalg.norm(fsl_result.values[common].ravel())
+    field_relative_l2 = np.linalg.norm(
+        (local.expansion.displacement - fsl_field).ravel()
+    ) / np.linalg.norm(fsl_field.ravel())
+
+    assert np.count_nonzero(common) > 9000
+    assert local_to_fsl < 0.005
+    assert field_relative_l2 < 0.25
+    assert np.max(np.abs(local.expansion.displacement - fsl_field)) < 1.2
 
 
 def test_fnirt_intensity_mapping_initializes_identity_polynomial():
@@ -1321,7 +1568,10 @@ def test_nonlinear_output_mask_matches_post_vecreg_source_order(tmp_path):
     assert not np.any(tensor[0])
     assert not np.any(valid[0])
     assert not np.any(fa[0])
-    assert np.any(tensor[1:])
+    assert not np.any(tensor[1])
+    assert not np.any(valid[1])
+    assert not np.any(fa[1])
+    assert np.any(tensor[2:])
     assert qa["output_mask_contract"].endswith("T1 brain mask")
     assert qa["jacobian_contract"] == "finite-difference complete displacement"
     assert qa["jacobian_determinant_min"] == 1.0

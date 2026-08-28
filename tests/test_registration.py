@@ -72,6 +72,39 @@ def test_identity_registration_writes_valid_mask_and_qa(tmp_path):
     assert progress[-1] == (8, 8)
 
 
+def test_fsl_vecreg_source_mask_rounds_negative_half_away_from_zero(tmp_path):
+    shape = (2, 2, 2)
+    tensor = np.zeros(shape + (6,), dtype=np.float32)
+    tensor[..., 0] = 3.0
+    tensor[..., 3] = 2.0
+    tensor[..., 5] = 1.0
+    tensor_file = tmp_path / "tensor.nii.gz"
+    reference_file = tmp_path / "reference.nii.gz"
+    output_file = tmp_path / "registered.nii.gz"
+    valid_file = tmp_path / "valid.nii.gz"
+    nib.save(nib.Nifti1Image(tensor, np.eye(4)), tensor_file)
+    nib.save(
+        nib.Nifti1Image(np.zeros(shape, dtype=np.float32), np.eye(4)),
+        reference_file,
+    )
+    transform = np.eye(4)
+    transform[0, 3] = 0.5
+
+    register_tensor_affine(
+        tensor_file,
+        reference_file,
+        output_file,
+        world_transform=transform,
+        source_mask_mode="fsl-vecreg",
+        output_valid_mask_file=valid_file,
+        interpolation_order=1,
+    )
+
+    valid = np.asarray(nib.load(valid_file).dataobj) != 0
+    assert not np.any(valid[0])
+    assert np.all(valid[1])
+
+
 def test_charm_brain_mask_uses_official_label_range(tmp_path):
     labels = np.array([[[0, 1, 499, 500, 1000]]], dtype=np.int16)
     affine = np.eye(4)

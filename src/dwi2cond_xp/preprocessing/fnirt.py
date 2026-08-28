@@ -182,7 +182,6 @@ def _warp_fnirt_fsl_order(
     inverse_affine_sampling: np.ndarray,
     moving_mm_to_voxel: np.ndarray,
     displacement: np.ndarray,
-    moving_voxel_sizes_mm: np.ndarray,
     calculate_derivatives: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Pull moving data, derivatives, and masks in FSL's voxel loop order."""
@@ -269,9 +268,27 @@ def _warp_fnirt_fsl_order(
                 if calculate_derivatives:
                     value, dx, dy, dz = _sample_trilinear_fsl(moving, c1, c2, c3)
                     values[x, y, z] = value
-                    derivatives[x, y, z, 0] = np.float32(dx / moving_voxel_sizes_mm[0])
-                    derivatives[x, y, z, 1] = np.float32(dy / moving_voxel_sizes_mm[1])
-                    derivatives[x, y, z, 2] = np.float32(dz / moving_voxel_sizes_mm[2])
+                    derivatives[x, y, z, 0] = np.float32(
+                        np.float32(
+                            np.float32(dx * moving_mm_to_voxel[0, 0])
+                            + np.float32(dy * moving_mm_to_voxel[1, 0])
+                        )
+                        + np.float32(dz * moving_mm_to_voxel[2, 0])
+                    )
+                    derivatives[x, y, z, 1] = np.float32(
+                        np.float32(
+                            np.float32(dx * moving_mm_to_voxel[0, 1])
+                            + np.float32(dy * moving_mm_to_voxel[1, 1])
+                        )
+                        + np.float32(dz * moving_mm_to_voxel[2, 1])
+                    )
+                    derivatives[x, y, z, 2] = np.float32(
+                        np.float32(
+                            np.float32(dx * moving_mm_to_voxel[0, 2])
+                            + np.float32(dy * moving_mm_to_voxel[1, 2])
+                        )
+                        + np.float32(dz * moving_mm_to_voxel[2, 2])
+                    )
                 else:
                     values[x, y, z] = _sample_trilinear_value_fsl(moving, c1, c2, c3)
                     derivatives[x, y, z, 0] = np.float32(0.0)
@@ -2349,6 +2366,88 @@ def run_simnibs46_fnirt(
     affine = _validate_affine(affine_matrix, "affine_matrix")
     if not isinstance(workers, (int, np.integer)) or workers < 1:
         raise ValueError("workers must be a positive integer")
+    reference_values = np.asarray(reference)
+    moving_values = np.asarray(moving)
+    reference_neurological = np.linalg.det(reference_transform[:3, :3]) > 0
+    moving_neurological = np.linalg.det(moving_transform[:3, :3]) > 0
+    if (
+        reference_values.ndim == 3
+        and moving_values.ndim == 3
+        and (reference_neurological or moving_neurological)
+    ):
+        reference_flip = np.eye(4, dtype=np.float64)
+        reference_flip[0, 0] = -1.0
+        reference_flip[0, 3] = reference_values.shape[0] - 1
+        moving_flip = np.eye(4, dtype=np.float64)
+        moving_flip[0, 0] = -1.0
+        moving_flip[0, 3] = moving_values.shape[0] - 1
+        canonical = run_simnibs46_fnirt(
+            (
+                np.flip(reference_values, axis=0).copy()
+                if reference_neurological
+                else reference_values
+            ),
+            (
+                np.flip(moving_values, axis=0).copy()
+                if moving_neurological
+                else moving_values
+            ),
+            (
+                reference_transform @ reference_flip
+                if reference_neurological
+                else reference_transform
+            ),
+            (
+                moving_transform @ moving_flip
+                if moving_neurological
+                else moving_transform
+            ),
+            affine,
+            reference_mask=(
+                None
+                if reference_mask is None
+                else (
+                    np.flip(np.asarray(reference_mask), axis=0).copy()
+                    if reference_neurological
+                    else reference_mask
+                )
+            ),
+            moving_mask=(
+                None
+                if moving_mask is None
+                else (
+                    np.flip(np.asarray(moving_mask), axis=0).copy()
+                    if moving_neurological
+                    else moving_mask
+                )
+            ),
+            workers=workers,
+            progress=progress,
+        )
+        if not reference_neurological:
+            return canonical
+        public_mapping = FnirtIntensityMapping(
+            global_coefficients=canonical.intensity_mapping.global_coefficients,
+            bias_coefficients=canonical.intensity_mapping.bias_coefficients,
+            bias_field=np.flip(
+                canonical.intensity_mapping.bias_field, axis=0
+            ).copy(),
+            bias_knot_spacing=canonical.intensity_mapping.bias_knot_spacing,
+        )
+        public_expansion = expand_fnirt_coefficients(
+            canonical.coefficients,
+            tuple(int(value) for value in reference_values.shape),
+            reference_transform,
+            affine,
+            knot_spacing=canonical.expansion.knot_spacing,
+        )
+        return FnirtRunResult(
+            coefficients=canonical.coefficients,
+            intensity_mapping=public_mapping,
+            expansion=public_expansion,
+            levels=canonical.levels,
+            jacobian_ranges=canonical.jacobian_ranges,
+        )
     prepared = prepare_fnirt_images(
         reference,
         moving,
@@ -2773,9 +2872,6 @@ def warp_fnirt_moving(
         np.linalg.inv(affine) @ reference_sampling, dtype=np.float32
     )
     moving_mm_to_voxel = np.asarray(np.linalg.inv(moving_sampling), dtype=np.float32)
-    moving_voxel_sizes = np.asarray(
-        np.linalg.norm(moving[:3, :3], axis=0), dtype=np.float32
-    )
     warped, coordinates, derivatives, data_mask, warped_mask, total_mask = (
         _warp_fnirt_fsl_order(
             np.asarray(level_images.moving, dtype=np.float32),
@@ -2784,7 +2880,6 @@ def warp_fnirt_moving(
             inverse_affine_sampling,
             moving_mm_to_voxel,
             displacement.astype(np.float32),
-            moving_voxel_sizes,
             calculate_derivatives,
         )
     )
@@ -3025,6 +3120,9 @@ def expand_fnirt_coefficients(
         else _expand_fnirt_coefficients_serial
     )
     nonlinear, nonlinear_jacobian = expand(values, *basis, *derivatives)
+    if np.linalg.det(reference[:3, :3]) > 0:
+        nonlinear = np.flip(nonlinear, axis=0).copy()
+        nonlinear_jacobian = np.flip(nonlinear_jacobian, axis=0).copy()
     nonlinear_jacobian /= np.asarray(voxel_sizes, dtype=np.float64)
     for axis in range(3):
         nonlinear_jacobian[..., axis, axis] += 1.0

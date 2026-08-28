@@ -1,11 +1,11 @@
 # Validation
 
-The final `v0.3.0` correctness gate completed with `617 passed, 13 skipped` in
-the ordinary local batch and `13,370/13,370` executable statements covered
-(`100.00%`). With the available FSL 6.0.4 references configured, the main batch
-completed with `627 passed, 3 skipped`; all `630/630` available reference probes
-passed after the separate FSLMATHS checks. Cross-platform CI enforces the same
-source, coverage, documentation, CLI, and package gates. A replacement tag is
+The final `v0.3.0` correctness gate completed with `641 passed, 5 skipped` in
+the FSL-configured main batch, `12 passed` in the montage batch, and
+`13,478/13,478` executable statements covered (`100.00%`). Real synthetic
+TOPUP, EDDY, and FNIRT CLI paths were included in the coverage union.
+Cross-platform CI enforces the same source, coverage, documentation, CLI, and
+package gates. A replacement tag is
 published only after main CI succeeds; the tag-triggered Release workflow then
 repeats the release gate before publishing assets, SBOM, and attestations.
 

@@ -5,19 +5,21 @@ versions follow semantic versioning.
 
 ## [Unreleased]
 
-### Changed
-
-- Simplified the public documentation set around the current contracts,
-  validation, benchmarks, and the final v0.3.0 independent re-audit/remediation
-  pair; removed superseded audit snapshots, completed planning documents, and
-  generated audit HTML/JSON artifacts.
-- Standardized public source comments, docstrings, CLI help, and error messages
-  on English.
+No unreleased changes.
 
 ## [0.3.0] - 2026-08-26
 
 ### Fixed
 
+- Closed the fresh independent re-audit findings (`4 P1 + 2 P2 + 1 P3`):
+  raw-moving MCFLIRT and thin-volume `fix2D`, caller-specific FLIRT/MCFLIRT/
+  APPLYWARP sinc semantics, TOPUP final-support zeroing, full-affine FNIRT
+  derivatives and neurological storage canonicalization, FSL half-away mask
+  rounding, positive nonlinear post-masking, and failure-atomic FEM retries.
+- Preserved producer failure manifests and last-known-good FEM outputs across
+  failed retries, including failures after publication but before final
+  artifact acceptance; runner manifests now retain the producer phase and
+  payload.
 - Closed the final-tag independent re-audit findings (`6 P1 + 9 P2/P3`): real
   producer JSON schemas, canonical nomoco publication, reference-only MCFLIRT
   pyramids/raw-moving sampling, first-level `fix2D`, complete scientific QA
@@ -107,6 +109,10 @@ versions follow semantic versioning.
 
 ### Changed
 
+- Simplified the public documentation set around the current contracts and
+  retained the fresh independent audit plus its issue-by-issue remediation.
+- Standardized public source comments, docstrings, CLI help, and error messages
+  while retaining language required by project-level contribution rules.
 - Replaced the original v0.3.0 release after the independent audit while
   retaining the version number. Claims now distinguish confirmed defect
   closure and frozen synthetic tolerances from whole-optimizer or real-subject

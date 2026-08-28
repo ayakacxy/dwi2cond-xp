@@ -2593,6 +2593,7 @@ def run_simnibs46_topup(
     corrected_scans = final_state.corrected_scans.copy()
     common_mean = np.mean(input_means, dtype=np.float64)
     corrected_scans *= np.float32(common_mean / 100.0)
+    corrected_scans[final_state.joint_mask == 0, :] = np.float32(0.0)
     return TopupRunResult(
         coefficients,
         field_hz,

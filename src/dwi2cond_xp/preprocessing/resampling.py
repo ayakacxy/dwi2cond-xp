@@ -11,26 +11,45 @@ from scipy.ndimage import map_coordinates
 from .transforms import invert_transform
 
 
-_INTERPOLATION_ORDER = {"nearest": 0, "linear": 1, "spline": 3, "sinc": -1}
+_INTERPOLATION_ORDER = {
+    "nearest": 0,
+    "linear": 1,
+    "spline": 3,
+    "sinc": -1,
+    "sinc-flirt": -1,
+    "sinc-mcflirt": -1,
+    "sinc-applywarp": -1,
+}
 
 
-def _fsl_hanning_sinc_table() -> np.ndarray:
+def _fsl_sinc_table(window_name: str) -> np.ndarray:
     positions = np.linspace(-3.0, 3.0, 1201, dtype=np.float32)
     sinc = np.empty(positions.shape, dtype=np.float32)
     near_zero = np.abs(positions) < np.float32(1e-7)
     sinc[near_zero] = 1.0 - np.abs(positions[near_zero])
     radians = np.float32(np.pi) * positions[~near_zero]
     sinc[~near_zero] = np.sin(radians) / radians
-    window = np.float32(0.5) + np.float32(0.5) * np.cos(
-        np.float32(np.pi) * positions / np.float32(3.0)
-    )
+    radians_window = np.float32(np.pi) * positions / np.float32(3.0)
+    if window_name == "hanning":
+        window = np.float32(0.5) + np.float32(0.5) * np.cos(radians_window)
+    elif window_name == "blackman":
+        window = (
+            np.float32(0.42)
+            + np.float32(0.5) * np.cos(radians_window)
+            + np.float32(0.08) * np.cos(np.float32(2.0) * radians_window)
+        )
+    else:
+        raise ValueError("window_name must be hanning or blackman")
     return sinc * window
 
 
-_FSL_HANNING_SINC = _fsl_hanning_sinc_table()
+_FSL_HANNING_SINC = _fsl_sinc_table("hanning")
+_FSL_BLACKMAN_SINC = _fsl_sinc_table("blackman")
 
 
-def _fsl_sinc_kernel_values(distance: np.ndarray) -> np.ndarray:
+def _fsl_sinc_kernel_values(
+    distance: np.ndarray, kernel: np.ndarray = _FSL_HANNING_SINC
+) -> np.ndarray:
     values = np.asarray(distance, dtype=np.float32)
     lookup = values / np.float32(3.0) * np.float32(600.0) + np.float32(601.0)
     lower = np.floor(lookup).astype(np.int64)
@@ -38,29 +57,34 @@ def _fsl_sinc_kernel_values(distance: np.ndarray) -> np.ndarray:
     valid = (lower >= 1) & (lower <= 1200)
     result = np.zeros(values.shape, dtype=np.float32)
     result[valid] = (
-        _FSL_HANNING_SINC[lower[valid] - 1] * (1.0 - fraction[valid])
-        + _FSL_HANNING_SINC[lower[valid]] * fraction[valid]
+        kernel[lower[valid] - 1] * (1.0 - fraction[valid])
+        + kernel[lower[valid]] * fraction[valid]
     )
     return result
 
 
 def _fsl_sinc_sample_reference(
-    source: np.ndarray, coordinates: np.ndarray, cval: float
+    source: np.ndarray,
+    coordinates: np.ndarray,
+    cval: float,
+    *,
+    kernel: np.ndarray = _FSL_HANNING_SINC,
+    padding: float = 0.0,
 ) -> np.ndarray:
-    """Run FLIRT width-7 Hanning sinc sampling with the vectorized reference kernel."""
+    """使用指定的 FSL width-7 sinc 窗函数执行向量化参考采样。"""
 
     base = np.floor(coordinates).astype(np.int64)
     convolution = np.zeros(coordinates.shape[1], dtype=np.float32)
     kernel_sum = np.zeros(coordinates.shape[1], dtype=np.float32)
-    center_valid = np.all(coordinates >= 0, axis=0) & np.all(
-        coordinates <= (np.asarray(source.shape) - 1)[:, None], axis=0
+    center_valid = np.all(coordinates >= -padding, axis=0) & np.all(
+        coordinates <= (np.asarray(source.shape) - 1 + padding)[:, None], axis=0
     )
     axis_weights = []
     for axis in range(3):
         weights = []
         for offset in range(-3, 4):
             distance = coordinates[axis] - (base[axis] + offset)
-            weights.append(_fsl_sinc_kernel_values(distance))
+            weights.append(_fsl_sinc_kernel_values(distance, kernel))
         axis_weights.append(weights)
     for z_offset in range(-3, 4):
         z_index = base[2] + z_offset
@@ -92,7 +116,7 @@ def _fsl_sinc_sample_reference(
 
 
 @njit(cache=True, nogil=True, inline="always")
-def _fsl_sinc_weight(distance: np.float32) -> np.float32:
+def _fsl_sinc_weight(distance: np.float32, kernel: np.ndarray) -> np.float32:
     """Return one sinc weight from FSL's 1,201-point lookup table."""
 
     lookup = np.float32(
@@ -105,14 +129,18 @@ def _fsl_sinc_weight(distance: np.float32) -> np.float32:
     # lookup value promotes the result to float64.
     fraction = float(lookup) - float(lower)
     return np.float32(
-        float(_FSL_HANNING_SINC[lower - 1]) * (1.0 - fraction)
-        + float(_FSL_HANNING_SINC[lower]) * fraction
+        float(kernel[lower - 1]) * (1.0 - fraction)
+        + float(kernel[lower]) * fraction
     )
 
 
 @njit(cache=True, nogil=True, parallel=True)
 def _fsl_sinc_sample_kernel(
-    source: np.ndarray, coordinates: np.ndarray, cval: np.float32
+    source: np.ndarray,
+    coordinates: np.ndarray,
+    cval: np.float32,
+    kernel: np.ndarray,
+    padding: np.float32,
 ) -> np.ndarray:
     """Parallelize output points while retaining the fixed z/y/x sum order per point."""
 
@@ -122,9 +150,9 @@ def _fsl_sinc_sample_kernel(
         ycoord = coordinates[1, position]
         zcoord = coordinates[2, position]
         if not (
-            0.0 <= xcoord <= source.shape[0] - 1
-            and 0.0 <= ycoord <= source.shape[1] - 1
-            and 0.0 <= zcoord <= source.shape[2] - 1
+            -padding <= xcoord <= source.shape[0] - 1 + padding
+            and -padding <= ycoord <= source.shape[1] - 1 + padding
+            and -padding <= zcoord <= source.shape[2] - 1 + padding
         ):
             continue
         xbase = int(np.floor(xcoord))
@@ -134,10 +162,10 @@ def _fsl_sinc_sample_kernel(
         kernel_sum = np.float32(0.0)
         for zoffset in range(-3, 4):
             zindex = zbase + zoffset
-            wz = _fsl_sinc_weight(np.float32(zcoord - zindex))
+            wz = _fsl_sinc_weight(np.float32(zcoord - zindex), kernel)
             for yoffset in range(-3, 4):
                 yindex = ybase + yoffset
-                wy = _fsl_sinc_weight(np.float32(ycoord - yindex))
+                wy = _fsl_sinc_weight(np.float32(ycoord - yindex), kernel)
                 yz_weight = np.float32(wy * wz)
                 for xoffset in range(-3, 4):
                     xindex = xbase + xoffset
@@ -146,7 +174,7 @@ def _fsl_sinc_sample_kernel(
                         and 0 <= yindex < source.shape[1]
                         and 0 <= zindex < source.shape[2]
                     ):
-                        wx = _fsl_sinc_weight(np.float32(xcoord - xindex))
+                        wx = _fsl_sinc_weight(np.float32(xcoord - xindex), kernel)
                         weight = np.float32(wx * yz_weight)
                         convolution = np.float32(
                             convolution
@@ -158,13 +186,22 @@ def _fsl_sinc_sample_kernel(
     return sampled
 
 
-def _fsl_sinc_sample(source: np.ndarray, coordinates: np.ndarray, cval: float) -> np.ndarray:
-    """Run FLIRT width-7 Hanning sinc sampling with the optimized kernel."""
+def _fsl_sinc_sample(
+    source: np.ndarray,
+    coordinates: np.ndarray,
+    cval: float,
+    *,
+    kernel: np.ndarray = _FSL_HANNING_SINC,
+    padding: float = 0.0,
+) -> np.ndarray:
+    """使用指定的 FSL width-7 sinc 窗函数执行优化采样。"""
 
     return _fsl_sinc_sample_kernel(
         np.asarray(source, dtype=np.float32),
         np.asarray(coordinates, dtype=np.float64),
         np.float32(cval),
+        np.asarray(kernel, dtype=np.float32),
+        np.float32(padding),
     )
 
 
@@ -228,8 +265,10 @@ def resample_image(
         raise ValueError("cval must be finite")
     if z_chunk <= 0:
         raise ValueError("z_chunk must be positive")
-    if linear_extrapolation not in ("partial", "constant", "fsl"):
-        raise ValueError("linear_extrapolation must be partial, constant, or fsl")
+    if linear_extrapolation not in ("partial", "constant", "fsl", "extraslice"):
+        raise ValueError(
+            "linear_extrapolation must be partial, constant, fsl, or extraslice"
+        )
     displacement = reference_to_moving_displacement
     if displacement is not None:
         displacement = np.asarray(displacement, dtype=np.float64)
@@ -285,7 +324,8 @@ def resample_image(
                         "grid-constant"
                         if order == 1 and linear_extrapolation == "partial"
                         else "nearest"
-                        if order == 1 and linear_extrapolation == "fsl"
+                        if order == 1
+                        and linear_extrapolation in ("fsl", "extraslice")
                         else "constant"
                     ),
                     cval=float(cval),
@@ -296,11 +336,32 @@ def resample_image(
                         coordinates > (np.asarray(source.shape) - 1)[:, None], axis=0
                     )
                     sampled[outside] = np.float32(cval)
+                elif order == 1 and linear_extrapolation == "extraslice":
+                    floors = np.floor(coordinates)
+                    outside = np.any(floors < -1, axis=0) | np.any(
+                        floors >= np.asarray(source.shape)[:, None], axis=0
+                    )
+                    sampled[outside] = np.float32(cval)
                 sampled = sampled.reshape(
                     target_shape[0], target_shape[1], z1 - z0
                 )
             else:
-                sampled = _fsl_sinc_sample(source, coordinates, cval).reshape(
+                if interpolation in ("sinc", "sinc-applywarp"):
+                    padding = 0.0
+                else:
+                    padding = 1.0
+                kernel = (
+                    _FSL_BLACKMAN_SINC
+                    if interpolation in ("sinc-mcflirt", "sinc-applywarp")
+                    else _FSL_HANNING_SINC
+                )
+                sampled = _fsl_sinc_sample(
+                    source,
+                    coordinates,
+                    cval,
+                    kernel=kernel,
+                    padding=padding,
+                ).reshape(
                     target_shape[0], target_shape[1], z1 - z0
                 )
             if values.ndim == 3:

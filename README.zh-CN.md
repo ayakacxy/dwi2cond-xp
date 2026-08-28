@@ -44,7 +44,7 @@
 | 合同 | 结果 | 证据边界 |
 | --- | ---: | --- |
 | SimNIBS 4.6 预处理子集 | **纯 Python · 运行时无 FSL** | `nomoco`、legacy、固定 GRE/TOPUP/EDDY、线性/FNIRT 配准和 PPD 张量重定向 |
-| Python 测试 | **100.00% statement coverage** | 13,204/13,204 条可执行语句，覆盖 618 个通过测试和真实合成 TOPUP/EDDY/FNIRT E2E |
+| Python 测试 | **100.00% statement coverage** | 13,478/13,478 条可执行语句，覆盖 653 个通过测试和真实合成 TOPUP/EDDY/FNIRT E2E |
 | DTI tensor 一致性 | **relative L2 4.18e-6** | 同一 HCP 输入、WLS 与 gradient-nonlinearity 合同，对照 FSL 6.0.4 |
 | 电导率一致性 | **max abs 0 至 2.22e-16** | synthetic mesh 对照 SimNIBS 4.6 的 `vn/dir/mc` |
 | 特定 montage FEM | **4/4 模式完成** | Pardiso 完成真实 `scalar/vn/dir/mc` C3→C4 仿真 |
@@ -360,8 +360,8 @@ panel 共用对称色标；切片只由 brain mask 最大面积决定，不根�
 预处理、配准、建模或 FEM。全电极 lead-field 接口和数据合同已支持并测试，但当前
 发布证据不包含真实被试的全电极完整运行。
 
-整改后复审的 v0.3.0 本地门禁为 `618 passed, 6 skipped`，全部 `13,204/13,204` 个可执行语句
-严格达到 `100.00%` 覆盖率；跨平台 CI 同样强制该门槛。只有外部 reference 或集成
+最终 v0.3.0 本地门禁为主批次 `641 passed, 5 skipped`、montage `12 passed`，全部
+`13,478/13,478` 个可执行语句严格达到 `100.00%` 覆盖率；跨平台 CI 同样强制该门槛。只有外部 reference 或集成
 前置条件不可用时才跳过对应可选测试。
 
 ## 🛣️ 后续路线图

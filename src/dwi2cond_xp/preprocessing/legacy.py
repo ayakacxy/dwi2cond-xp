@@ -283,7 +283,7 @@ def _resample_series(
         )
 
     items = list(enumerate(volumes))
-    if interpolation == "sinc":
+    if interpolation.startswith("sinc"):
         # The sinc kernel is already parallel over output points; keep the outer
         # volume loop sequential to avoid nested thread pools.
         set_available_numba_threads(workers)
@@ -560,7 +560,7 @@ def run_legacy_nifti(
         diffusion_volumes,
         image.affine,
         [pass2[int(index)] for index in diffusion_indices],
-        interpolation="sinc",
+        interpolation="sinc-mcflirt",
         workers=workers,
     )
     corrected_mean_pre_nodif = _float32_mean(
@@ -597,11 +597,14 @@ def run_legacy_nifti(
     if fieldmap_displacement_file is not None:
         displacement = _load_displacement(fieldmap_displacement_file, image)
     started = perf_counter()
+    final_interpolation = (
+        "sinc-applywarp" if displacement is not None else "sinc-flirt"
+    )
     corrected_volumes = _resample_series(
         volumes,
         image.affine,
         final_matrices,
-        interpolation="sinc",
+        interpolation=final_interpolation,
         workers=workers,
         displacement=displacement,
         progress=(None if progress is None else lambda done, total: progress("final_resample", done, total)),
@@ -675,9 +678,13 @@ def run_legacy_nifti(
         "fitting_input": input_strategy,
         "interpolation": {
             "formal_output_passes_per_volume": 1,
-            "formal_output_kernel": "fsl_hanning_sinc_width_7",
+            "formal_output_kernel": (
+                "fsl_blackman_sinc_width_7_applywarp"
+                if displacement is not None
+                else "fsl_hanning_sinc_width_7_flirt"
+            ),
             "pass1_mean_only": "trilinear",
-            "pass2_mean_only": "sinc",
+            "pass2_mean_only": "fsl_blackman_sinc_width_7_mcflirt",
             "fieldmap_composed_before_sampling": fieldmap_displacement_file is not None,
             "fieldmap_corrected_mask_for_fit": fieldmap_corrected_mask_file is not None,
             "fieldmap_input": "raw-radians-per-second" if raw_fieldmap else (

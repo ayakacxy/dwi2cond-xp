@@ -15,20 +15,77 @@ from dwi2cond_xp.preprocessing.resampling import (
 from dwi2cond_xp.preprocessing.transforms import fsl_matrix_to_world
 
 
+FSL_FLIRT = Path(os.environ.get("FSL_FLIRT", "/path/not/configured/flirt"))
+
+
+def test_fsl_sinc_table_rejects_unknown_window():
+    with pytest.raises(ValueError, match="hanning or blackman"):
+        resampling_module._fsl_sinc_table("unknown")
+
+
 def test_optimized_sinc_is_bitwise_equal_to_reference():
     rng = np.random.default_rng(42)
     source = rng.normal(size=(8, 7, 6)).astype(np.float32)
     coordinates = rng.uniform([-1, -1, -1], [8, 7, 6], size=(128, 3)).T
-    reference = resampling_module._fsl_sinc_sample_reference(
-        source, coordinates, -2.0
-    )
-    optimized = resampling_module._fsl_sinc_sample(source, coordinates, -2.0)
-    np.testing.assert_array_equal(optimized, reference)
+    for kernel in (
+        resampling_module._FSL_HANNING_SINC,
+        resampling_module._FSL_BLACKMAN_SINC,
+    ):
+        for padding in (0.0, 1.0):
+            reference = resampling_module._fsl_sinc_sample_reference(
+                source,
+                coordinates,
+                -2.0,
+                kernel=kernel,
+                padding=padding,
+            )
+            optimized = resampling_module._fsl_sinc_sample(
+                source,
+                coordinates,
+                -2.0,
+                kernel=kernel,
+                padding=padding,
+            )
+            np.testing.assert_array_equal(optimized, reference)
     weights = resampling_module._fsl_sinc_kernel_values(
         np.array([-4.0, 0.0, 4.0], dtype=np.float32)
     )
     np.testing.assert_array_equal(weights[[0, 2]], 0.0)
     assert weights[1] == 1.0
+
+
+def test_caller_specific_sinc_strategies_separate_window_and_padding():
+    rng = np.random.default_rng(7)
+    source = rng.normal(size=(9, 8, 7)).astype(np.float32)
+    coordinates = np.asarray(
+        [[4.37, -0.5], [3.29, 3.0], [2.61, 2.0]], dtype=np.float64
+    )
+    hanning = resampling_module._fsl_sinc_sample(
+        source,
+        coordinates,
+        -9.0,
+        kernel=resampling_module._FSL_HANNING_SINC,
+        padding=1.0,
+    )
+    blackman = resampling_module._fsl_sinc_sample(
+        source,
+        coordinates,
+        -9.0,
+        kernel=resampling_module._FSL_BLACKMAN_SINC,
+        padding=1.0,
+    )
+    applywarp = resampling_module._fsl_sinc_sample(
+        source,
+        coordinates,
+        -9.0,
+        kernel=resampling_module._FSL_BLACKMAN_SINC,
+        padding=0.0,
+    )
+
+    assert hanning[0] != blackman[0]
+    assert hanning[1] != -9.0
+    assert blackman[1] != -9.0
+    assert applywarp[1] == -9.0
 
 
 def test_output_to_input_matrix_and_identity_resampling():
@@ -37,11 +94,96 @@ def test_output_to_input_matrix_and_identity_resampling():
         output_to_input_voxel_matrix(affine, affine, np.eye(4)), np.eye(4)
     )
     image = np.arange(4 * 5 * 6, dtype=np.float32).reshape(4, 5, 6)
-    for interpolation in ("nearest", "linear", "spline", "sinc"):
+    for interpolation in (
+        "nearest",
+        "linear",
+        "spline",
+        "sinc",
+        "sinc-flirt",
+        "sinc-mcflirt",
+        "sinc-applywarp",
+    ):
         actual = resample_image(
             image, affine, image.shape, affine, np.eye(4), interpolation=interpolation, z_chunk=2
         )
         np.testing.assert_allclose(actual, image, atol=2e-5)
+
+
+@pytest.mark.skipif(not FSL_FLIRT.is_file(), reason="FSL FLIRT is unavailable")
+@pytest.mark.parametrize(
+    ("window", "interpolation"),
+    (("hanning", "sinc-flirt"), ("blackman", "sinc-mcflirt")),
+)
+def test_caller_specific_sinc_matches_real_fsl_flirt(
+    tmp_path: Path, window: str, interpolation: str
+) -> None:
+    shape = (17, 16, 15)
+    rng = np.random.default_rng(19)
+    grid = np.indices(shape, dtype=np.float32)
+    source = (
+        30.0 * grid[0]
+        - 4.0 * grid[1]
+        + 2.0 * grid[2]
+        + rng.normal(scale=5.0, size=shape)
+    ).astype(np.float32)
+    affine = np.diag((-2.0, 2.0, 2.0, 1.0))
+    affine[0, 3] = 32.0
+    input_file = tmp_path / "input.nii.gz"
+    reference_file = tmp_path / "reference.nii.gz"
+    matrix_file = tmp_path / "transform.mat"
+    output_file = tmp_path / f"fsl-{window}.nii.gz"
+    nib.save(nib.Nifti1Image(source, affine), input_file)
+    nib.save(
+        nib.Nifti1Image(np.zeros(shape, dtype=np.float32), affine),
+        reference_file,
+    )
+    matrix = np.eye(4)
+    matrix[:3, 3] = (1.46, -0.82, 0.54)
+    np.savetxt(matrix_file, matrix, fmt="%.17g")
+    environment = os.environ.copy()
+    environment["FSLDIR"] = str(FSL_FLIRT.parent.parent)
+    environment["FSLOUTPUTTYPE"] = "NIFTI_GZ"
+    subprocess.run(
+        [
+            str(FSL_FLIRT),
+            "-in",
+            str(input_file),
+            "-ref",
+            str(reference_file),
+            "-out",
+            str(output_file),
+            "-applyxfm",
+            "-init",
+            str(matrix_file),
+            "-interp",
+            "sinc",
+            "-sincwidth",
+            "7",
+            "-sincwindow",
+            window,
+            "-paddingsize",
+            "1",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    world = fsl_matrix_to_world(matrix, shape, affine, shape, affine)
+    actual = resample_image(
+        source,
+        affine,
+        shape,
+        affine,
+        world,
+        interpolation=interpolation,
+    )
+    expected = np.asarray(nib.load(output_file).dataobj, dtype=np.float32)
+    relative_l2 = np.linalg.norm((actual - expected).ravel()) / np.linalg.norm(
+        expected.ravel()
+    )
+    assert relative_l2 < 2.0e-6
+    assert np.max(np.abs(actual - expected)) < 1.0e-3
 
 
 def test_affine_displacement_and_channel_resampling():
@@ -191,7 +333,10 @@ def test_mask_is_binary_and_nearest_only():
         ({"cval": np.inf}, "cval must be finite"),
         ({"z_chunk": 0}, "z_chunk must be positive"),
         ({"reference_to_moving_displacement": np.zeros((2, 2, 2, 2))}, "match the reference"),
-        ({"linear_extrapolation": "nearest"}, "partial, constant, or fsl"),
+        (
+            {"linear_extrapolation": "nearest"},
+            "partial, constant, fsl, or extraslice",
+        ),
     ],
 )
 def test_resampling_validation(kwargs, message):

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 from pathlib import Path
 import shutil
 from typing import Any
+from uuid import uuid4
 
 import nibabel as nib
 import numpy as np
@@ -249,6 +251,26 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _rebase_path_strings(value: Any, source: Path, destination: Path) -> Any:
+    """将 attempt 目录中的路径重写为正式发布目录。"""
+
+    if isinstance(value, dict):
+        return {
+            str(key): _rebase_path_strings(item, source, destination)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_rebase_path_strings(item, source, destination) for item in value]
+    if isinstance(value, str):
+        source_prefix = str(source.resolve())
+        destination_prefix = str(destination.resolve())
+        if value == source_prefix:
+            return destination_prefix
+        if value.startswith(source_prefix + os.sep):
+            return destination_prefix + value[len(source_prefix) :]
+    return value
+
+
 def _sha256_file(path: Path) -> str:
     """Hash one simulation artifact without loading it into memory."""
 
@@ -364,10 +386,19 @@ def run_tdcs(
     contract = validate_simulation_inputs(subpath, mode=mode, tensor_file=tensor_file)
     root = Path(output_root).resolve()
     output_directory = root / "dry-run" / mode if dry_run else root / mode
-    if output_directory.exists():
-        shutil.rmtree(output_directory)
-    output_directory.mkdir(parents=True, exist_ok=True)
-    manifest_path = output_directory / "dwi2cond_xp_simulation.json"
+    attempt_id = uuid4().hex
+    attempt_directory = output_directory.with_name(
+        f".{output_directory.name}.attempt-{attempt_id}"
+    )
+    failure_directory = output_directory.with_name(
+        f".{output_directory.name}.failed-{attempt_id}"
+    )
+    backup_directory = output_directory.with_name(
+        f".{output_directory.name}.previous-{attempt_id}"
+    )
+    attempt_directory.mkdir(parents=True, exist_ok=False)
+    active_directory = attempt_directory
+    manifest_path = active_directory / "dwi2cond_xp_simulation.json"
     manifest: dict[str, Any] = {
         "schema_version": 1,
         "status": "planned" if dry_run else "running",
@@ -386,7 +417,9 @@ def run_tdcs(
         "volume_tissues": list(volume_tissues),
         "map_to_subject_volume": True,
         "cpus": cpus,
-        "output_directory": str(output_directory),
+        "output_directory": str(attempt_directory),
+        "attempt_id": attempt_id,
+        "attempt_directory": str(attempt_directory),
         "outputs": [],
         "masked_subject_volumes": [],
         "artifacts": [],
@@ -394,47 +427,46 @@ def run_tdcs(
     phase = "write_initial_manifest"
     try:
         _write_manifest(manifest_path, manifest)
-        if dry_run:
-            return manifest
-        phase = "build_session"
-        session = build_tdcs_session(
-            contract,
-            output_directory,
-            anode=anode,
-            cathode=cathode,
-            current_ma=current_ma,
-            shape=shape,
-            dimensions=dimensions,
-            thickness=thickness,
-            fields=fields,
-            solver=solver,
-            volume_tissues=volume_tissues,
-        )
-        phase = "solve"
-        from simnibs import run_simnibs
+        if not dry_run:
+            phase = "build_session"
+            session = build_tdcs_session(
+                contract,
+                attempt_directory,
+                anode=anode,
+                cathode=cathode,
+                current_ma=current_ma,
+                shape=shape,
+                dimensions=dimensions,
+                thickness=thickness,
+                fields=fields,
+                solver=solver,
+                volume_tissues=volume_tissues,
+            )
+            phase = "solve"
+            from simnibs import run_simnibs
 
-        outputs = run_simnibs(session, cpus=cpus)
-        phase = "postprocess_subject_volumes"
-        masked_subject_volumes = mask_subject_volume_outputs(
-            output_directory,
-            contract["final_tissues"],
-            volume_tissues,
-        )
-        if not masked_subject_volumes:
-            raise ValueError("SimNIBS produced no subject-volume output")
-        phase = "inventory_outputs"
-        artifacts = inventory_simulation_outputs(
-            output_directory, manifest_path=manifest_path
-        )
-        phase = "serialize_outputs"
-        safe_outputs = _json_safe(outputs)
-        phase = "write_completed_manifest"
-        manifest["status"] = "completed"
-        manifest["outputs"] = safe_outputs
-        manifest["masked_subject_volumes"] = masked_subject_volumes
-        manifest["artifacts"] = artifacts
-        _write_manifest(manifest_path, manifest)
-        phase = "validate_completed_manifest"
+            outputs = run_simnibs(session, cpus=cpus)
+            phase = "postprocess_subject_volumes"
+            masked_subject_volumes = mask_subject_volume_outputs(
+                attempt_directory,
+                contract["final_tissues"],
+                volume_tissues,
+            )
+            if not masked_subject_volumes:
+                raise ValueError("SimNIBS produced no subject-volume output")
+            phase = "inventory_outputs"
+            artifacts = inventory_simulation_outputs(
+                attempt_directory, manifest_path=manifest_path
+            )
+            phase = "serialize_outputs"
+            safe_outputs = _json_safe(outputs)
+            phase = "write_completed_manifest"
+            manifest["status"] = "completed"
+            manifest["outputs"] = safe_outputs
+            manifest["masked_subject_volumes"] = masked_subject_volumes
+            manifest["artifacts"] = artifacts
+            _write_manifest(manifest_path, manifest)
+        phase = "validate_attempt_manifest"
         from .preprocessing.pipeline import ArtifactContract, validate_artifacts
 
         validate_artifacts(
@@ -444,11 +476,47 @@ def run_tdcs(
                 ),
             )
         )
+        phase = "rebase_published_paths"
+        manifest = _rebase_path_strings(
+            manifest, attempt_directory, output_directory
+        )
+        _write_manifest(manifest_path, manifest)
+        phase = "publish_attempt"
+        if output_directory.exists():
+            output_directory.replace(backup_directory)
+        attempt_directory.replace(output_directory)
+        active_directory = output_directory
+        manifest_path = output_directory / "dwi2cond_xp_simulation.json"
+        phase = "validate_published_manifest"
+        validate_artifacts(
+            (
+                ArtifactContract(
+                    manifest_path, "json", dynamic_inventory=True
+                ),
+            )
+        )
+        phase = "remove_previous_output"
+        if backup_directory.exists():
+            shutil.rmtree(backup_directory)
     except Exception as exc:
+        failed_source_directory = active_directory
+        if active_directory.exists():
+            active_directory.replace(failure_directory)
+        if backup_directory.exists() and not output_directory.exists():
+            backup_directory.replace(output_directory)
+        manifest = _rebase_path_strings(
+            manifest, failed_source_directory, failure_directory
+        )
+        manifest_path = failure_directory / "dwi2cond_xp_simulation.json"
+        manifest["output_directory"] = str(failure_directory)
         manifest["status"] = "failed"
         manifest["failed_phase"] = phase
         manifest["error_type"] = type(exc).__name__
         manifest["error"] = str(exc)
+        manifest["failed_attempt_directory"] = str(failure_directory)
+        manifest["failure_manifest"] = str(manifest_path)
         _write_manifest(manifest_path, manifest)
+        setattr(exc, "dwi2cond_xp_failure_manifest", str(manifest_path))
+        setattr(exc, "dwi2cond_xp_failed_phase", phase)
         raise
     return manifest

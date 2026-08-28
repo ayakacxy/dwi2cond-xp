@@ -792,14 +792,19 @@ def test_topup_runner_rejects_an_optimizer_that_does_not_publish_final_state(
 
 def test_topup_restores_one_common_arithmetic_mean_scale(monkeypatch) -> None:
     class IdentityObjective:
+        mask_first_plane = False
+
         def __init__(self, scans, *_args, **_kwargs):
             self.scans = np.asarray(scans)
             self._state = None
 
         def cost(self, _parameters):
+            joint_mask = np.ones(self.scans.shape[:3], dtype=np.uint8)
+            if self.mask_first_plane:
+                joint_mask[0] = 0
             self._state = SimpleNamespace(
                 corrected_scans=self.scans.copy(),
-                joint_mask=np.ones(self.scans.shape[:3], dtype=np.uint8),
+                joint_mask=joint_mask,
             )
             return 0.0
 
@@ -842,6 +847,12 @@ def test_topup_restores_one_common_arithmetic_mean_scale(monkeypatch) -> None:
 
     np.testing.assert_array_equal(result.corrected_scans[..., 0], 20.0)
     np.testing.assert_array_equal(result.corrected_scans[..., 1], 20.0)
+
+    IdentityObjective.mask_first_plane = True
+    masked = topup.run_simnibs46_topup(scans, rows, (1.0, 1.0, 1.0))
+    np.testing.assert_array_equal(masked.corrected_scans[0], 0.0)
+    np.testing.assert_array_equal(masked.corrected_scans[1:], 20.0)
+    IdentityObjective.mask_first_plane = False
 
     adversarial = np.ones((10, 1, 1, 2), dtype=np.float32)
     adversarial[0, 0, 0, 0] = np.float32(1.0e8)
@@ -911,9 +922,14 @@ def test_unequal_mean_corrected_pair_matches_real_fsl_common_scale(tmp_path) -> 
         text=True,
         env=environment,
     )
-    ours = topup.run_simnibs46_topup(scans, rows, voxel_sizes).corrected_scans
+    result = topup.run_simnibs46_topup(scans, rows, voxel_sizes)
+    ours = result.corrected_scans
     reference = np.asarray(nib.load(fsl_corrected).dataobj)
-    common = np.all(np.isfinite(ours), axis=-1) & np.all(np.isfinite(reference), axis=-1)
+    common = (
+        result.joint_mask.astype(bool)
+        & np.all(np.isfinite(ours), axis=-1)
+        & np.all(np.isfinite(reference), axis=-1)
+    )
     relative_l2 = np.linalg.norm((ours[common] - reference[common]).ravel()) / np.linalg.norm(
         reference[common].ravel()
     )
@@ -924,3 +940,4 @@ def test_unequal_mean_corrected_pair_matches_real_fsl_common_scale(tmp_path) -> 
     assert ours_means[1] / ours_means[0] == pytest.approx(
         fsl_means[1] / fsl_means[0], rel=5e-4
     )
+    assert not np.any(ours[~result.joint_mask.astype(bool)])

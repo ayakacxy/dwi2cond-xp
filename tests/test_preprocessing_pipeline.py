@@ -582,6 +582,48 @@ def test_pipeline_dependency_and_failure_manifest_are_explicit(tmp_path: Path) -
         PipelineRunner(tmp_path / "other").run((dependent,))
 
 
+def test_pipeline_preserves_producer_failure_manifest_and_phase(tmp_path: Path) -> None:
+    source = tmp_path / "input.txt"
+    source.write_text("source\n", encoding="utf-8")
+    producer_manifest = tmp_path / "producer.json"
+
+    def action() -> None:
+        producer_manifest.write_text(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "failed_phase": "solve",
+                    "artifacts": [],
+                    "output_directory": str(tmp_path),
+                }
+            ),
+            encoding="utf-8",
+        )
+        error = RuntimeError("producer failed")
+        error.dwi2cond_xp_failure_manifest = str(producer_manifest)
+        error.dwi2cond_xp_failed_phase = "solve"
+        raise error
+
+    stage = StageDefinition(
+        "producer",
+        action,
+        inputs=(source,),
+        outputs=(ArtifactContract(producer_manifest, "json"),),
+        preserve_outputs_on_attempt=True,
+    )
+    manifest_directory = tmp_path / "manifests"
+    with pytest.raises(RuntimeError, match="producer failed"):
+        PipelineRunner(manifest_directory).run((stage,))
+
+    assert producer_manifest.is_file()
+    runner_manifest = json.loads(
+        (manifest_directory / "producer.json").read_text(encoding="utf-8")
+    )
+    assert runner_manifest["failed_phase"] == "solve"
+    assert runner_manifest["producer_failure"]["failed_phase"] == "solve"
+    assert runner_manifest["producer_failure_manifest"] == str(producer_manifest)
+
+
 def test_final_numerical_validation_is_separate_from_cache_structure_check(
     tmp_path: Path,
 ) -> None:

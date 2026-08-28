@@ -419,10 +419,10 @@ def test_run_tdcs_records_solver_failure(monkeypatch, tmp_path: Path) -> None:
         raise RuntimeError("FEM failed")
 
     _install_simnibs(monkeypatch, runner=runner)
-    with pytest.raises(RuntimeError, match="FEM failed"):
+    with pytest.raises(RuntimeError, match="FEM failed") as caught:
         run_tdcs(subpath, tmp_path / "out", mode="scalar")
     manifest = json.loads(
-        (tmp_path / "out/scalar/dwi2cond_xp_simulation.json").read_text()
+        Path(caught.value.dwi2cond_xp_failure_manifest).read_text()
     )
     assert manifest["status"] == "failed"
     assert manifest["error_type"] == "RuntimeError"
@@ -438,10 +438,10 @@ def test_run_tdcs_records_build_and_postprocess_failures(monkeypatch, tmp_path: 
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad montage")),
     )
     build_root = tmp_path / "build_failure"
-    with pytest.raises(ValueError, match="bad montage"):
+    with pytest.raises(ValueError, match="bad montage") as caught:
         run_tdcs(subpath, build_root, mode="scalar")
     build_manifest = json.loads(
-        (build_root / "scalar/dwi2cond_xp_simulation.json").read_text()
+        Path(caught.value.dwi2cond_xp_failure_manifest).read_text()
     )
     assert build_manifest["status"] == "failed"
     assert build_manifest["failed_phase"] == "build_session"
@@ -460,10 +460,10 @@ def test_run_tdcs_records_build_and_postprocess_failures(monkeypatch, tmp_path: 
 
     _install_simnibs(monkeypatch, runner=runner)
     post_root = tmp_path / "post_failure"
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(ValueError, match="does not match") as caught:
         run_tdcs(subpath, post_root, mode="scalar")
     post_manifest = json.loads(
-        (post_root / "scalar/dwi2cond_xp_simulation.json").read_text()
+        Path(caught.value.dwi2cond_xp_failure_manifest).read_text()
     )
     assert post_manifest["status"] == "failed"
     assert post_manifest["failed_phase"] == "postprocess_subject_volumes"
@@ -514,10 +514,107 @@ def test_run_tdcs_records_completed_manifest_serialization_failure(
         original_write(path, payload)
 
     monkeypatch.setattr(simulation, "_write_manifest", fail_completed)
-    with pytest.raises(OSError, match="completed manifest"):
+    with pytest.raises(OSError, match="completed manifest") as caught:
         run_tdcs(subpath, tmp_path / "out", mode="scalar")
     manifest = json.loads(
-        (tmp_path / "out/scalar/dwi2cond_xp_simulation.json").read_text()
+        Path(caught.value.dwi2cond_xp_failure_manifest).read_text()
     )
     assert manifest["status"] == "failed"
     assert manifest["failed_phase"] == "write_completed_manifest"
+
+
+def test_run_tdcs_failed_retry_preserves_last_completed_output(
+    monkeypatch, tmp_path: Path
+) -> None:
+    subpath, _ = _make_subject(tmp_path)
+
+    def successful_runner(session, cpus):
+        root = Path(session.pathfem)
+        mesh = root / "mesh.msh"
+        mesh.write_text("completed\n", encoding="utf-8")
+        subject_volumes = root / "subject_volumes"
+        subject_volumes.mkdir()
+        nib.save(
+            nib.Nifti1Image(
+                np.ones((3, 4, 5, 3), dtype=np.float32), np.eye(4)
+            ),
+            subject_volumes / "field_E.nii.gz",
+        )
+        return [mesh]
+
+    output_root = tmp_path / "out"
+    _install_simnibs(monkeypatch, runner=successful_runner)
+    completed = run_tdcs(subpath, output_root, mode="scalar")
+    completed_manifest = (
+        output_root / "scalar" / "dwi2cond_xp_simulation.json"
+    ).read_bytes()
+    completed_mesh = (output_root / "scalar" / "mesh.msh").read_bytes()
+
+    def failed_runner(_session, cpus):
+        assert cpus == 8
+        raise RuntimeError("retry failed")
+
+    _install_simnibs(monkeypatch, runner=failed_runner)
+    with pytest.raises(RuntimeError, match="retry failed") as caught:
+        run_tdcs(subpath, output_root, mode="scalar")
+
+    assert completed["status"] == "completed"
+    assert (
+        output_root / "scalar" / "dwi2cond_xp_simulation.json"
+    ).read_bytes() == completed_manifest
+    assert (output_root / "scalar" / "mesh.msh").read_bytes() == completed_mesh
+    failure_manifest = Path(caught.value.dwi2cond_xp_failure_manifest)
+    assert failure_manifest.is_file()
+    failure = json.loads(failure_manifest.read_text(encoding="utf-8"))
+    assert failure["failed_phase"] == "solve"
+
+
+def test_run_tdcs_restores_previous_output_after_published_validation_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    subpath, _ = _make_subject(tmp_path)
+
+    def runner(session, cpus):
+        assert cpus == 8
+        root = Path(session.pathfem)
+        mesh = root / "mesh.msh"
+        mesh.write_text("completed\n", encoding="utf-8")
+        subject_volumes = root / "subject_volumes"
+        subject_volumes.mkdir()
+        nib.save(
+            nib.Nifti1Image(
+                np.ones((3, 4, 5, 3), dtype=np.float32), np.eye(4)
+            ),
+            subject_volumes / "field_E.nii.gz",
+        )
+        return [mesh]
+
+    output_root = tmp_path / "out"
+    _install_simnibs(monkeypatch, runner=runner)
+    run_tdcs(subpath, output_root, mode="scalar")
+    published = output_root / "scalar"
+    previous_manifest = (published / "dwi2cond_xp_simulation.json").read_bytes()
+    previous_mesh = (published / "mesh.msh").read_bytes()
+
+    from dwi2cond_xp.preprocessing import pipeline
+
+    original_validate = pipeline.validate_artifacts
+    validation_count = 0
+
+    def fail_published_validation(contracts):
+        nonlocal validation_count
+        validation_count += 1
+        if validation_count == 2:
+            raise ValueError("injected published validation failure")
+        return original_validate(contracts)
+
+    monkeypatch.setattr(pipeline, "validate_artifacts", fail_published_validation)
+    with pytest.raises(ValueError, match="published validation") as caught:
+        run_tdcs(subpath, output_root, mode="scalar")
+
+    assert (published / "dwi2cond_xp_simulation.json").read_bytes() == previous_manifest
+    assert (published / "mesh.msh").read_bytes() == previous_mesh
+    failure = json.loads(
+        Path(caught.value.dwi2cond_xp_failure_manifest).read_text(encoding="utf-8")
+    )
+    assert failure["failed_phase"] == "validate_published_manifest"

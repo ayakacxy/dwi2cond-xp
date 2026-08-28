@@ -470,7 +470,7 @@ def run_fieldmap(
         b0.shape,
         b0_affine,
         np.eye(4),
-        interpolation="sinc",
+        interpolation="sinc-applywarp",
         reference_to_moving_displacement=displacement,
     )
     corrected_mask = (

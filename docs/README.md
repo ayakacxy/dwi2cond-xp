@@ -31,6 +31,13 @@
 - [v0.3.0 latest-tag remediation](V0.3.0_LATEST_TAG_REMEDIATION_REPORT_2026-08-27.md):
   issue-by-issue closure of the latest `6 P1 + 9 P2/P3` findings, discriminative
   tests, complete coverage evidence, and remaining evidence boundaries.
+- [v0.3.0 fresh independent algorithm re-audit](V0.3.0_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-28.html):
+  self-contained technical report that reopens `4 P1 + 2 P2 + 1 P3` findings
+  from official source review and same-input FSL/local probes; its canonical
+  artifact payload is stored in the adjacent JSON file.
+- [v0.3.0 fresh independent re-audit remediation](V0.3.0_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-28.md):
+  issue-by-issue closure, discriminative FSL regressions, FEM transaction
+  evidence, final coverage gate, and the remaining scientific evidence limits.
 - [Changelog](CHANGELOG.md): released and unreleased user-visible changes.
 - [Release process](RELEASE_PROCESS.md): version, tag, asset, provenance, and
   post-publication verification gates.

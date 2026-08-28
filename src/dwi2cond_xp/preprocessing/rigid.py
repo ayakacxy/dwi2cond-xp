@@ -15,6 +15,7 @@ from numba import njit
 from scipy.ndimage import affine_transform, map_coordinates
 
 from .image_ops import select_b0_indices
+from .resampling import resample_image
 from .transforms import affine_matrix, decompose_affine
 
 
@@ -899,35 +900,71 @@ def write_aligned_b0_mean(
     multipliers = (0.8, 0.8, 0.1)
     progress_done = 0
     progress_total = len(stages_mm) * (len(volumes) - 1) + len(volumes)
-    pyramid_cache: dict[float, list[np.ndarray]] = {}
-    center_cache: dict[float, list[np.ndarray]] = {}
+    reference_cache: dict[float, np.ndarray] = {}
+    moving_cache: list[np.ndarray] | None = None
+    moving_spacing = np.asarray(voxel_sizes, dtype=np.float64)
+    fix_2d = False
     for stage_index, spacing in enumerate(stages_mm):
         spacing_key = float(spacing)
-        if spacing_key not in pyramid_cache:
-            pyramid_cache[spacing_key] = [
-                _isotropic_resample(volume, voxel_sizes, spacing) for volume in volumes
-            ]
-            center_cache[spacing_key] = [
-                _intensity_center_scaled_mm(volume, spacing)
-                for volume in pyramid_cache[spacing_key]
-            ]
-        coarse = pyramid_cache[spacing_key]
-        stage_centers = center_cache[spacing_key]
-        fixed_coarse = coarse[reference_position]
+        if spacing_key not in reference_cache:
+            fixed_stage = _isotropic_resample(reference, voxel_sizes, spacing)
+            if stage_index == 0 and (
+                fixed_stage.shape[2] < 3
+                or fixed_stage.shape[2] * float(spacing) < 20.0
+            ):
+                fix_2d = True
+                fixed_stage = np.pad(
+                    fixed_stage, ((0, 0), (0, 0), (1, 1)), mode="edge"
+                )
+                moving_cache = [
+                    np.pad(volume, ((0, 0), (0, 0), (1, 1)), mode="edge")
+                    for volume in volumes
+                ]
+                moving_spacing = np.asarray(
+                    (voxel_sizes[0], voxel_sizes[1], 8.0), dtype=np.float64
+                )
+            reference_cache[spacing_key] = fixed_stage
+        fixed_stage = reference_cache[spacing_key]
+        if fix_2d:
+            fixed_stage = np.pad(
+                fixed_stage, ((0, 0), (0, 0), (1, 1)), mode="edge"
+            )
+        moving_stages = volumes if moving_cache is None else moving_cache
+        stage_spacing = np.asarray(
+            (spacing, spacing, 8.0 if fix_2d else spacing), dtype=np.float64
+        )
+        parameter_axes = (2, 3, 4) if fix_2d else None
+        smooth_mm = 0.1 if fix_2d else 1.0
+        stage_centers = [
+            _intensity_center_scaled_mm(volume, moving_spacing)
+            for volume in moving_stages
+        ]
         stage_output = [matrix.copy() for matrix in matrices]
         order = list(range(reference_position + 1, len(volumes))) + list(
             range(reference_position - 1, -1, -1)
         )
 
         def optimize(position: int) -> tuple[int, np.ndarray, float, int]:
-            transform, cost, count = _optimize_one_stage(
-                fixed_coarse,
-                coarse[position],
-                spacing,
+            arguments = (
+                fixed_stage,
+                moving_stages[position],
+                stage_spacing,
                 matrices[position],
                 multipliers[min(stage_index, 2)],
                 stage_centers[position],
+                6,
             )
+            if fix_2d:
+                transform, cost, count = _optimize_one_stage(
+                    *arguments,
+                    parameter_axes=parameter_axes,
+                    smooth_mm=smooth_mm,
+                    moving_spacing_mm=moving_spacing,
+                )
+            else:
+                transform, cost, count = _optimize_one_stage(
+                    *arguments, moving_spacing_mm=moving_spacing
+                )
             return position, transform, cost, count
 
         if stage_index == 0 or workers == 1:
@@ -970,13 +1007,14 @@ def write_aligned_b0_mean(
         aligned = (
             reference
             if position == reference_position
-            else resample_rigid(
+            else resample_image(
                 moving,
                 image.affine,
                 reference.shape,
                 image.affine,
                 world_transform,
-                mode="nearest",
+                interpolation="linear",
+                linear_extrapolation="extraslice",
             )
         )
         center = _intensity_center_scaled_mm(moving, float(voxel_sizes[0]))

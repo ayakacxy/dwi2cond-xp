@@ -164,6 +164,22 @@ def register_tensor_affine(
     def sample_source_mask() -> np.ndarray | None:
         if source_mask is None:
             return None
+        if source_mask_mode == "fsl-vecreg":
+            grid = np.indices(target_shape, dtype=np.float64).reshape(3, -1)
+            coordinates = (
+                output_to_input[:3, :3] @ grid + output_to_input[:3, 3, None]
+            )
+            indices = np.where(
+                coordinates > 0.0,
+                np.floor(coordinates + 0.5),
+                np.ceil(coordinates - 0.5),
+            ).astype(np.int64)
+            valid = np.all(indices >= 0, axis=0) & np.all(
+                indices < np.asarray(source_mask.shape)[:, None], axis=0
+            )
+            sampled_mask = np.zeros(indices.shape[1], dtype=bool)
+            sampled_mask[valid] = source_mask[tuple(indices[:, valid])]
+            return sampled_mask.reshape(target_shape)
         return affine_transform(
             source_mask.astype(np.uint8),
             output_to_input[:3, :3],

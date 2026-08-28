@@ -483,7 +483,7 @@ def register_tensor_nonlinear_nifti(
             atol=1e-5,
         ):
             raise ValueError("The output mask must match the reference grid")
-        output_mask = np.asarray(output_mask_image.dataobj) != 0
+        output_mask = np.asarray(output_mask_image.dataobj) > 0
     loaded_at = time.perf_counter()
     result = resample_tensor_ppd_fsl(
         tensor,
