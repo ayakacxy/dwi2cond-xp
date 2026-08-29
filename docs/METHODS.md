@@ -1,8 +1,13 @@
 # Methods
 
+This document describes the algorithm and failure contracts implemented by the
+final `v0.3.0` source. It does not turn fixture-level agreement into an
+arbitrary-input equivalence claim. The corresponding source, test, numerical,
+and end-to-end evidence is mapped in [Validation](VALIDATION.md).
+
 ## Fixed preprocessing subset
 
-The raw-DWI commands reproduce only the FSL behavior used by SimNIBS 4.6
+The raw-DWI commands implement only the FSL behavior used by SimNIBS 4.6
 `dwi2cond`. `preprocess-nomoco` aligns b0 volumes to form the fitting reference
 and mask without applying motion, eddy-current, or susceptibility correction to
 the DWI. `preprocess-legacy` follows the two-pass 6/12-DOF correction order and
@@ -24,10 +29,12 @@ pass uses predicted signal squared as the weight, matching the validated FSL
 6.0.4 reference semantics. Gradient-nonlinearity coefficients, when supplied,
 modify gradient directions and b-values voxel by voxel.
 
-Nonfinite measurements and voxels with no positive selected measurement are
-excluded. Their tensor is set to zero and their status is recorded in a validity
-mask and QA JSON. The default derivatives are tensor, FA, MD, MO, L1-L3, V1-V3,
-S0, SSE, and the validity mask.
+Failure handling is mode-specific. The default `strict-fsl` mode preserves the
+validated FSL failure and exceptional-value semantics and may abort explicitly;
+the opt-in `robust` mode excludes invalid measurements or voxels, writes a zero
+tensor for excluded voxels, and records their status in the validity mask and QA
+JSON. The selected mode is never changed silently. The default derivatives are
+tensor, FA, MD, MO, L1-L3, V1-V3, S0, SSE, and the validity mask.
 
 ## Tensor mapping
 
@@ -65,7 +72,10 @@ positive-eigenvalue handling, maximum conductivity, and maximum anisotropy ratio
 follow the SimNIBS 4.6 compatibility contract.
 
 - `vn` normalizes each tensor determinant to the scalar tissue conductivity.
-- `dir` preserves local tensor magnitude and calibrates its tissue-level scale.
+- With the default intensity calibration, `dir` preserves local tensor
+  magnitude and fits one global scale jointly across the selected anisotropic
+  tissues. Explicit `--no-correct-intensity` instead uses the non-calibrated
+  safety path.
 - `mc` replaces each directly scaled tensor by an isotropic tensor whose
   eigenvalue is the geometric mean of the three local conductivity
   eigenvalues, preserving the determinant and DTI-driven spatial variation.
@@ -75,4 +85,7 @@ Nonzero rank-deficient VN tensors are rejected by default because determinant
 normalization is undefined. The opt-in `regularize` policy first raises the
 singular eigensystem to the configured anisotropy bound, then applies the
 existing safety passes and records the repair count; it is a documented robust
-extension rather than a literal SimNIBS 4.6 edge result.
+extension rather than a literal SimNIBS 4.6 edge result. With default intensity
+calibration, an all-zero anisotropic `dir`/`mc` tissue is rejected because the
+global scale is undefined; explicit `--no-correct-intensity` accepts it through
+the non-calibrated safety path.

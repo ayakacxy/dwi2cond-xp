@@ -6,6 +6,10 @@ on:
     tags:
       - "v*"
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   id-token: write
@@ -58,4 +62,16 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --notes-file release-notes.md
+        run: |
+          if release_probe="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" 2>&1)"; then
+            gh release upload "${GITHUB_REF_NAME}" dist/*.whl dist/*.tar.gz dist/*.json --clobber
+            gh release upload "${GITHUB_REF_NAME}" dist/SHA256SUMS --clobber
+            gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --verify-tag
+          elif [[ "${release_probe}" == *"HTTP 404"* ]]; then
+            gh release create "${GITHUB_REF_NAME}" \
+              dist/*.whl dist/*.tar.gz dist/*.json dist/SHA256SUMS \
+              --verify-tag --notes-file release-notes.md
+          else
+            printf '%s\n' "${release_probe}" >&2
+            exit 1
+          fi

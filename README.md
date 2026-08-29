@@ -36,21 +36,24 @@ Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 
 `dwi2cond-xp` is a cross-platform Python pipeline that preprocesses supported
 raw or already-preprocessed single-shell diffusion MRI, generates conductivity
-tensors for SimNIBS 4.6, and runs validated anisotropic finite-element
-simulations without requiring FSL at runtime.
+tensors for SimNIBS 4.6, and orchestrates anisotropic finite-element simulations
+without requiring FSL at runtime.
 
 This is an independent community project. It is not an official SimNIBS or FSL
 distribution.
+
+The `v0.1.0`--`v0.3.0` tags were republished on 2026-08-29 to correct and
+consolidate documentation and release metadata. Their versioned algorithm
+source and the scientific baselines recorded in the changelog were unchanged.
 
 ## ⚡ Validation at a glance
 
 | Contract | Result | Evidence boundary |
 | --- | ---: | --- |
 | SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
-| Python test suite | **100.00% statement coverage** | 13,607/13,607 executable statements across 671 passed tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
-| DTI tensor parity | **relative L2 4.18e-6** | Same HCP input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
-| Conductivity parity | **max abs 0 to 2.22e-16** | Synthetic mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
-| Fixed-montage FEM | **4/4 modes completed** | Real `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
+| Final-tag correctness gate | **671 passed · 0 skipped** | Frozen dependency stack with every configured real-FSL probe enabled |
+| Clean coverage gate | **100.00% statement coverage** | 659 main + 12 montage tests, real synthetic TOPUP/EDDY/FNIRT CLI paths, and 13,607/13,607 executable statements |
+| Final-tag SimNIBS composition | **`SESSION._prepare()` completed** | Real SimNIBS 4.6 preparation with the explicit mesh; the final remediation did not rerun the FEM solver |
 
 No anatomical image, subject identifier, voxel derivative, or machine-readable
 subject artifact is distributed. Full methods and evidence boundaries are in
@@ -177,13 +180,17 @@ It therefore preserves the DTI-driven spatial variation in geometric-mean
 conductivity while removing directional anisotropy. `mc` is a DTI-derived
 control mode, not an anisotropic tensor field [4].
 
-All three mappings use the SimNIBS safety contract: invalid tensors are
-repaired, conductivity tensors are kept positive definite, eigenvalues are
-capped at 2 S/m by default, and the largest-to-smallest eigenvalue ratio is
-limited to 10. `vn` performs normalization, safety correction, renormalization,
-and a second safety correction; a bound-triggered final correction can
-therefore slightly perturb the ideal determinant equality above. Tissues not
-selected for anisotropy use $\boldsymbol\Sigma_i=\sigma_t\mathbf I$.
+All three mappings apply the documented SimNIBS-compatible eigenvalue, maximum
+conductivity, and anisotropy-ratio rules for their supported inputs. Degenerate
+inputs follow mode-specific failure policies rather than one universal repair:
+nonzero rank-deficient `vn` tensors fail by default. With the default
+`correct_intensity=True`, an all-zero anisotropic `dir`/`mc` tissue is rejected
+because its global scale is undefined; explicit `--no-correct-intensity` uses
+the non-calibrated safety path and accepts that input. `vn` performs
+normalization, safety correction, renormalization, and a second safety
+correction; a bound-triggered final correction can therefore slightly perturb
+the ideal determinant equality above. Tissues not selected for anisotropy use
+$\boldsymbol\Sigma_i=\sigma_t\mathbf I$.
 
 A nonzero rank-deficient tensor has no defined VN determinant normalization.
 The default policy therefore raises an explicit error instead of emitting NaN
@@ -467,6 +474,9 @@ The magnitude view uses the same four vector NIfTIs and a shared positive scale:
 
 ![Four-mode electric-field magnitude](docs/images/electric_field_magnitude_2x2.png)
 
+These figures are carried-forward result illustrations. They are not evidence
+that the final `v0.3.0` tag reran the complete subject pipeline.
+
 ## ⚡ Lead-field support
 
 `simulate-leadfield` builds SimNIBS 4.6 `TDCSLEADFIELD` configurations for all
@@ -481,26 +491,32 @@ See [SimNIBS integration](docs/SIMNIBS_INTEGRATION.md).
 
 ## 🧪 Validation evidence
 
-One private HCP subject was used for release validation. No source
+One private HCP subject was used during project validation. No source
 image, volumetric derivative, subject identifier, or machine-readable
 subject-level artifact is distributed. The two rendered field-comparison PNGs
-are included as result illustrations without a subject identifier. They must
-retain the HCP acknowledgment and are not a substitute for accepting the
+are included as historical result illustrations without a subject identifier.
+They must retain the HCP acknowledgment and are not a substitute for accepting the
 [WU-Minn HCP Open Access Data Use Terms](https://hcp-db.humanconnectome.org/study/hcp-young-adult/document/wu-minn-hcp-consortium-open-access-data-use-terms).
 
-- Full b0+b1000 DTI outputs completed for 881,299 masked voxels; 881,194 were
+- The carried-forward b0+b1000 DTI run completed for 881,299 masked voxels; 881,194 were
   valid and 105 invalid voxels were explicitly zeroed and recorded.
-- Against FSL 6.0.4 WLS with gradient nonlinearity, the HCP tensor comparison
+- In that stage-level run, the FSL 6.0.4 WLS plus gradient-nonlinearity tensor comparison
   had relative L2 error `4.18e-6`; mean and p99 absolute differences were
   `4.78e-10` and `2.10e-9`.
 - On the same server and output boundary, the 16-worker Python fit took 9.76 s
   versus 108.23 s for FSL 6.0.4 (`11.09x`). This is a single-system DTI-fitting
   result, not an end-to-end FEM speed claim.
-- Synthetic-mesh conductivity agreed with SimNIBS 4.6 to max absolute error
-  `0` for `vn` and `2.22e-16` for `dir`/`mc`.
-- Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso;
+- A historical local synthetic-mesh comparison reported maximum absolute error
+  `0` for `vn` and `2.22e-16` for `dir`/`mc`; its machine-readable comparator
+  artifact was not retained, so the final-tag claim rests on current
+  discriminative conductivity tests rather than that exact summary alone.
+- Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso
+  before the final remediation;
   all vector E-field NIfTIs were finite and strictly excluded tissues outside
   WM/GM/CSF.
+- The final tag separately completed real SimNIBS 4.6 `SESSION._prepare()` with
+  the resolved explicit mesh. It did not rerun the complete HCP raw-DWI-to-FEM
+  chain or the solver after the last composition and cache-identity changes.
 - The final v0.3.0 gate completed with `671 passed` and no skips when every real
   FSL probe was configured. The clean coverage run completed with `659 passed`
   in the main batch, `12 passed` in the montage batch, all real synthetic
@@ -516,28 +532,17 @@ Exact methods, timing boundaries, and limitations are in
 
 ## 🛣️ Roadmap
 
-Version `0.3.0` is the correctness release produced from the v0.2.0 audit and
-the later independent v0.3.0 audit. It closes the confirmed workflow and
-calculation-contract defects; it does not claim every complete optimizer is
-bitwise identical to FSL, and it is not the previously planned acceleration release.
+Version `0.3.0` is the current correctness release produced from the v0.2.0
+audit and later independent v0.3.0 audits. The project is now in maintenance
+mode: no `v0.4.0` performance cycle or 10x target is active. Existing timings
+remain available as versioned historical measurements, not as a final-tag
+end-to-end baseline.
 
-Performance work is deferred to `v0.4.0` or later. Planned priorities are:
-
-- freeze same-input, same-output, eight-worker end-to-end benchmarks for the
-  supported affine and nonlinear preprocessing branches;
-- profile and optimize the largest remaining FNIRT, nonlinear PPD, affine,
-  compression, and I/O costs;
-- reduce peak memory through equivalent chunked or fused data flow, especially
-  for whole-head nonlinear tensor reorientation;
-- expand whole-workflow regression and packaging evidence while keeping
-  platform-specific behavior explicit.
-
-These are priorities rather than promised performance results. Optimizations
-must preserve the SimNIBS 4.6/FSL 6.0.4 algorithm, resolution, iteration and
-stopping rules, output contracts, and numerical A/B gates. The project does not
-currently claim that every complete preprocessing branch is 10x faster than
-FSL. See the maintained [project roadmap](docs/ROADMAP.md) and
-[benchmarks](docs/BENCHMARKS.md).
+Maintenance may add reproducibility, compatibility, documentation, or narrowly
+scoped correctness fixes. Any future performance work requires an explicit new
+proposal, a reliable same-input/same-output baseline, and the existing numerical
+and failure-contract gates. See [Project status](docs/ROADMAP.md),
+[Changelog](docs/CHANGELOG.md), and [Historical benchmarks](docs/BENCHMARKS.md).
 
 ## 🗂️ Documentation and community
 

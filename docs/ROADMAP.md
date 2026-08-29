@@ -1,48 +1,68 @@
-# Roadmap
+# Maintenance Status
 
-This roadmap describes priorities after the correctness-focused `v0.3.0` release. It is
-not a promise that every item will ship unchanged or meet a predetermined speed
-ratio. Scientific correctness and explicit evidence remain release gates.
+`v0.3.0` is the current stable release. The project is in maintenance mode:
+there is no active `v0.4.0` development cycle, no active `10x` target, and no
+scheduled performance release. The earlier performance cycle was cancelled
+before a reliable new baseline was completed; its planning samples do not
+define a product claim or future obligation.
 
-## Current release
+## Stable release line
 
-Version `0.3.0` repairs the v0.2.0 workflow and numerical-contract defects found
-by the algorithm audit. The supported fixed subset now follows the official
-legacy/nonlinear defaults, corrected artifact lineage, mask ordering, strict
-single-shell fitting, TOPUP-to-EDDY closure, pre-fitted tensor import, and m2m
-publication contract. FSL remains optional and is used only for local numerical
-reference comparisons.
+The supported line is the fixed, pure-Python subset used by SimNIBS 4.6
+`dwi2cond`: raw or pre-fitted single-shell tensor workflows, fixed legacy/GRE/
+TOPUP/EDDY preprocessing, affine and nonlinear DTI-to-T1 registration, PPD
+tensor reorientation, `scalar`/`vn`/`dir`/`mc` conductivity, and SimNIBS-facing
+FEM and lead-field interfaces. FSL remains optional for numerical reference
+comparisons and is not a runtime dependency.
 
-The `main` branch contains current development. Stable code remains available
-through immutable tags and GitHub Releases; maintenance for an older release
-starts from its tag only when a backport is needed.
+Maintenance work may include confirmed correctness fixes, dependency and
+platform compatibility, packaging/security upkeep, and documentation that
+keeps public claims aligned with tagged evidence. Stable tags are normally
+immutable. An explicitly authorized historical-documentation correction must
+preserve the original tag object and commit IDs in a backup ref and project
+ledger, keep algorithm source unchanged, rebuild the release assets, and
+publish a verifiable rollback map.
 
-## Planned `v0.4.0` or later priorities
+## Evidence policy
 
-1. Freeze same-input, same-output, eight-worker end-to-end benchmarks for the
-   supported affine and nonlinear preprocessing branches, including explicit
-   `.nii` and `.nii.gz` timing boundaries.
-2. Profile before changing code, then optimize the largest measured FNIRT,
-   nonlinear PPD, affine, compression, and I/O costs one hotspot at a time.
-3. Reduce whole-head peak memory through equivalent chunked or fused data flow,
-   with particular attention to nonlinear tensor reorientation.
-4. Add regression evidence on ordinary 8--16-thread workstations and additional
-   legally usable inputs without distributing human MRI data.
-5. Improve full-workflow and packaging diagnostics while keeping reference and
-   optimized backends explicit and independently testable.
+Reorganizing documentation does not require repeating completed experiments.
+A historical result remains usable when it is tied to its tagged source,
+fixture, environment, metric, and timing or numerical boundary. It should be
+rerun only when a new claim depends on a changed implementation or environment,
+when the original evidence cannot be reconstructed, or when an inconsistency
+affects the conclusion.
 
-## Non-goals
+The current release evidence therefore remains the basis for the `v0.1.0` to
+`v0.3.0` history. Detailed fixture-specific numerical and timing results remain
+in [Benchmarks](BENCHMARKS.md); they should be read as measured results for
+their stated boundaries, not as universal hardware or input guarantees.
 
-- Do not reduce image resolution, iterations, data, or convergence checks.
-- Do not change stopping conditions, tensor ordering, coordinate conventions,
-  floating-point contracts, or failure semantics to obtain a faster result.
-- Do not silently fall back from an optimized backend or present cache hits as
-  fresh computation.
-- Do not claim a universal 10x end-to-end speedup without a successful,
-  same-boundary measurement for each supported branch being discussed.
-- Do not expand the project into a general FSL command replacement.
+## If development is explicitly restarted
 
-Current measured results are maintained in [Benchmarks](BENCHMARKS.md). Feature
-proposals and performance reports should use the repository issue templates and
-include a shareable reproducer, numerical A/B, timing boundary, hardware,
-worker count, and peak memory.
+Any future feature or performance cycle would begin with a new, scoped
+decision. Before publishing a numerical or speed claim, it would need to:
+
+1. Freeze the exact reference tag or wheel and a legal, reproducible input.
+2. Establish a reliable baseline on a stable host under the same input, output,
+   resource, cache, and process boundary used for the candidate.
+3. Use repeated paired measurements with dispersion, rather than a fastest
+   sample or an interrupted run.
+4. Pass stage-level and end-to-end numerical A/B gates before interpreting
+   performance.
+5. Change one measurable hotspot at a time, retain the reference path, and keep
+   optimized-backend failures explicit.
+6. Support any GPU or cross-platform claim with runs on the relevant real
+   hardware and platform.
+
+These are scientific entry criteria, not a `v0.4.0` plan, release promise,
+schedule, or predetermined speed target.
+
+## Scope boundaries
+
+- The project remains an independent implementation of the fixed SimNIBS 4.6
+  `dwi2cond` FSL subset, not a general FSL command replacement.
+- Strict tensor fitting remains single-shell; wrapped phase requiring PRELUDE
+  and arbitrary TOPUP/EDDY/FNIRT configurations are outside the supported
+  contract.
+- No universal end-to-end speedup is claimed. Performance statements remain
+  attached to the exact fixture and measurement boundary that produced them.

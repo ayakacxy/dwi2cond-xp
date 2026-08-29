@@ -1,7 +1,7 @@
 # SimNIBS 4.6 FSL reference contract
 
-This document freezes the local reference boundary for the `v0.2.0` raw-DWI
-work. FSL remains an optional validation dependency and is not imported,
+This document freezes the FSL reference boundary used by the final `v0.3.0`
+validation. FSL remains an optional validation dependency and is not imported,
 bundled, or called by the released runtime path.
 
 ## Source provenance
@@ -22,9 +22,9 @@ copied into this repository. The first real fixture must additionally record
 the exact FSL build used for its outputs; outputs from different FSL releases
 must not share one numerical baseline.
 
-The currently verified local executable is `/usr/local/fsl/bin/dtifit`; its
-installation reports FSL `6.0.4:ddd0a010`. This absolute path is local
-configuration and must be replaced by an alias in public run manifests.
+The recorded release-reference installation was `/usr/local/fsl` and reported
+FSL `6.0.4:ddd0a010`. This absolute path is local configuration and must be
+replaced by an alias in public run manifests.
 
 ## Stage artifact map
 
@@ -62,12 +62,13 @@ artifact is a failed stage.
   the corresponding Python algorithm.
 
 The initial public threshold file is
-`tests/fixtures/reference/synthetic_nomoco_manifest.json`. It is a contract,
-not evidence that the full SimNIBS `nomoco` path has already passed.
+`tests/fixtures/reference/synthetic_nomoco_manifest.json`. The threshold file
+alone is a contract rather than a pass result; its companion reference summary
+and the final configured real-FSL gate provide the execution evidence.
 
 ## Frozen public evidence
 
-The P0--P10 reference foundation is frozen in ten JSON files under
+The public reference foundation is frozen in eleven JSON files under
 `tests/fixtures/reference/`:
 
 - `synthetic_nomoco_manifest.json` freezes comparison thresholds;
@@ -82,6 +83,8 @@ The P0--P10 reference foundation is frozen in ten JSON files under
 - `synthetic_fieldmap_reference.json` records the fixed GRE/FUGUE reference;
 - `synthetic_topup_reference.json` records the fixed TOPUP reference;
 - `synthetic_eddy_reference.json` records the fixed EDDY `--repol` reference;
+- `synthetic_eddy_interspersed_b0_reference.json` records the portable
+  interspersed-b0 EDDY fixture contract and same-platform reference provenance;
 - `synthetic_t1_registration_reference.json` records automatic T1 registration.
 
 The image fixtures are generated on demand and are not stored in the public

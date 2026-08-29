@@ -1,7 +1,11 @@
 # Release process
 
-Stable versions are immutable annotated tags and GitHub Releases. The `main`
-branch remains the current development line; an older release receives a
+Stable versions use annotated tags and GitHub Releases. Tags are immutable in
+normal development. A historical tag may be republished only for an explicitly
+authorized documentation or release-metadata correction that leaves algorithm
+source unchanged, preserves the original tag object and peeled commit IDs in a
+backup ref and the project ledger, and rebuilds every published asset. The
+`main` branch remains the current development line; an older release receives a
 temporary backport branch only when maintenance is required.
 
 ## Prepare
@@ -47,6 +51,23 @@ fails before publication.
 
 The workflow does not publish to PyPI. Adding another registry is a separate
 release change that requires its own trusted-publishing and installation audit.
+
+## Correct a historical tag
+
+Before moving an existing tag, record its tag-object ID, peeled commit ID,
+Release ID, asset names, and asset hashes in the project ledger. Create a local
+backup ref outside `refs/tags/`, then make the smallest version-specific commit
+from the original peeled commit. Do not copy later algorithm or capability
+claims into an older release.
+
+Run the version, link, package, archive-privacy, and focused test gates for each
+corrected tree. Recreate the annotated tag, force-update only that exact remote
+tag, and let the tag workflow rebuild and attest the wheel, sdist, SBOM, and
+checksum file. If a GitHub Release already exists, the workflow replaces its
+named assets in place while preserving its curated notes unless a separate
+notes correction was explicitly approved. Finally, download the replacement
+assets and perform the same verification used for a new release. A correction
+is complete only after the new and rollback object IDs are both recorded.
 
 ## Verify the public release
 
