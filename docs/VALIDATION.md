@@ -1,8 +1,8 @@
 # Validation
 
-The final `v0.3.0` correctness gate completed with `670 passed` and no skips
+The final `v0.3.0` correctness gate completed with `671 passed` and no skips
 when every real FSL reference probe was configured. The independent clean
-coverage gate completed with `658 passed` in the main batch, `12 passed` in the
+coverage gate completed with `659 passed` in the main batch, `12 passed` in the
 montage batch, and `13,607/13,607` executable statements covered (`100.00%`).
 Real synthetic TOPUP, EDDY, and FNIRT CLI paths were included in the same
 coverage run.

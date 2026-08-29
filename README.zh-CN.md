@@ -368,8 +368,8 @@ panel 共用对称色标；切片只由 brain mask 最大面积决定，不根�
 预处理、配准、建模或 FEM。全电极 lead-field 接口和数据合同已支持并测试，但当前
 发布证据不包含真实被试的全电极完整运行。
 
-最终 v0.3.0 在显式配置全部真实 FSL probes 后为 `670 passed`、零跳过。独立干净
-coverage 门禁为主批次 `658 passed`、montage `12 passed`，真实 synthetic
+最终 v0.3.0 在显式配置全部真实 FSL probes 后为 `671 passed`、零跳过。独立干净
+coverage 门禁为主批次 `659 passed`、montage `12 passed`，真实 synthetic
 TOPUP/EDDY/FNIRT CLI 均完成，全部 `13,607/13,607` 个可执行语句严格达到
 `100.00%` 覆盖率；跨平台 CI 同样强制该门槛。只有外部 reference 或集成前置条件
 不可用时才跳过对应可选测试。

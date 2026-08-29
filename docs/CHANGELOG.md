@@ -109,6 +109,8 @@ No unreleased changes.
 - Added the third independent v0.3.0 algorithm re-audit and its issue-by-issue
   remediation report, including high-obliquity orientation, cache-composition,
   real SimNIBS session-preparation, and singular-VN stability gates.
+- Added platform-independent native solver identity discovery tests so the
+  strict coverage gate does not depend on SimNIBS, MKL, or PETSc being installed.
 - Added the latest-tag independent re-audit and its issue-by-issue closure
   report, including `13370/13370` production coverage and explicit FSL 6.0.4
   reference gates.

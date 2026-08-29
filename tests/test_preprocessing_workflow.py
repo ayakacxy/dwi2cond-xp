@@ -1131,6 +1131,64 @@ def test_simnibs_runtime_identity_records_missing_distribution(monkeypatch) -> N
         workflow._simnibs_runtime_identity("unknown")
 
 
+def test_solver_native_identity_discovers_every_supported_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    libraries = {
+        "lib/libmkl_rt.so.2": b"mkl-so",
+        "lib/libmkl_rt.dylib": b"mkl-dylib",
+        "lib/libpetsc.so.3": b"petsc-so",
+        "lib/libpetsc.dylib": b"petsc-dylib",
+        "lib/libHYPRE_core.so.1": b"hypre",
+        "lib/libdmumps.so.1": b"mumps",
+        "Library/bin/mkl_rt.2.dll": b"mkl-dll",
+        "Library/bin/petsc.3.dll": b"petsc-dll",
+    }
+    for relative, content in libraries.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    monkeypatch.setattr(workflow, "sys", SimpleNamespace(prefix=str(tmp_path)))
+
+    identities = {
+        solver: workflow._solver_native_identity(solver)
+        for solver in ("pardiso", "hypre", "mumps", "petsc_pardiso")
+    }
+    names = {
+        solver: {Path(item["path"]).name for item in identity}
+        for solver, identity in identities.items()
+    }
+    assert names["pardiso"] == {
+        "libmkl_rt.dylib",
+        "libmkl_rt.so.2",
+        "mkl_rt.2.dll",
+    }
+    assert names["hypre"] == {
+        "libHYPRE_core.so.1",
+        "libpetsc.dylib",
+        "libpetsc.so.3",
+        "petsc.3.dll",
+    }
+    assert names["mumps"] == {
+        "libdmumps.so.1",
+        "libpetsc.dylib",
+        "libpetsc.so.3",
+        "petsc.3.dll",
+    }
+    assert names["petsc_pardiso"] == {
+        "libmkl_rt.dylib",
+        "libmkl_rt.so.2",
+        "libpetsc.dylib",
+        "libpetsc.so.3",
+        "mkl_rt.2.dll",
+        "petsc.3.dll",
+    }
+    for identity in identities.values():
+        for item in identity:
+            assert item["size_bytes"] == Path(item["path"]).stat().st_size
+            assert item["sha256"] == workflow._sha256(Path(item["path"]))
+
+
 def test_simnibs_runtime_identity_records_installed_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

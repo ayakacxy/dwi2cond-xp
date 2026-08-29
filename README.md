@@ -47,7 +47,7 @@ distribution.
 | Contract | Result | Evidence boundary |
 | --- | ---: | --- |
 | SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
-| Python test suite | **100.00% statement coverage** | 13,607/13,607 executable statements across 670 passed tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
+| Python test suite | **100.00% statement coverage** | 13,607/13,607 executable statements across 671 passed tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
 | DTI tensor parity | **relative L2 4.18e-6** | Same HCP input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
 | Conductivity parity | **max abs 0 to 2.22e-16** | Synthetic mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
 | Fixed-montage FEM | **4/4 modes completed** | Real `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
@@ -501,8 +501,8 @@ retain the HCP acknowledgment and are not a substitute for accepting the
 - Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso;
   all vector E-field NIfTIs were finite and strictly excluded tissues outside
   WM/GM/CSF.
-- The final v0.3.0 gate completed with `670 passed` and no skips when every real
-  FSL probe was configured. The clean coverage run completed with `658 passed`
+- The final v0.3.0 gate completed with `671 passed` and no skips when every real
+  FSL probe was configured. The clean coverage run completed with `659 passed`
   in the main batch, `12 passed` in the montage batch, all real synthetic
   TOPUP/EDDY/FNIRT CLI paths, and strict `100.00%` statement coverage over all
   `13,607/13,607` executable statements.
