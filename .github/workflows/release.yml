@@ -3,7 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "v0.1.0"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -53,7 +57,147 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
           sbom-path: dist/dwi2cond_xp.cdx.json
-      - name: Publish GitHub release
+      - name: Upsert GitHub release without replacing its body
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --generate-notes
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+          wheel="dist/dwi2cond_xp-${version}-py3-none-any.whl"
+          sdist="dist/dwi2cond_xp-${version}.tar.gz"
+          sbom="dist/dwi2cond_xp.cdx.json"
+          checksums="dist/SHA256SUMS"
+          for asset in "${wheel}" "${sdist}" "${sbom}" "${checksums}"; do
+            if [[ ! -f "${asset}" ]]; then
+              echo "Required release asset is missing: ${asset}" >&2
+              exit 1
+            fi
+          done
+          (cd dist && sha256sum --check SHA256SUMS)
+
+          gh api "repos/${GITHUB_REPOSITORY}" --silent
+          release_endpoint="repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}"
+          probe_response="${RUNNER_TEMP}/release-probe-response.txt"
+          probe_error="${RUNNER_TEMP}/release-probe-error.txt"
+          set +e
+          gh api --include \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${release_endpoint}" >"${probe_response}" 2>"${probe_error}"
+          probe_status=$?
+          set -e
+
+          release_exists=false
+          if [[ ${probe_status} -eq 0 ]]; then
+            release_exists=true
+            gh api "${release_endpoint}" --jq .body \
+              >"${RUNNER_TEMP}/release-body-before.md"
+          elif grep -Eq '^HTTP/[^ ]+ 404([[:space:]]|$)' "${probe_response}"; then
+            release_exists=false
+          else
+            echo "Release lookup failed; refusing to interpret it as a missing Release." >&2
+            cat "${probe_response}" >&2
+            cat "${probe_error}" >&2
+            exit "${probe_status}"
+          fi
+
+          if [[ "${release_exists}" == false ]]; then
+            notes_file="${RUNNER_TEMP}/v0.1.0-release-notes.md"
+            cat >"${notes_file}" <<'EOF'
+          ## dwi2cond-xp v0.1.0
+
+          Initial release for converting externally preprocessed diffusion MRI into
+          SimNIBS 4.6 anisotropic-conductivity inputs.
+
+          ### Highlights
+
+          - Single-shell DTI fitting with two-pass weighted least squares and optional
+            gradient-nonlinearity correction.
+          - Tensor, FA, MD, MO, eigenvalue/eigenvector, S0, SSE, validity-mask, and QA
+            outputs.
+          - Affine tensor resampling and reorientation into T1 space.
+          - `scalar`, `vn`, `dir`, and `mc` conductivity modes, anisotropic FEM, lead-field
+            export, and field visualization.
+
+          ### Scope
+
+          This version requires externally preprocessed DWI. Raw-DWI correction and
+          nonlinear registration are not included.
+
+          [README](https://github.com/ayakacxy/dwi2cond-xp/tree/v0.1.0#readme) ·
+          [Validation](https://github.com/ayakacxy/dwi2cond-xp/blob/v0.1.0/docs/VALIDATION.md) ·
+          [Changelog](https://github.com/ayakacxy/dwi2cond-xp/blob/v0.1.0/docs/CHANGELOG.md)
+          EOF
+            gh release create "${GITHUB_REF_NAME}" \
+              --verify-tag \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file "${notes_file}"
+          fi
+
+          existing_names="${RUNNER_TEMP}/release-assets-before.txt"
+          gh api "${release_endpoint}" --jq '.assets[].name' >"${existing_names}"
+          while IFS= read -r name; do
+            case "${name}" in
+              ""|"$(basename "${wheel}")"|"$(basename "${sdist}")"|\
+                "$(basename "${sbom}")"|"$(basename "${checksums}")") ;;
+              *)
+                echo "Unexpected pre-existing release asset: ${name}" >&2
+                exit 1
+                ;;
+            esac
+          done <"${existing_names}"
+
+          if [[ "${release_exists}" == true ]]; then
+            backup_dir="${RUNNER_TEMP}/release-assets-before"
+            mkdir -p "${backup_dir}"
+            gh release download "${GITHUB_REF_NAME}" \
+              --dir "${backup_dir}" \
+              --pattern "$(basename "${wheel}")" \
+              --pattern "$(basename "${sdist}")" \
+              --pattern "$(basename "${sbom}")" \
+              --pattern "$(basename "${checksums}")"
+            (cd "${backup_dir}" && sha256sum --check SHA256SUMS)
+          fi
+
+          for asset in "${wheel}" "${sdist}" "${sbom}"; do
+            gh release upload "${GITHUB_REF_NAME}" "${asset}" --clobber
+          done
+          gh release upload "${GITHUB_REF_NAME}" "${checksums}" --clobber
+          gh release edit "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" --verify-tag
+
+          expected_names="${RUNNER_TEMP}/release-assets-expected.txt"
+          remote_names="${RUNNER_TEMP}/release-assets-remote.txt"
+          printf '%s\n' \
+            "$(basename "${wheel}")" \
+            "$(basename "${sdist}")" \
+            "$(basename "${sbom}")" \
+            "$(basename "${checksums}")" | sort >"${expected_names}"
+          gh api "${release_endpoint}" --jq '.assets[].name' | sort >"${remote_names}"
+          if ! cmp --silent "${expected_names}" "${remote_names}"; then
+            echo "Remote Release asset names do not match the four expected assets." >&2
+            diff -u "${expected_names}" "${remote_names}" || true
+            exit 1
+          fi
+
+          verify_dir="${RUNNER_TEMP}/release-assets-verify"
+          mkdir -p "${verify_dir}"
+          gh release download "${GITHUB_REF_NAME}" \
+            --dir "${verify_dir}" \
+            --pattern "$(basename "${wheel}")" \
+            --pattern "$(basename "${sdist}")" \
+            --pattern "$(basename "${sbom}")" \
+            --pattern "$(basename "${checksums}")"
+          (cd "${verify_dir}" && sha256sum --check SHA256SUMS)
+
+          if [[ "${release_exists}" == true ]]; then
+            gh api "${release_endpoint}" --jq .body \
+              >"${RUNNER_TEMP}/release-body-after.md"
+            if ! cmp --silent \
+              "${RUNNER_TEMP}/release-body-before.md" \
+              "${RUNNER_TEMP}/release-body-after.md"; then
+              echo "Existing Release body changed unexpectedly." >&2
+              exit 1
+            fi
+          fi

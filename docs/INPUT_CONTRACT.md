@@ -28,7 +28,7 @@ If external preprocessing already established a shared world coordinate system,
 the caller may explicitly pass `--assume-aligned`.
 
 Automatic FLIRT/FNIRT registration, nonlinear deformation, local Jacobians, and
-PPD reorientation are outside the current implementation. Do not use
+PPD reorientation are outside the `v0.1.0` implementation. Do not use
 `--assume-aligned` merely because DWI and T1 belong to the same participant;
 same-subject acquisitions can still differ by motion, distortion, resolution,
 orientation, and scanner coordinates.

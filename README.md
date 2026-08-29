@@ -4,7 +4,7 @@
 
 Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 
-[![Release](https://img.shields.io/github/v/release/ayakacxy/dwi2cond-xp?display_name=tag&sort=semver)](https://github.com/ayakacxy/dwi2cond-xp/releases/latest)
+[![Release: v0.1.0](https://img.shields.io/badge/release-v0.1.0-blue.svg)](https://github.com/ayakacxy/dwi2cond-xp/releases/tag/v0.1.0)
 [![CI](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ayakacxy/dwi2cond-xp/badge)](https://scorecard.dev/viewer/?uri=github.com/ayakacxy/dwi2cond-xp)
@@ -20,21 +20,26 @@ Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 </div>
 
 `dwi2cond-xp` is a cross-platform Python pipeline that converts preprocessed
-diffusion MRI into conductivity tensors for SimNIBS 4.6 and runs validated
+diffusion MRI into conductivity tensors for SimNIBS 4.6 and orchestrates
 anisotropic finite-element simulations without requiring FSL at runtime.
 
 This is an independent community project. It is not an official SimNIBS or FSL
 distribution.
 
+> **Historical release.** This tree documents `v0.1.0` as released on
+> 2026-08-21. The tag was reissued on 2026-08-29 only to correct documentation
+> and release metadata; its algorithm source remains the original `v0.1.0`
+> baseline. Claims below apply to this version and its stated evidence boundary.
+
 ## ⚡ Validation at a glance
 
 | Contract | Result | Evidence boundary |
 | --- | ---: | --- |
-| Python test suite | **144 passed · 100.00%** | 1,644/1,644 executable statements; includes the local FSL reference test |
-| DTI tensor parity | **relative L2 4.18e-6** | Same HCP input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
-| DTI fitting wall time | **9.76 s vs 108.23 s · 11.09x** | Same server, input, worker/output boundary; not an end-to-end FEM claim |
-| Conductivity parity | **max abs 0 to 2.22e-16** | Synthetic mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
-| Fixed-montage FEM | **4/4 modes completed** | Real `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
+| Python test suite | **144 passed · 100.00%** | `v0.1.0` release record: 1,644/1,644 package statements, including a configured local FSL reference test |
+| DTI tensor comparison | **relative L2 4.18e-6** | Historical private HCP b0+b1000 input, same WLS/gradient-nonlinearity contract versus FSL 6.0.4 |
+| DTI fitting wall time | **9.76 s vs 108.23 s · 11.09x** | Historical single-server, single-input fitting/output boundary; not an end-to-end claim |
+| Conductivity comparison | **max abs 0 to 2.22e-16** | Historical synthetic sphere mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
+| Fixed-montage FEM | **4/4 modes completed** | Historical private-subject `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
 
 No anatomical image, subject identifier, voxel derivative, or machine-readable
 subject artifact is distributed. Full methods and evidence boundaries are in
@@ -69,9 +74,17 @@ which SimNIBS 4.6.0 itself can be installed and validated.
 | Mode | Meaning |
 | --- | --- |
 | `scalar` | Fixed scalar conductivity per tissue; does not use DTI. |
-| `vn` | Preserves tensor direction and anisotropy ratio, then normalizes the determinant locally to the tissue reference conductivity. This is the primary anisotropic mode. |
-| `dir` | Preserves direction, anisotropy ratio, and spatial intensity variation, followed by global intensity calibration. |
-| `mc` | DTI-driven spatially varying mean conductivity made locally isotropic; a control for intensity variation, not directional anisotropy. |
+| `vn` | Preserves tensor direction and anisotropy ratio, then locally normalizes the determinant to the tissue reference conductivity, subject to safety bounds. |
+| `dir` | Preserves direction, anisotropy ratio, and spatial magnitude variation; its default calibration uses one global scale across all selected anisotropic tissues. |
+| `mc` | Uses the same global scale as `dir`, then replaces each tensor by an isotropic tensor with the same local determinant; it is an intensity-variation control. |
+
+Exact zero tensors in selected anisotropic tissues are replaced by the tissue's
+scalar conductivity tensor before conversion and are accepted. The default
+`dir`/`mc` calibration requires positive, finite aggregate determinants.
+`--no-correct-intensity` bypasses that global calibration and uses the
+uncalibrated per-tensor safety path. `v0.1.0` has no public
+`strict-fsl`/`robust` fitting-mode switch. See [Methods](docs/METHODS.md) for the
+version-specific equations and degenerate-input boundary.
 
 ## 🐍 Installation
 
@@ -213,20 +226,20 @@ NumPy matrix shaped `(N_spatial * 3, N_electrode - 1)` plus JSON metadata. The
 first cap electrode is the reference; each remaining column is a 1 A basis.
 Pardiso is the default and failures are not silently rerouted to another solver.
 
-This interface and its HDF5/NPY contracts are unit tested, but the current
-release evidence does not include a full-subject, all-electrode lead-field run.
+This interface and its HDF5/NPY contracts are unit tested, but the `v0.1.0`
+evidence does not include a full-subject, all-electrode lead-field run.
 See [SimNIBS integration](docs/SIMNIBS_INTEGRATION.md).
 
-## 🧪 Validation evidence
+## 🧪 Historical validation evidence
 
-One private HCP subject was used for release-candidate validation. No source
+One private HCP subject was used for `v0.1.0` release-candidate validation. No source
 image, volumetric derivative, subject identifier, or machine-readable
 subject-level artifact is distributed. The two rendered field-comparison PNGs
 are included as result illustrations without a subject identifier. They must
 retain the HCP acknowledgment and are not a substitute for accepting the
 [WU-Minn HCP Open Access Data Use Terms](https://hcp-db.humanconnectome.org/study/hcp-young-adult/document/wu-minn-hcp-consortium-open-access-data-use-terms).
 
-- Full b0+b1000 DTI outputs completed for 881,299 masked voxels; 881,194 were
+- The recorded b0+b1000 DTI outputs completed for 881,299 masked voxels; 881,194 were
   valid and 105 invalid voxels were explicitly zeroed and recorded.
 - Against FSL 6.0.4 WLS with gradient nonlinearity, the HCP tensor comparison
   had relative L2 error `4.18e-6`; mean and p99 absolute differences were
@@ -239,13 +252,14 @@ retain the HCP acknowledgment and are not a substitute for accepting the
 - Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso;
   all vector E-field NIfTIs were finite and strictly excluded tissues outside
   WM/GM/CSF.
-- The local release test suite completed with `144 passed` and strict
+- The recorded local release test suite completed with `144 passed` and strict
   `100.00%` statement coverage. Cross-platform CI enforces the same 100%
   threshold; the FSL comparison is skipped only where `dtifit` is unavailable.
 
 Exact methods, timing boundaries, and limitations are in
 [Validation](docs/VALIDATION.md), [Benchmarks](docs/BENCHMARKS.md), and
-[Reproducibility](docs/REPRODUCIBILITY.md).
+[Reproducibility](docs/REPRODUCIBILITY.md). The private HCP, sphere, and FEM
+experiments were not rerun for the 2026-08-29 documentation refresh.
 
 ## 🗂️ Documentation and community
 

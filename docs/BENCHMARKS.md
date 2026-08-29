@@ -1,21 +1,29 @@
-# Benchmarks
+# Historical benchmarks
+
+This page contains the performance measurement attributable to `v0.1.0`. It is
+a retained release record, not a current hardware claim. The 2026-08-29
+documentation refresh did not rerun or reinterpret the benchmark.
 
 ## DTI fitting
 
-The private HCP b0+b1000 input contained 108 volumes on a `145x174x145` grid
-with 881,299 masked voxels. The output boundary included tensor, FA, MD, MO,
-L1-L3, V1-V3, S0, SSE, validity mask, and QA JSON.
+The private HCP input contained b=0 plus the b=1000 shell: 108 volumes on a
+`145x174x145` grid with 881,299 masked voxels. Both implementations used the
+same server, selected volumes, WLS/gradient-nonlinearity contract, and output
+boundary. The boundary included tensor, FA, MD, MO, L1-L3, V1-V3, S0, SSE,
+validity mask, and QA JSON.
 
-| Implementation | Workers | Wall time | CPU utilization | Peak RSS |
+| Implementation | Execution | Wall time | CPU utilization | Peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| dwi2cond-xp Python | 16 | 9.76 s | 670% | 767,656 KiB |
+| dwi2cond-xp `v0.1.0` | 16 workers | 9.76 s | 670% | 767,656 KiB |
 | FSL 6.0.4 | 1 process | 108.23 s | 99% | 2,023,996 KiB |
 
-The same server, DWI, shell selection, WLS/gradient-nonlinearity semantics, and
-output set were used. The observed wall-time ratio was `11.09x`; Python peak RSS
-was approximately 37.9% of FSL's. This is one system and one DTI-fitting input.
-It must not be extrapolated to raw preprocessing, registration, meshing, FEM, or
-other hardware.
+The observed wall-time ratio was `11.09x`, and the recorded Python peak RSS was
+about 37.9% of the FSL value. These numbers describe one private input, one
+server, and only the DTI-fitting/output boundary above. They do not include raw
+preprocessing, tensor-to-T1 registration, CHARM, meshing, FEM, or lead-field
+generation, and they must not be used as an end-to-end speedup.
 
-The run used a many-core server, but the frozen evidence record did not capture
-the exact CPU model. Consequently no model-specific performance claim is made.
+The retained record did not capture the exact CPU model, frequency policy,
+memory configuration, repeated-sample distribution, or uncertainty interval.
+Accordingly, `11.09x` is reported as the observed historical ratio, not as an
+expected ratio on other hardware or datasets.

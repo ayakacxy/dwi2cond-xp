@@ -28,5 +28,5 @@ records the reference, active-electrode order, unit, spatial grain, component
 order, tensor, mode, and solver. ROI and avoid masks are separate Boolean NPY
 files; the original mesh labels are not modified.
 
-The current release supports and unit-tests this interface but does not claim a
-completed full-subject all-electrode lead-field benchmark.
+`v0.1.0` supports and unit-tests this interface but does not claim a completed
+full-subject all-electrode lead-field benchmark.
