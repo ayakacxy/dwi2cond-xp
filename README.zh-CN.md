@@ -12,15 +12,20 @@
 [![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
-[English](README.md) · [文档](docs/README.md) · [总报告](docs/DWI2COND_COMPLETION_AND_PERFORMANCE_REPORT.md) · [10×性能评估](docs/DWI2COND_10X_PERFORMANCE_FEASIBILITY_REPORT.md) · [验证](docs/VALIDATION.md) · [基准](docs/BENCHMARKS.md) · [更新记录](docs/CHANGELOG.md)
+[English](README.md) · [文档](docs/README.md) · [验证](docs/VALIDATION.md) · [基准](docs/BENCHMARKS.md) · [更新记录](docs/CHANGELOG.md)
 
 🧠 **DTI 拟合** · ⚡ **运行时无 FSL** · 🧭 **张量重定向** · ⚡ **各向异性 FEM** · 🧪 **100% 语句覆盖**
 
 </div>
 
+> **历史版本说明：** `v0.2.0` 记录了最初完成运行时无 FSL 预处理的里程碑。后续
+> 审计发现的流程与数值合同问题已在 `v0.3.0` 修复，新部署应使用 `v0.3.0`。
+> 2026-08-29 对本 tag 的重发仅整理文档与发布元数据，算法源码仍保持原始
+> `v0.2.0` 基线。
+
 `dwi2cond-xp` 是一个跨平台 Python 流程：对支持的原始或已预处理单壳 diffusion MRI
-执行预处理，生成 SimNIBS 4.6 电导率张量，并运行经过验证的各向异性有限元仿真。
-正式计算路径不依赖 FSL。
+执行预处理，生成 SimNIBS 4.6 电导率张量，并组织各向异性有限元仿真。正式计算路径
+不依赖 FSL。
 
 这是独立社区项目，不是 SimNIBS 或 FSL 官方发行物。英文 [README](README.md) 是默认
 发布入口，本文件同步最重要的安装、输入和科学边界。
@@ -30,11 +35,11 @@
 | 合同 | 结果 | 证据边界 |
 | --- | ---: | --- |
 | SimNIBS 4.6 预处理子集 | **纯 Python · 运行时无 FSL** | `nomoco`、legacy、固定 GRE/TOPUP/EDDY、线性/FNIRT 配准和 PPD 张量重定向 |
-| Python 测试 | **100.00% statement coverage** | 12,443/12,443 条可执行语句，覆盖单元测试和真实合成 TOPUP/EDDY/FNIRT E2E |
-| DTI tensor 一致性 | **relative L2 4.18e-6** | 同一 HCP 输入、WLS 与 gradient-nonlinearity 合同，对照 FSL 6.0.4 |
+| Python 测试 | **100.00% statement coverage** | 已记录的最终 v0.2 发布线门禁覆盖 12,443/12,443 条可执行语句 |
+| DTI tensor 一致性 | **relative L2 4.18e-6** | 沿用的 HCP 阶段结果：同一输入、WLS 与 gradient-nonlinearity 合同，对照 FSL 6.0.4 |
 | DTI 拟合时间 | **9.76 s vs 108.23 s · 11.09x** | 同服务器、输入与输出边界，不代表完整 FEM 加速 |
-| 电导率一致性 | **max abs 0 至 2.22e-16** | synthetic mesh 对照 SimNIBS 4.6 的 `vn/dir/mc` |
-| 特定 montage FEM | **4/4 模式完成** | Pardiso 完成真实 `scalar/vn/dir/mc` C3→C4 仿真 |
+| 电导率一致性 | **max abs 0 至 2.22e-16** | 沿用的 synthetic-mesh 结果，对照 SimNIBS 4.6 的 `vn/dir/mc` |
+| 特定 montage FEM | **4/4 模式完成** | 历史 Pardiso 真实 `scalar/vn/dir/mc` C3→C4 仿真 |
 
 仓库不分发任何解剖影像、被试标识、体数据派生物或机器可读被试产物。完整方法与证据
 边界见 [验证](docs/VALIDATION.md) 和 [基准](docs/BENCHMARKS.md)。
@@ -303,15 +308,17 @@ panel 共用对称色标；切片只由 brain mask 最大面积决定，不根�
 
 ## 🧪 证据边界
 
-私有 HCP 数据已用于 DTI、CHARM 和真实四模式 FEM 验收。原始影像、体数据派生物、
+历史验证使用私有 HCP 数据完成 DTI、CHARM 和真实四模式 FEM。原始影像、体数据派生物、
 被试标识和机器可读的被试级产物都不进入仓库或 Release；README 只保留两张无被试
 标识的结果示意 PNG，并附 HCP 致谢与数据使用条款链接。16 worker DTI 拟合在同一服务器、同一输出
 边界下相对 FSL 6.0.4 实测为 `11.09x`；这只是单机 DTI fitting 结果，不能外推到
 预处理、配准、建模或 FEM。全电极 lead-field 接口和数据合同已支持并测试，但当前
 发布证据不包含真实被试的全电极完整运行。
 
-本机 release 测试为 `144 passed`、严格 `100.00%` 语句覆盖；跨平台 CI 同样强制
-100% 门槛。没有 `dtifit` 的平台只跳过 FSL 对照测试，不降低其余覆盖要求。
+可追溯的最终 v0.2 发布线门禁运行于代码冻结提交 `90a0553`：Linux 完成
+`535 passed, 7 skipped`，合并门禁覆盖 `12,443/12,443` 条可执行语句
+（`100.00%`）。其后的原始 tag 提交以及 2026-08-29 重发只修改文档或发布元数据，
+没有改变 v0.2 算法源码和测试。
 
 详细方法、数值误差、复现步骤、贡献和安全规范见 [文档目录](docs/README.md)。项目采用
 [GPL-3.0-only](LICENSE)，第三方来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

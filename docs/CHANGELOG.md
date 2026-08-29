@@ -9,6 +9,12 @@ No changes yet.
 
 ## [0.2.0] - 2026-08-24
 
+> **Maintenance republication (2026-08-29):** this tag was republished to
+> correct and consolidate documentation and release metadata. The algorithm
+> source remains the original v0.2 baseline. A later audit identified workflow
+> and numerical-contract defects that were fixed in `v0.3.0`; new deployments
+> should use `v0.3.0`.
+
 ### Added
 
 - Replaced the runtime dependency on FSL preprocessing with a pure-Python
@@ -130,8 +136,8 @@ No changes yet.
   `dwi2cond`; it is not a general replacement for FSL commands.
 - Wrapped phase inputs that require PRELUDE remain explicitly unsupported; the
   GRE path accepts an already unwrapped radians-per-second fieldmap.
-- Full-flow `10x` performance is not a `v0.2.0` release claim. Additional
-  performance work is deferred to the `v0.3.0` development cycle.
+- Stage-level timing results are version-, fixture-, host-, worker-, and
+  cache-specific; they do not establish a universal full-workflow speed ratio.
 
 ## [0.1.0] - 2026-08-21
 

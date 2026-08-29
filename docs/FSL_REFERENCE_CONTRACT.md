@@ -2,7 +2,9 @@
 
 This document freezes the local reference boundary for the `v0.2.0` raw-DWI
 work. FSL remains an optional validation dependency and is not imported,
-bundled, or called by the released runtime path.
+bundled, or called by the released runtime path. This inventory is specific to
+the historical v0.2 source; later releases have their own reference set and
+corrected workflow contracts.
 
 ## Source provenance
 
@@ -67,8 +69,8 @@ not evidence that the full SimNIBS `nomoco` path has already passed.
 
 ## Frozen public evidence
 
-The P0--P10 reference foundation is frozen in ten JSON files under
-`tests/fixtures/reference/`:
+The exact v0.2 reference foundation is frozen in the following ten JSON files
+under `tests/fixtures/reference/`:
 
 - `synthetic_nomoco_manifest.json` freezes comparison thresholds;
 - `synthetic_nomoco_reference.json` records the completed public reference;
@@ -83,6 +85,10 @@ The P0--P10 reference foundation is frozen in ten JSON files under
 - `synthetic_topup_reference.json` records the fixed TOPUP reference;
 - `synthetic_eddy_reference.json` records the fixed EDDY `--repol` reference;
 - `synthetic_t1_registration_reference.json` records automatic T1 registration.
+
+These ten files support only the named v0.2 fixtures and thresholds. Their
+presence is not evidence for arbitrary FSL command configurations or for
+workflow and numerical-contract corrections introduced in `v0.3.0`.
 
 The image fixtures are generated on demand and are not stored in the public
 reference directory. Audit all frozen evidence with:

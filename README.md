@@ -19,9 +19,15 @@ Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 
 </div>
 
+> **Historical release.** `v0.2.0` records the original FSL-free preprocessing
+> milestone. A later audit found workflow and numerical-contract defects that
+> were corrected in `v0.3.0`; use `v0.3.0` for new deployments. On 2026-08-29
+> this tag was republished only to improve documentation and release metadata.
+> The algorithm source remains the original `v0.2.0` baseline.
+
 `dwi2cond-xp` is a cross-platform Python pipeline that preprocesses supported
 raw or already-preprocessed single-shell diffusion MRI, generates conductivity
-tensors for SimNIBS 4.6, and runs validated anisotropic finite-element
+tensors for SimNIBS 4.6, and orchestrates anisotropic finite-element
 simulations without requiring FSL at runtime.
 
 This is an independent community project. It is not an official SimNIBS or FSL
@@ -32,11 +38,11 @@ distribution.
 | Contract | Result | Evidence boundary |
 | --- | ---: | --- |
 | SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
-| Python test suite | **100.00% statement coverage** | 12,443/12,443 executable statements across unit tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
-| DTI tensor parity | **relative L2 4.18e-6** | Same HCP input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
+| Python test suite | **100.00% statement coverage** | Recorded final v0.2 release-line gate: 12,443/12,443 executable statements |
+| DTI tensor parity | **relative L2 4.18e-6** | Carried-forward HCP stage result using the same input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
 | DTI fitting wall time | **9.76 s vs 108.23 s · 11.09x** | Same server, input, worker/output boundary; not an end-to-end FEM claim |
-| Conductivity parity | **max abs 0 to 2.22e-16** | Synthetic mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
-| Fixed-montage FEM | **4/4 modes completed** | Real `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
+| Conductivity parity | **max abs 0 to 2.22e-16** | Carried-forward synthetic-mesh result versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
+| Fixed-montage FEM | **4/4 modes completed** | Historical real `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
 
 No anatomical image, subject identifier, voxel derivative, or machine-readable
 subject artifact is distributed. Full methods and evidence boundaries are in
@@ -415,7 +421,7 @@ See [SimNIBS integration](docs/SIMNIBS_INTEGRATION.md).
 
 ## 🧪 Validation evidence
 
-One private HCP subject was used for release-candidate validation. No source
+One private HCP subject was used for historical release-line validation. No source
 image, volumetric derivative, subject identifier, or machine-readable
 subject-level artifact is distributed. The two rendered field-comparison PNGs
 are included as result illustrations without a subject identifier. They must
@@ -435,9 +441,11 @@ retain the HCP acknowledgment and are not a substitute for accepting the
 - Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso;
   all vector E-field NIfTIs were finite and strictly excluded tissues outside
   WM/GM/CSF.
-- The local release test suite completed with `144 passed` and strict
-  `100.00%` statement coverage. Cross-platform CI enforces the same 100%
-  threshold; the FSL comparison is skipped only where `dtifit` is unavailable.
+- The recorded final v0.2 release-line gate ran on code-freeze commit `90a0553`:
+  Linux completed with `535 passed, 7 skipped` and the merged gate covered
+  `12,443/12,443` executable statements (`100.00%`). The subsequent original
+  tag commit and the 2026-08-29 republication changed documentation or release
+  metadata only, not the v0.2 algorithm source or tests.
 
 Exact methods, timing boundaries, and limitations are in
 [Validation](docs/VALIDATION.md), [Benchmarks](docs/BENCHMARKS.md), and

@@ -1,4 +1,20 @@
-# Benchmarks
+# Historical benchmarks
+
+This page preserves stage-level measurements collected during the v0.1 and
+v0.2 development lines. No benchmark was rerun for the 2026-08-29
+documentation and release-metadata republication. The measurements describe
+the named implementation snapshot, fixture, host, worker count, cache state,
+and output boundary; they are not new results from the republished tag.
+
+A later audit identified workflow and numerical-contract defects in v0.2 that
+were corrected in `v0.3.0`. These historical timings remain useful for the
+named stages, but they do not establish the correctness or speed of a new
+deployment. Use v0.3 for current deployments and its own validation evidence.
+
+Unless stated otherwise, the reference was SimNIBS 4.6 with FSL 6.0.4 on the
+same host and input. Ratios compare only paired rows in one table. Fixtures,
+process boundaries, worker counts, warm-cache states, and output sets differ
+between sections, so timings must not be added into an end-to-end result.
 
 ## SimNIBS 4.6 GRE fieldmap path
 
@@ -241,7 +257,7 @@ or field bitwise identity is not claimed. Two fused PCG experiments were
 rejected: one preserved the prior Python outputs bitwise but was slower, while
 the old-NEWMAT serial reduction order reduced FSL agreement. Neither is enabled.
 
-### P11 installed-wheel DAG and persistent kernel cache
+### Installed-wheel DAG and persistent kernel cache
 
 The pre-release candidate wheel, which was still versioned `0.1.0` at the time,
 was installed with `--no-deps` into a
