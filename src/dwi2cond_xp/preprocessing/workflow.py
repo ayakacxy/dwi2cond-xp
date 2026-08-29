@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import importlib.metadata
-import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
+import sys
 from collections.abc import Callable
 
 import nibabel as nib
@@ -90,13 +90,15 @@ def _required_m2m_files(m2m: Path, *, require_fem: bool = False) -> dict[str, Pa
             eeg = candidates[0]
     files: dict[str, Path] = {
         "t1": m2m / "T1.nii.gz",
+        "final_tissues": m2m / "final_tissues.nii.gz",
         "labeling": m2m / "segmentation" / "labeling.nii.gz",
         "bias_corrected": m2m / "segmentation" / "T1_bias_corrected.nii.gz",
     }
     if require_fem:
+        if not m2m.name.startswith("m2m_") or not subject:
+            raise ValueError("FEM requires a CHARM directory named m2m_<subject>")
         files.update(
             {
-                "final_tissues": m2m / "final_tissues.nii.gz",
                 "mesh": mesh,
                 "eeg": eeg,
             }
@@ -273,24 +275,109 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _simnibs_runtime_identity() -> dict[str, object]:
-    """Record the SimNIBS version and entry-module hash actually bound to the FEM cache."""
-
+def _package_version(name: str) -> str:
     try:
-        version = importlib.metadata.version("simnibs")
+        return importlib.metadata.version(name)
     except importlib.metadata.PackageNotFoundError:
-        return {"distribution_version": "not-installed", "module_sha256": None}
-    specification = importlib.util.find_spec("simnibs")
-    origin = None if specification is None else specification.origin
-    module_path = None if origin is None else Path(origin).resolve()
-    return {
-        "distribution_version": version,
-        "module_path": None if module_path is None else str(module_path),
-        "module_sha256": (
-            None
-            if module_path is None or not module_path.is_file()
-            else _sha256(module_path)
+        return "not-installed"
+
+
+def _solver_native_identity(solver: str) -> list[dict[str, object]]:
+    patterns = {
+        "pardiso": ("libmkl_rt.so*", "libmkl_rt.dylib", "mkl_rt*.dll"),
+        "hypre": ("libpetsc*.so*", "libpetsc*.dylib", "petsc*.dll", "libHYPRE*.so*"),
+        "mumps": ("libpetsc*.so*", "libpetsc*.dylib", "petsc*.dll", "lib*mumps*.so*"),
+        "petsc_pardiso": (
+            "libpetsc*.so*",
+            "libpetsc*.dylib",
+            "petsc*.dll",
+            "libmkl_rt.so*",
+            "libmkl_rt.dylib",
+            "mkl_rt*.dll",
         ),
+    }[solver]
+    roots = (
+        Path(sys.prefix) / "lib",
+        Path(sys.prefix) / "Library" / "bin",
+        Path(sys.prefix) / "bin",
+    )
+    files: set[Path] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for pattern in patterns:
+            files.update(path.resolve() for path in root.glob(pattern) if path.is_file())
+    return [
+        {
+            "path": str(path),
+            "size_bytes": int(path.stat().st_size),
+            "sha256": _sha256(path),
+        }
+        for path in sorted(files, key=lambda item: str(item))
+    ]
+
+
+def _simnibs_runtime_identity(solver: str = "pardiso") -> dict[str, object]:
+    """Record the installed FEM implementation, distribution, and native solver identity."""
+
+    if solver not in {"pardiso", "hypre", "mumps", "petsc_pardiso"}:
+        raise ValueError("Unsupported FEM solver identity")
+    try:
+        distribution = importlib.metadata.distribution("simnibs")
+    except importlib.metadata.PackageNotFoundError:
+        return {
+            "distribution_version": "not-installed",
+            "record_sha256": None,
+            "module_files": {},
+            "solver": solver,
+            "solver_packages": {
+                "numpy": _package_version("numpy"),
+                "scipy": _package_version("scipy"),
+                "petsc4py": _package_version("petsc4py"),
+            },
+            "solver_native_files": [],
+            "cache_safe": False,
+        }
+    relative_modules = (
+        "simnibs/simulation/run_simnibs.py",
+        "simnibs/simulation/sim_struct.py",
+        "simnibs/simulation/fem.py",
+        "simnibs/simulation/pardiso.py",
+        "simnibs/utils/cond_utils.py",
+        "simnibs/mesh_tools/mesh_io.py",
+    )
+    module_files: dict[str, object] = {}
+    complete_modules = True
+    for relative in relative_modules:
+        path = Path(distribution.locate_file(relative)).resolve()
+        if path.is_file():
+            module_files[relative] = {
+                "path": str(path),
+                "size_bytes": int(path.stat().st_size),
+                "sha256": _sha256(path),
+            }
+        else:
+            module_files[relative] = None
+            complete_modules = False
+    record = distribution.read_text("RECORD")
+    record_sha256 = (
+        None
+        if record is None
+        else hashlib.sha256(record.encode("utf-8")).hexdigest()
+    )
+    native_files = _solver_native_identity(solver)
+    return {
+        "distribution_version": distribution.version,
+        "record_sha256": record_sha256,
+        "module_files": module_files,
+        "solver": solver,
+        "solver_packages": {
+            "numpy": _package_version("numpy"),
+            "scipy": _package_version("scipy"),
+            "petsc4py": _package_version("petsc4py"),
+        },
+        "solver_native_files": native_files,
+        "cache_safe": bool(record_sha256 and complete_modules and native_files),
     }
 
 
@@ -890,6 +977,7 @@ def run_dwi2cond_pipeline(
                 parameters={
                     "workers": config.workers,
                     "fit": "official-pre-correction-FSL-WLS",
+                    "fit_compatibility_mode": config.fit_compatibility_mode,
                 },
                 implementation_version=version,
             )
@@ -1114,6 +1202,7 @@ def run_dwi2cond_pipeline(
                 )
                 return {"status": report["status"], "mode": active_mode}
 
+            simnibs_runtime = _simnibs_runtime_identity(config.solver)
             stages.append(
                 StageDefinition(
                     stage_name,
@@ -1136,11 +1225,15 @@ def run_dwi2cond_pipeline(
                         "solver": config.solver,
                         "cpus": config.workers,
                         "dry_run": config.fem_smoke == "dry-run",
-                        "simnibs_runtime": _simnibs_runtime_identity(),
+                        "simnibs_runtime": simnibs_runtime,
                     },
                     backend="simnibs-4.6.0",
                     implementation_version=version,
                     preserve_outputs_on_attempt=True,
+                    cacheable=(
+                        config.fem_smoke == "dry-run"
+                        or bool(simnibs_runtime["cache_safe"])
+                    ),
                 )
             )
             fem_dependencies.append(stage_name)

@@ -148,6 +148,11 @@ def test_complete_workflow_writes_stage_manifests_and_reuses_cache(
 
     first = workflow.run_dwi2cond_pipeline(config)
     second = workflow.run_dwi2cond_pipeline(config)
+    robust_config = workflow.Dwi2CondPipelineConfig(
+        **{**config.__dict__, "fit_compatibility_mode": "robust"}
+    )
+    robust = workflow.run_dwi2cond_pipeline(robust_config)
+    strict_again = workflow.run_dwi2cond_pipeline(config)
 
     assert [stage.status for stage in first.stages] == [
         "completed",
@@ -163,7 +168,21 @@ def test_complete_workflow_writes_stage_manifests_and_reuses_cache(
         "cached",
         "cached",
     ]
-    assert calls == {"preprocess": 1, "registration": 1, "qa": 1}
+    assert [stage.status for stage in robust.stages] == [
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+    ]
+    assert [stage.status for stage in strict_again.stages] == [
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+        "completed",
+    ]
+    assert calls == {"preprocess": 3, "registration": 3, "qa": 3}
     assert first.final_tensor.is_file()
     assert json.loads(first.qa_manifest.read_text())["status"] == "completed"
     manifests = sorted((config.output_directory / "manifests").glob("*.json"))
@@ -1029,6 +1048,19 @@ def test_workflow_rejects_missing_files_and_resolves_m2m_fallbacks(tmp_path: Pat
     with pytest.raises(FileNotFoundError, match="t1"):
         workflow._required_m2m_files(config.m2m_directory)
 
+    config = _fixture(tmp_path / "missing-sentinel")
+    config.m2m_directory.joinpath("final_tissues.nii.gz").unlink()
+    with pytest.raises(FileNotFoundError, match="final_tissues"):
+        workflow._required_m2m_files(config.m2m_directory, require_fem=False)
+
+
+def test_fem_rejects_non_charm_directory_name(tmp_path: Path) -> None:
+    config = _fixture(tmp_path)
+    renamed = tmp_path / "subject"
+    config.m2m_directory.rename(renamed)
+    with pytest.raises(ValueError, match=r"m2m_<subject>"):
+        workflow._required_m2m_files(renamed, require_fem=True)
+
 
 def test_eddy_requires_both_readout_and_phase_encoding(tmp_path: Path) -> None:
     config = _fixture(tmp_path)
@@ -1087,34 +1119,75 @@ def test_tensor_publication_rejects_copy_and_provenance_hash_mismatch(
 def test_simnibs_runtime_identity_records_missing_distribution(monkeypatch) -> None:
     monkeypatch.setattr(
         workflow.importlib.metadata,
-        "version",
+        "distribution",
         lambda _name: (_ for _ in ()).throw(
             workflow.importlib.metadata.PackageNotFoundError("simnibs")
         ),
     )
-    assert workflow._simnibs_runtime_identity() == {
-        "distribution_version": "not-installed",
-        "module_sha256": None,
-    }
+    identity = workflow._simnibs_runtime_identity()
+    assert identity["distribution_version"] == "not-installed"
+    assert identity["cache_safe"] is False
+    with pytest.raises(ValueError, match="Unsupported FEM solver identity"):
+        workflow._simnibs_runtime_identity("unknown")
 
 
 def test_simnibs_runtime_identity_records_installed_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    module = tmp_path / "simnibs_init.py"
-    module.write_text("__version__ = '4.6.0'\n", encoding="utf-8")
-    monkeypatch.setattr(workflow.importlib.metadata, "version", lambda _name: "4.6.0")
+    for relative in (
+        "simnibs/simulation/run_simnibs.py",
+        "simnibs/simulation/sim_struct.py",
+        "simnibs/simulation/fem.py",
+        "simnibs/simulation/pardiso.py",
+        "simnibs/utils/cond_utils.py",
+        "simnibs/mesh_tools/mesh_io.py",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative + "\n", encoding="utf-8")
+
+    class Distribution:
+        version = "4.6.0"
+
+        def locate_file(self, relative: str) -> Path:
+            return tmp_path / relative
+
+        def read_text(self, name: str) -> str | None:
+            return "record\n" if name == "RECORD" else None
+
     monkeypatch.setattr(
-        workflow.importlib.util,
-        "find_spec",
-        lambda _name: SimpleNamespace(origin=str(module)),
+        workflow.importlib.metadata, "distribution", lambda _name: Distribution()
+    )
+    native = tmp_path / "libmkl_rt.so"
+    native.write_bytes(b"mkl")
+    monkeypatch.setattr(
+        workflow,
+        "_solver_native_identity",
+        lambda _solver: [
+            {
+                "path": str(native),
+                "size_bytes": native.stat().st_size,
+                "sha256": workflow._sha256(native),
+            }
+        ],
     )
 
-    assert workflow._simnibs_runtime_identity() == {
-        "distribution_version": "4.6.0",
-        "module_path": str(module.resolve()),
-        "module_sha256": workflow._sha256(module),
-    }
+    identity = workflow._simnibs_runtime_identity()
+    assert identity["distribution_version"] == "4.6.0"
+    assert identity["record_sha256"] == workflow.hashlib.sha256(b"record\n").hexdigest()
+    assert identity["cache_safe"] is True
+
+    before = identity["module_files"]["simnibs/simulation/fem.py"]["sha256"]
+    (tmp_path / "simnibs/simulation/fem.py").write_text("changed\n", encoding="utf-8")
+    after = workflow._simnibs_runtime_identity()["module_files"][
+        "simnibs/simulation/fem.py"
+    ]["sha256"]
+    assert after != before
+
+    (tmp_path / "simnibs/simulation/fem.py").unlink()
+    incomplete = workflow._simnibs_runtime_identity()
+    assert incomplete["module_files"]["simnibs/simulation/fem.py"] is None
+    assert incomplete["cache_safe"] is False
 
 
 def test_tensor_publication_failure_restores_previous_valid_pair(

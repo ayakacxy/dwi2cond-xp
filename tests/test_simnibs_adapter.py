@@ -92,6 +92,7 @@ def test_tensor_to_mesh_writes_conductivity_and_qa(monkeypatch, tmp_path: Path) 
         output,
         mode="vn",
         scalar_conductivity={1: 0.1, 2: 0.2},
+        vn_singular_policy="regularize",
         qa_file=qa,
     )
 
@@ -102,6 +103,7 @@ def test_tensor_to_mesh_writes_conductivity_and_qa(monkeypatch, tmp_path: Path) 
     report = json.loads(qa.read_text(encoding="utf-8"))
     assert report["tetrahedra"] == 2
     assert report["mode"] == "vn"
+    assert report["vn_singular_policy"] == "regularize"
 
 
 def test_tensor_to_mesh_counts_true_tetrahedra_in_boolean_mask(

@@ -35,6 +35,11 @@ def _coverage_environment(
     environment["NUMBA_JIT_COVERAGE"] = "1"
     environment["NUMBA_CACHE_DIR"] = str(cache_directory)
     environment["MPLCONFIGDIR"] = str(cache_directory.parent / "matplotlib")
+    temporary_directory = cache_directory.parent / f"tmp-{cache_directory.name}"
+    temporary_directory.mkdir(parents=True, exist_ok=True)
+    environment["TMPDIR"] = str(temporary_directory)
+    environment["TEMP"] = str(temporary_directory)
+    environment["TMP"] = str(temporary_directory)
     source = str(ROOT / "src")
     existing = environment.get("PYTHONPATH")
     environment["PYTHONPATH"] = source if not existing else os.pathsep.join((source, existing))
@@ -227,7 +232,11 @@ def main() -> int:
 
     temporary: tempfile.TemporaryDirectory[str] | None = None
     if args.keep_workspace is None:
-        temporary = tempfile.TemporaryDirectory(prefix="dwi2cond-coverage-")
+        temporary_root = ROOT / ".work"
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(
+            prefix="dwi2cond-coverage-", dir=temporary_root
+        )
         workspace = Path(temporary.name)
     else:
         workspace = args.keep_workspace.resolve()

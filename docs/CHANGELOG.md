@@ -7,10 +7,24 @@ versions follow semantic versioning.
 
 No unreleased changes.
 
-## [0.3.0] - 2026-08-26
+## [0.3.0] - 2026-08-29
 
 ### Fixed
 
+- Replaced NiBabel orientation inference with the FSL 6.0.4/NewNifti float32
+  Gram-Schmidt, signed-permutation, and strict tie-breaking algorithm; the
+  high-obliquity counterexample and all 48 signed permutations now match real
+  `fslreorient2std` data and geometry.
+- Pinned the validated nonlinear runtime to NumPy 2.3.0 and Numba 0.64.0, added
+  raw-QA fitting mode to cache identity, required the CHARM `final_tissues`
+  sentinel for every T1 workflow, and propagated resolved fallback meshes into
+  the real SimNIBS session.
+- Bound FEM cache reuse to the installed SimNIBS RECORD, actual computation
+  modules, numerical packages, and native solver libraries; incomplete backend
+  identity now disables FEM cache hits.
+- Replaced the silent VN zero-determinant scale substitution with a default
+  explicit error and an opt-in, QA-recorded anisotropy-bound regularization
+  policy for nonzero singular tensors.
 - Closed the fresh independent re-audit findings (`4 P1 + 2 P2 + 1 P3`):
   raw-moving MCFLIRT and thin-volume `fix2D`, caller-specific FLIRT/MCFLIRT/
   APPLYWARP sinc semantics, TOPUP final-support zeroing, full-affine FNIRT
@@ -92,6 +106,9 @@ No unreleased changes.
 
 ### Added
 
+- Added the third independent v0.3.0 algorithm re-audit and its issue-by-issue
+  remediation report, including high-obliquity orientation, cache-composition,
+  real SimNIBS session-preparation, and singular-VN stability gates.
 - Added the latest-tag independent re-audit and its issue-by-issue closure
   report, including `13370/13370` production coverage and explicit FSL 6.0.4
   reference gates.

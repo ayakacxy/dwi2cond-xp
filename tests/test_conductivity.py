@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from dwi2cond_xp import conductivity as conductivity_module
 from dwi2cond_xp.conductivity import (
     _adjust_excentricity,
     _anisotropic_intensity_scale,
@@ -122,6 +123,7 @@ def test_eigenvalue_repairs_and_excentricity_branches():
         ({"max_ratio": 0.5}, "max_ratio"),
         ({"max_cond": 0}, "max_cond"),
         ({"weights": np.array([0.0])}, "weights"),
+        ({"vn_singular_policy": "bad"}, "vn_singular_policy"),
     ],
 )
 def test_conductivity_rejects_invalid_contract(kwargs, message):
@@ -174,6 +176,61 @@ def test_vn_excentricity_and_mc_without_intensity_are_supported():
     )
     assert np.linalg.det(vn[0]) == pytest.approx(0.126**3)
     assert np.allclose(mc[0], np.eye(3) * 4.0 ** (1 / 3))
+
+
+def test_vn_nonzero_singular_tensor_requires_explicit_stability_policy():
+    tensor = np.diag([1.0, 1.0, 0.0])[None]
+    with pytest.raises(ValueError, match="VN determinant normalization is undefined"):
+        tensors_to_conductivity(
+            tensor,
+            np.array([1]),
+            {1: 0.126},
+            mode="vn",
+            anisotropic_tissues=(1,),
+        )
+
+    conductivity, report = tensors_to_conductivity(
+        tensor,
+        np.array([1]),
+        {1: 0.126},
+        mode="vn",
+        anisotropic_tissues=(1,),
+        vn_singular_policy="regularize",
+    )
+    eigenvalues = np.linalg.eigvalsh(conductivity[0])
+    assert np.all(np.isfinite(conductivity))
+    assert np.all(eigenvalues > 0.0)
+    assert eigenvalues[-1] / eigenvalues[0] <= 10.0
+    assert report["tissues"]["1"]["regularized_singular_tensors"] == 1
+    assert report["vn_singular_policy"] == "regularize"
+
+
+def test_vn_singular_policy_is_rejected_for_other_modes():
+    with pytest.raises(ValueError, match="only consumed by vn"):
+        tensors_to_conductivity(
+            np.eye(3)[None],
+            np.array([1]),
+            {1: 0.126},
+            mode="dir",
+            vn_singular_policy="regularize",
+        )
+
+
+def test_vn_regularization_rejects_a_nonpositive_repair(monkeypatch):
+    monkeypatch.setattr(
+        conductivity_module,
+        "_fix_eigenvalues",
+        lambda values, *_args: (np.zeros_like(values), {}),
+    )
+    with pytest.raises(ValueError, match="did not produce a positive determinant"):
+        tensors_to_conductivity(
+            np.diag([1.0, 1.0, 0.0])[None],
+            np.array([1]),
+            {1: 0.126},
+            mode="vn",
+            anisotropic_tissues=(1,),
+            vn_singular_policy="regularize",
+        )
 
 
 @pytest.mark.parametrize("mode", ["dir", "mc"])

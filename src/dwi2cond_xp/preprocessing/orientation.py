@@ -10,6 +10,148 @@ import numpy as np
 from ..registration import matrix_to_tensor6, tensor6_to_matrix
 
 
+def _f32(value: float | np.floating) -> np.float32:
+    return np.float32(value)
+
+
+def _f32_norm(x: np.float32, y: np.float32, z: np.float32) -> np.float32:
+    squared = _f32(_f32(x * x) + _f32(y * y))
+    squared = _f32(squared + _f32(z * z))
+    return _f32(np.sqrt(squared))
+
+
+def _f32_dot(
+    x1: np.float32,
+    y1: np.float32,
+    z1: np.float32,
+    x2: np.float32,
+    y2: np.float32,
+    z2: np.float32,
+) -> np.float32:
+    value = _f32(_f32(x1 * x2) + _f32(y1 * y2))
+    return _f32(value + _f32(z1 * z2))
+
+
+def _fsl_determinant(matrix: np.ndarray) -> np.float32:
+    values = np.asarray(matrix, dtype=np.float32)
+    r11, r12, r13 = (float(value) for value in values[0])
+    r21, r22, r23 = (float(value) for value in values[1])
+    r31, r32, r33 = (float(value) for value in values[2])
+    return _f32(
+        r11 * r22 * r33
+        - r11 * r32 * r23
+        - r21 * r12 * r33
+        + r21 * r32 * r13
+        + r31 * r12 * r23
+        - r31 * r22 * r13
+    )
+
+
+def _fsl_axis_orientation(affine: np.ndarray) -> np.ndarray:
+    q = np.asarray(affine[:3, :3], dtype=np.float32).copy()
+
+    norm = _f32_norm(q[0, 0], q[1, 0], q[2, 0])
+    if norm == 0.0:
+        raise ValueError("The orientation affine has a zero-length spatial axis")
+    q[:, 0] = np.asarray([_f32(value / norm) for value in q[:, 0]])
+
+    norm = _f32_norm(q[0, 1], q[1, 1], q[2, 1])
+    if norm == 0.0:
+        raise ValueError("The orientation affine has a zero-length spatial axis")
+    q[:, 1] = np.asarray([_f32(value / norm) for value in q[:, 1]])
+
+    projection = _f32_dot(*q[:, 0], *q[:, 1])
+    if abs(float(projection)) > 1.0e-4:
+        q[:, 1] = np.asarray(
+            [_f32(q[row, 1] - _f32(projection * q[row, 0])) for row in range(3)]
+        )
+        norm = _f32_norm(*q[:, 1])
+        if norm == 0.0:
+            raise ValueError("The orientation affine has parallel spatial axes")
+        q[:, 1] = np.asarray([_f32(value / norm) for value in q[:, 1]])
+
+    norm = _f32_norm(*q[:, 2])
+    if norm == 0.0:
+        q[:, 2] = np.asarray(
+            [
+                _f32(q[1, 0] * q[2, 1] - q[2, 0] * q[1, 1]),
+                _f32(q[2, 0] * q[0, 1] - q[0, 0] * q[2, 1]),
+                _f32(q[0, 0] * q[1, 1] - q[1, 0] * q[0, 1]),
+            ],
+            dtype=np.float32,
+        )
+    else:
+        q[:, 2] = np.asarray([_f32(value / norm) for value in q[:, 2]])
+
+    projection = _f32_dot(*q[:, 0], *q[:, 2])
+    if abs(float(projection)) > 1.0e-4:
+        q[:, 2] = np.asarray(
+            [_f32(q[row, 2] - _f32(projection * q[row, 0])) for row in range(3)]
+        )
+        norm = _f32_norm(*q[:, 2])
+        if norm == 0.0:
+            raise ValueError("The orientation affine has dependent spatial axes")
+        q[:, 2] = np.asarray([_f32(value / norm) for value in q[:, 2]])
+
+    projection = _f32_dot(*q[:, 1], *q[:, 2])
+    if abs(float(projection)) > 1.0e-4:
+        q[:, 2] = np.asarray(
+            [_f32(q[row, 2] - _f32(projection * q[row, 1])) for row in range(3)]
+        )
+        norm = _f32_norm(*q[:, 2])
+        if norm == 0.0:
+            raise ValueError("The orientation affine has dependent spatial axes")
+        q[:, 2] = np.asarray([_f32(value / norm) for value in q[:, 2]])
+
+    determinant = _fsl_determinant(q)
+    if determinant == 0.0:
+        raise ValueError("The orientation affine has singular normalized axes")
+
+    best_trace = _f32(-666.0)
+    best = (0, 1, 2, 1, 1, 1)
+    for first_axis in range(3):
+        for second_axis in range(3):
+            if first_axis == second_axis:
+                continue
+            for third_axis in range(3):
+                if third_axis in (first_axis, second_axis):
+                    continue
+                for first_sign in (-1, 1):
+                    for second_sign in (-1, 1):
+                        for third_sign in (-1, 1):
+                            permutation = np.zeros((3, 3), dtype=np.float32)
+                            permutation[0, first_axis] = first_sign
+                            permutation[1, second_axis] = second_sign
+                            permutation[2, third_axis] = third_sign
+                            if _fsl_determinant(permutation) * determinant <= 0.0:
+                                continue
+                            product = np.empty((3, 3), dtype=np.float32)
+                            for row in range(3):
+                                for column in range(3):
+                                    value = _f32(
+                                        permutation[row, 0] * q[0, column]
+                                        + permutation[row, 1] * q[1, column]
+                                    )
+                                    product[row, column] = _f32(
+                                        value + permutation[row, 2] * q[2, column]
+                                    )
+                            trace = _f32(_f32(product[0, 0] + product[1, 1]) + product[2, 2])
+                            if trace > best_trace:
+                                best_trace = trace
+                                best = (
+                                    first_axis,
+                                    second_axis,
+                                    third_axis,
+                                    first_sign,
+                                    second_sign,
+                                    third_sign,
+                                )
+    return np.asarray(
+        [[best[0], best[3]], [best[1], best[4]], [best[2], best[5]]],
+        dtype=np.float64,
+    )
+
+
 def fsl_canonical_orientation(affine: np.ndarray) -> np.ndarray:
     """Return the storage transform used by FSL ``fslreorient2std``.
 
@@ -23,7 +165,7 @@ def fsl_canonical_orientation(affine: np.ndarray) -> np.ndarray:
     determinant = float(np.linalg.det(matrix[:3, :3]))
     if abs(determinant) < 1e-12:
         raise ValueError("The orientation affine must have nonsingular spatial axes")
-    current = nib.orientations.io_orientation(matrix)
+    current = _fsl_axis_orientation(matrix)
     target_codes = ("R", "A", "S") if determinant > 0 else ("L", "A", "S")
     target = nib.orientations.axcodes2ornt(target_codes)
     return nib.orientations.ornt_transform(current, target)

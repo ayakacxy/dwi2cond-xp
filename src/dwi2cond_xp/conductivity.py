@@ -121,6 +121,7 @@ def tensors_to_conductivity(
     max_cond: float = 2.0,
     excentricity_scaling: float | None = None,
     correct_intensity: bool = True,
+    vn_singular_policy: str = "error",
 ) -> tuple[np.ndarray, dict[str, object]]:
     """Convert element- or voxel-sampled diffusion tensors to conductivity.
 
@@ -134,6 +135,10 @@ def tensors_to_conductivity(
         raise ValueError("tensors must be Nx3x3 and N must match tissue_tags")
     if mode not in {"dir", "vn", "mc"}:
         raise ValueError("mode must be dir, vn, or mc")
+    if vn_singular_policy not in {"error", "regularize"}:
+        raise ValueError("vn_singular_policy must be error or regularize")
+    if mode != "vn" and vn_singular_policy != "error":
+        raise ValueError("vn_singular_policy is only consumed by vn mode")
     if max_ratio < 1 or max_cond <= 0:
         raise ValueError("max_ratio must be >= 1 and max_cond must be > 0")
     element_weights = (
@@ -157,7 +162,11 @@ def tensors_to_conductivity(
 
     output = np.zeros_like(tensors)
     anisotropic = set(int(tag) for tag in anisotropic_tissues)
-    reports: dict[str, object] = {"mode": mode, "tissues": {}}
+    reports: dict[str, object] = {
+        "mode": mode,
+        "tissues": {},
+        "vn_singular_policy": vn_singular_policy,
+    }
     pending: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
     mean_determinant: dict[int, float] = {}
     for tag in np.unique(tags):
@@ -175,7 +184,27 @@ def tensors_to_conductivity(
 
         if mode == "vn":
             determinant_scale = np.abs(np.prod(eigenvalues, axis=1)) ** (1.0 / 3.0)
-            determinant_scale[determinant_scale == 0] = 1.0
+            singular = ~np.isfinite(determinant_scale) | (determinant_scale == 0.0)
+            regularization = None
+            if np.any(singular):
+                if vn_singular_policy == "error":
+                    raise ValueError(
+                        f"VN determinant normalization is undefined for "
+                        f"{int(np.count_nonzero(singular))} nonzero singular tensor(s) "
+                        f"in tissue {tag_int}; use vn_singular_policy=regularize "
+                        "for the explicit anisotropy-bound projection"
+                    )
+                eigenvalues[singular], regularization = _fix_eigenvalues(
+                    eigenvalues[singular],
+                    np.inf,
+                    max_ratio,
+                    conductivity,
+                )
+                determinant_scale = np.abs(np.prod(eigenvalues, axis=1)) ** (1.0 / 3.0)
+                if np.any(~np.isfinite(determinant_scale)) or np.any(
+                    determinant_scale <= 0.0
+                ):
+                    raise ValueError("VN singular-tensor regularization did not produce a positive determinant")
             eigenvalues /= determinant_scale[:, None]
             eigenvalues, first = _fix_eigenvalues(
                 eigenvalues, max_cond, max_ratio, conductivity
@@ -190,6 +219,8 @@ def tensors_to_conductivity(
             reports["tissues"][str(tag_int)] = {
                 "elements": int(indices.size),
                 "zero_tensors": int(np.count_nonzero(zero)),
+                "regularized_singular_tensors": int(np.count_nonzero(singular)),
+                "singular_regularization_fix": regularization,
                 "first_fix": first,
                 "second_fix": second,
             }

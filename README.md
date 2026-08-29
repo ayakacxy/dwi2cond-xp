@@ -47,7 +47,7 @@ distribution.
 | Contract | Result | Evidence boundary |
 | --- | ---: | --- |
 | SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
-| Python test suite | **100.00% statement coverage** | 13,478/13,478 executable statements across 653 passed tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
+| Python test suite | **100.00% statement coverage** | 13,607/13,607 executable statements across 670 passed tests and real synthetic TOPUP/EDDY/FNIRT E2E paths |
 | DTI tensor parity | **relative L2 4.18e-6** | Same HCP input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
 | Conductivity parity | **max abs 0 to 2.22e-16** | Synthetic mesh versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
 | Fixed-montage FEM | **4/4 modes completed** | Real `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
@@ -79,14 +79,15 @@ included. It also repairs the workflow lineage, masking, fitting semantics,
 TOPUP-to-EDDY closure, official defaults, pre-fitted tensor import, and m2m
 publication defects found by the v0.2.0 audit. FSL is retained only as an
 optional local numerical reference; it is not called by the released runtime.
-The final-tag independent re-audit's `6 P1 + 9 P2/P3` finding clusters are
-closed in the published v0.3.0 release. This does not assert bitwise equality
-for every FSL optimizer or a new full-subject official A/B; the current
-numerical boundary is documented in the
-[final remediation report](docs/V0.3.0_LATEST_TAG_REMEDIATION_REPORT_2026-08-27.md).
+The final v0.3.0 remediation also closes the later orientation, dependency,
+cache, CHARM/FEM composition, and singular-VN findings. This does not assert
+bitwise equality for every FSL optimizer or a new full-subject official A/B;
+the current numerical boundary is documented in the
+[latest remediation report](docs/V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-29.md).
 
 The pure-Python DTI and tensor-mapping core uses NumPy, SciPy, NiBabel, h5py,
-and tqdm. Mesh conductivity, FEM, and lead-field workflows require exactly
+and tqdm. The validated nonlinear runtime is pinned to NumPy 2.3.0 and Numba
+0.64.0. Mesh conductivity, FEM, and lead-field workflows require exactly
 SimNIBS 4.6.0. Platform support for those workflows is limited to platforms on
 which SimNIBS 4.6.0 itself can be installed and validated.
 
@@ -183,6 +184,15 @@ limited to 10. `vn` performs normalization, safety correction, renormalization,
 and a second safety correction; a bound-triggered final correction can
 therefore slightly perturb the ideal determinant equality above. Tissues not
 selected for anisotropy use $\boldsymbol\Sigma_i=\sigma_t\mathbf I$.
+
+A nonzero rank-deficient tensor has no defined VN determinant normalization.
+The default policy therefore raises an explicit error instead of emitting NaN
+or silently substituting a scale. `tensor-to-mesh --vn-singular-policy
+regularize` is an opt-in numerical-stability extension: it projects the
+singular eigensystem to the configured anisotropy bound before the existing
+SimNIBS safety passes and records the repaired-element count in QA. This
+extension is explicit and is not presented as the literal SimNIBS 4.6
+rank-deficient branch.
 
 References:
 
@@ -491,9 +501,11 @@ retain the HCP acknowledgment and are not a substitute for accepting the
 - Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso;
   all vector E-field NIfTIs were finite and strictly excluded tissues outside
   WM/GM/CSF.
-- The final v0.3.0 gate completed with `641 passed, 5 skipped` in the main batch,
-  `12 passed` in the montage batch, and strict `100.00%` statement coverage over
-  all `13,478/13,478` executable statements.
+- The final v0.3.0 gate completed with `670 passed` and no skips when every real
+  FSL probe was configured. The clean coverage run completed with `658 passed`
+  in the main batch, `12 passed` in the montage batch, all real synthetic
+  TOPUP/EDDY/FNIRT CLI paths, and strict `100.00%` statement coverage over all
+  `13,607/13,607` executable statements.
   Cross-platform CI enforces the same threshold; optional reference and
   integration tests are skipped only when their external prerequisites are
   unavailable.

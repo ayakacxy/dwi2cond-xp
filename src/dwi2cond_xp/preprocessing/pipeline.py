@@ -50,6 +50,7 @@ class StageDefinition:
     backend: str = "python-optimized"
     implementation_version: str = "unknown"
     preserve_outputs_on_attempt: bool = False
+    cacheable: bool = True
 
 
 @dataclass(frozen=True)
@@ -440,6 +441,8 @@ class PipelineRunner:
         manifest_path: Path,
         fingerprint: str,
     ) -> StageRunResult | None:
+        if not stage.cacheable:
+            return None
         if not manifest_path.is_file():
             return None
         try:

@@ -3,7 +3,8 @@
 ## Raw DWI without correction
 
 `preprocess-nomoco` implements the SimNIBS 4.6 `nomoco` path. It reorients the
-NIfTI storage, registers only the exact `b=0` volumes to construct their mean
+NIfTI storage with the FSL/NewNifti float32 Gram-Schmidt, signed-permutation,
+and strict tie-breaking rules, registers only the exact `b=0` volumes to construct their mean
 and brain mask, applies the official nonnegative threshold only at the final
 fit boundary, and then runs WLS fitting. It does not apply the estimated b0 transforms to the DWI and
 does not estimate motion, eddy-current, or susceptibility fields.
@@ -155,6 +156,20 @@ orientation, and scanner coordinates.
 The compatible brain mask follows the SimNIBS `dwi2cond` labeling interval
 1 through 499. The final tensor is written to the T1 grid and placed at
 `m2m_<subject>/DTI_coregT1_tensor.nii.gz` for SimNIBS integration.
+
+Every T1 workflow requires `final_tissues.nii.gz`, even when FEM execution is
+disabled, matching the official CHARM sentinel. FEM additionally requires a
+directory named `m2m_<subject>`, an EEG 10-10 cap, and a resolved head mesh.
+When the standard `<subject>.msh` name is unavailable and exactly one mesh is
+present, that resolved mesh is passed explicitly as `SESSION.fnamehead`; dry-run
+validation and the real SimNIBS preparation path therefore consume the same
+mesh.
+
+For public `tensor-to-mesh` VN conversion, a nonzero singular tensor is rejected
+by default. `--vn-singular-policy regularize` explicitly projects its
+eigenvalues to the configured anisotropy ratio before the ordinary safety
+passes and records `regularized_singular_tensors` in the QA JSON. Supplying this
+VN-only option with `dir` or `mc` is rejected as an unused-input error.
 
 Shape, affine, finite-value, valid-mask, and provenance failures are reported
 explicitly. An anisotropic workflow never falls back silently to scalar FEM.

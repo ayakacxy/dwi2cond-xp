@@ -291,9 +291,11 @@ def test_registration_and_mesh_routes(monkeypatch, tmp_path: Path) -> None:
                 "mesh",
                 "output",
                 "--mode",
-                "mc",
+                "vn",
                 "--cond-json",
                 str(cond),
+                "--vn-singular-policy",
+                "regularize",
             ]
         )
         == 0
@@ -301,6 +303,7 @@ def test_registration_and_mesh_routes(monkeypatch, tmp_path: Path) -> None:
     assert np.array_equal(calls["register"][1]["world_transform"], np.eye(4))
     assert calls["register"][1]["alignment_assumption"] == "external_world_transform"
     assert calls["mesh"][1]["scalar_conductivity"] == {1: 0.12, 2: 0.27}
+    assert calls["mesh"][1]["vn_singular_policy"] == "regularize"
 
 
 def test_automatic_t1_registration_route_uses_charm_contract(

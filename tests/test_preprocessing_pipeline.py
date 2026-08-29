@@ -78,6 +78,34 @@ def test_pipeline_manifest_records_contract_and_uses_valid_cache(tmp_path: Path)
     assert progress[-1] == ("fit", 1, 1, "cached")
 
 
+def test_pipeline_can_disable_cache_when_backend_identity_is_incomplete(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "input.txt"
+    source.write_text("source\n", encoding="utf-8")
+    output = tmp_path / "output.txt"
+    calls: list[int] = []
+
+    def action() -> None:
+        calls.append(1)
+        output.write_text(f"run-{len(calls)}\n", encoding="utf-8")
+
+    stage = StageDefinition(
+        "fem",
+        action,
+        inputs=(source,),
+        outputs=(ArtifactContract(output, "text"),),
+        cacheable=False,
+    )
+    first = PipelineRunner(tmp_path / "manifests").run((stage,))[0]
+    second = PipelineRunner(tmp_path / "manifests").run((stage,))[0]
+
+    assert first.status == "completed"
+    assert second.status == "completed"
+    assert calls == [1, 1]
+    assert output.read_text(encoding="utf-8") == "run-2\n"
+
+
 def test_pipeline_reexecutes_when_cached_artifact_is_structurally_invalid(
     tmp_path: Path,
 ) -> None:

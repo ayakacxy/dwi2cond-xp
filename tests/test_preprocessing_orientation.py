@@ -1,4 +1,5 @@
 import os
+import itertools
 from pathlib import Path
 import shutil
 import subprocess
@@ -7,6 +8,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from dwi2cond_xp.preprocessing import orientation as orientation_module
 from dwi2cond_xp.preprocessing import (
     copy_nifti_geometry,
     decompose_tensor6,
@@ -64,6 +66,80 @@ def test_fsl_canonical_reorientation_preserves_world_samples(
     assert int(result.header["qform_code"]) == 1
     assert int(result.header["sform_code"]) == 2
     assert result.get_data_dtype() == np.dtype(np.float32)
+
+
+def test_fsl_orientation_matches_newnifti_high_obliquity_counterexample():
+    affine = np.array(
+        [
+            [0.601011634, 1.401550531, 0.942415297, 92.374305725],
+            [0.538023829, -1.309910774, 1.315203071, -25.246667862],
+            [-0.660363793, 0.208347276, 1.929259419, 25.766641617],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+
+    assert np.array_equal(
+        fsl_canonical_orientation(affine),
+        np.array([[0.0, -1.0], [1.0, -1.0], [2.0, 1.0]]),
+    )
+
+
+def test_fsl_orientation_covers_all_signed_permutations():
+    for axes in itertools.permutations(range(3)):
+        for signs in itertools.product((-1.0, 1.0), repeat=3):
+            affine = np.eye(4)
+            affine[:3, :3] = np.eye(3)[:, axes] * np.asarray(signs)
+            orientation = fsl_canonical_orientation(affine)
+            target = ("R", "A", "S") if np.linalg.det(affine[:3, :3]) > 0 else ("L", "A", "S")
+            transformed = affine @ nib.orientations.inv_ornt_aff(orientation, (2, 3, 4))
+            assert nib.aff2axcodes(transformed) == target
+
+
+def test_newnifti_orthogonalization_and_degenerate_axis_branches(monkeypatch):
+    zero_first = np.eye(4)
+    zero_first[:3, 0] = 0.0
+    with pytest.raises(ValueError, match="zero-length"):
+        orientation_module._fsl_axis_orientation(zero_first)
+
+    zero_second = np.eye(4)
+    zero_second[:3, 1] = 0.0
+    with pytest.raises(ValueError, match="zero-length"):
+        orientation_module._fsl_axis_orientation(zero_second)
+
+    parallel_second = np.eye(4)
+    parallel_second[:3, 1] = 2.0 * parallel_second[:3, 0]
+    with pytest.raises(ValueError, match="parallel"):
+        orientation_module._fsl_axis_orientation(parallel_second)
+
+    oblique_second = np.eye(4)
+    oblique_second[:3, 1] = [1.0, 1.0, 0.0]
+    assert orientation_module._fsl_axis_orientation(oblique_second).shape == (3, 2)
+
+    zero_third = np.eye(4)
+    zero_third[:3, 2] = 0.0
+    assert orientation_module._fsl_axis_orientation(zero_third).shape == (3, 2)
+
+    parallel_first = np.eye(4)
+    parallel_first[:3, 2] = 2.0 * parallel_first[:3, 0]
+    with pytest.raises(ValueError, match="dependent"):
+        orientation_module._fsl_axis_orientation(parallel_first)
+
+    oblique_first = np.eye(4)
+    oblique_first[:3, 2] = [1.0, 0.0, 1.0]
+    assert orientation_module._fsl_axis_orientation(oblique_first).shape == (3, 2)
+
+    parallel_second_after_first = np.eye(4)
+    parallel_second_after_first[:3, 2] = [1.0, 1.0, 0.0]
+    with pytest.raises(ValueError, match="dependent"):
+        orientation_module._fsl_axis_orientation(parallel_second_after_first)
+
+    oblique_third = np.eye(4)
+    oblique_third[:3, 2] = [0.0, 1.0, 1.0]
+    assert orientation_module._fsl_axis_orientation(oblique_third).shape == (3, 2)
+
+    monkeypatch.setattr(orientation_module, "_fsl_determinant", lambda _matrix: np.float32(0.0))
+    with pytest.raises(ValueError, match="singular normalized"):
+        orientation_module._fsl_axis_orientation(np.eye(4))
 
 
 def test_reorientation_uses_qform_when_sform_is_unset(tmp_path):
@@ -297,6 +373,41 @@ def test_real_fsl_reorientation_and_geometry_ab(tmp_path):
     assert np.allclose(our_image.get_sform(), fsl_image.get_sform())
     assert our_image.header.get_zooms() == fsl_image.header.get_zooms()
 
+    oblique_values = np.arange(3 * 4 * 5 * 2, dtype=np.float32).reshape(3, 4, 5, 2)
+    oblique_affine = np.array(
+        [
+            [0.601011634, 1.401550531, 0.942415297, 92.374305725],
+            [0.538023829, -1.309910774, 1.315203071, -25.246667862],
+            [-0.660363793, 0.208347276, 1.929259419, 25.766641617],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    oblique_source = tmp_path / "oblique_source.nii.gz"
+    fsl_oblique = tmp_path / "fsl_oblique.nii.gz"
+    our_oblique = tmp_path / "our_oblique.nii.gz"
+    _write_image(oblique_source, oblique_values, oblique_affine)
+    subprocess.run(
+        [str(reorient), str(oblique_source), str(fsl_oblique)],
+        check=True,
+        env=_fsl_environment(reorient),
+        capture_output=True,
+        text=True,
+    )
+    write_fsl_reoriented(oblique_source, our_oblique)
+    fsl_oblique_image = nib.load(fsl_oblique)
+    our_oblique_image = nib.load(our_oblique)
+    assert np.array_equal(
+        np.asarray(our_oblique_image.dataobj), np.asarray(fsl_oblique_image.dataobj)
+    )
+    assert np.allclose(our_oblique_image.get_qform(), fsl_oblique_image.get_qform())
+    assert np.allclose(our_oblique_image.get_sform(), fsl_oblique_image.get_sform())
+    fsl_pe = fsl_oblique_image.affine[:3, 1]
+    our_pe = our_oblique_image.affine[:3, 1]
+    assert np.allclose(
+        our_pe / np.linalg.norm(our_pe),
+        fsl_pe / np.linalg.norm(fsl_pe),
+    )
+
     geometry_source = tmp_path / "geometry.nii.gz"
     destination = tmp_path / "destination.nii.gz"
     fsl_geometry = tmp_path / "fsl_geometry.nii.gz"
@@ -320,6 +431,46 @@ def test_real_fsl_reorientation_and_geometry_ab(tmp_path):
     assert np.allclose(our_geometry_image.get_qform(), fsl_geometry_image.get_qform())
     assert np.allclose(our_geometry_image.get_sform(), fsl_geometry_image.get_sform())
     assert our_geometry_image.header.get_zooms() == fsl_geometry_image.header.get_zooms()
+
+
+def test_all_signed_permutations_match_real_fsl(tmp_path):
+    reorient = _fsl_program("fslreorient2std")
+    if reorient is None:
+        pytest.skip("Set FSLMATHS or PATH to run the real FSL orientation A/B")
+    values = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
+
+    for index, (axes, signs) in enumerate(
+        itertools.product(
+            itertools.permutations(range(3)),
+            itertools.product((-1.0, 1.0), repeat=3),
+        )
+    ):
+        affine = np.eye(4)
+        affine[:3, :3] = (
+            np.eye(3)[:, axes]
+            * np.asarray(signs)
+            * np.asarray([1.25, 2.0, 2.5])
+        )
+        affine[:3, 3] = [7.0, -11.0, 13.0]
+        source = tmp_path / f"source_{index}.nii.gz"
+        fsl_output = tmp_path / f"fsl_{index}.nii.gz"
+        our_output = tmp_path / f"ours_{index}.nii.gz"
+        _write_image(source, values, affine)
+        subprocess.run(
+            [str(reorient), str(source), str(fsl_output)],
+            check=True,
+            env=_fsl_environment(reorient),
+            capture_output=True,
+            text=True,
+        )
+        write_fsl_reoriented(source, our_output)
+        fsl_image = nib.load(fsl_output)
+        our_image = nib.load(our_output)
+        assert np.array_equal(
+            np.asarray(our_image.dataobj), np.asarray(fsl_image.dataobj)
+        )
+        assert np.allclose(our_image.get_qform(), fsl_image.get_qform())
+        assert np.allclose(our_image.get_sform(), fsl_image.get_sform())
 
 
 def test_real_fsl_tensor_decomposition_ab(tmp_path):

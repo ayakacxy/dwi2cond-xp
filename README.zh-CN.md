@@ -71,13 +71,15 @@ GRE/FUGUE分支、固定TOPUP分支，以及支持可选TOPUP场的单壳EDDY `-
 本版本还修复了 v0.2.0 审计发现的产物流向、mask、拟合语义、TOPUP→EDDY 闭环、
 官方默认值、预拟合 tensor 导入和 m2m 发布问题。FSL 仅作为可选的本地数值
 reference 保留，不会被正式预处理运行路径调用。
-最终 tag 独立复审记录的 `6 P1 + 9 P2/P3` 问题簇均已在正式发布的 v0.3.0 中关闭；
-这不等于所有 FSL optimizer 逐位一致，也不冒充新的真实被试完整官方 A/B。当前数值
-边界见[最终整改报告](docs/V0.3.0_LATEST_TAG_REMEDIATION_REPORT_2026-08-27.md)。
+最终 v0.3.0 整改也关闭了后续发现的方向判定、依赖栈、cache、CHARM/FEM 组合和
+奇异 VN 合同问题；这不等于所有 FSL optimizer 逐位一致，也不冒充新的真实被试完整
+官方 A/B。当前数值边界见
+[最新整改报告](docs/V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-29.md)。
 
-纯 Python DTI/tensor 映射核心依赖 NumPy、SciPy、NiBabel、h5py 和 tqdm。Mesh
-电导率、FEM 与 lead field 固定要求 `SimNIBS 4.6.0 + Python 3.11`；完整流程的平台
-范围受 SimNIBS 4.6.0 可安装和已验证平台限制。
+纯 Python DTI/tensor 映射核心依赖 NumPy、SciPy、NiBabel、h5py 和 tqdm；已验证的
+nonlinear 运行栈固定为 NumPy 2.3.0 与 Numba 0.64.0。Mesh 电导率、FEM 与 lead field
+固定要求 `SimNIBS 4.6.0 + Python 3.11`；完整流程的平台范围受 SimNIBS 4.6.0 可安装
+和已验证平台限制。
 
 ## 🧩 电导率模式
 
@@ -163,6 +165,12 @@ DTI 派生的对照模式，而不是各向异性张量场 [4]。
 “归一化→安全修正→再次归一化→再次安全修正”；如果最后的边界修正被触发，上式中
 理想的行列式等式可能出现轻微偏移。不参与各向异性的组织统一使用
 $\boldsymbol\Sigma_i=\sigma_t\mathbf I$。
+
+非零秩亏张量没有定义良好的 VN 行列式归一化。默认策略会明确报错，不再产生 NaN 或
+静默把缩放因子替换成 1。`tensor-to-mesh --vn-singular-policy regularize` 是显式的
+数值稳定扩展：先把奇异特征系统投影到配置的最大各向异性比，再执行既有 SimNIBS
+安全修正，并在 QA 中记录修复单元数。该扩展不会被描述成 SimNIBS 4.6 秩亏分支的逐句
+等价实现。
 
 参考文献：
 
@@ -360,9 +368,11 @@ panel 共用对称色标；切片只由 brain mask 最大面积决定，不根�
 预处理、配准、建模或 FEM。全电极 lead-field 接口和数据合同已支持并测试，但当前
 发布证据不包含真实被试的全电极完整运行。
 
-最终 v0.3.0 本地门禁为主批次 `641 passed, 5 skipped`、montage `12 passed`，全部
-`13,478/13,478` 个可执行语句严格达到 `100.00%` 覆盖率；跨平台 CI 同样强制该门槛。只有外部 reference 或集成
-前置条件不可用时才跳过对应可选测试。
+最终 v0.3.0 在显式配置全部真实 FSL probes 后为 `670 passed`、零跳过。独立干净
+coverage 门禁为主批次 `658 passed`、montage `12 passed`，真实 synthetic
+TOPUP/EDDY/FNIRT CLI 均完成，全部 `13,607/13,607` 个可执行语句严格达到
+`100.00%` 覆盖率；跨平台 CI 同样强制该门槛。只有外部 reference 或集成前置条件
+不可用时才跳过对应可选测试。
 
 ## 🛣️ 后续路线图
 

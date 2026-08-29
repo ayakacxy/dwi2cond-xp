@@ -38,6 +38,12 @@
 - [v0.3.0 fresh independent re-audit remediation](V0.3.0_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-28.md):
   issue-by-issue closure, discriminative FSL regressions, FEM transaction
   evidence, final coverage gate, and the remaining scientific evidence limits.
+- [v0.3.0 third independent algorithm re-audit](V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-29.md):
+  final released-tree review of orientation, dependency stability, cache,
+  CHARM/FEM composition, and rank-deficient VN behavior.
+- [v0.3.0 third re-audit remediation](V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-29.md):
+  issue-by-issue closure and the final real-FSL, SimNIBS preparation, coverage,
+  package, and publication gates.
 - [Changelog](CHANGELOG.md): released and unreleased user-visible changes.
 - [Release process](RELEASE_PROCESS.md): version, tag, asset, provenance, and
   post-publication verification gates.

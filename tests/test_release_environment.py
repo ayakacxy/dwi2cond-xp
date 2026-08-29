@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import importlib.metadata
 from pathlib import Path
+import tomllib
 
 import pytest
 
 from scripts.verify_simnibs_environment import load_pins, verify_environment
+
+
+def test_project_excludes_unvalidated_fnirt_runtimes() -> None:
+    configuration = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "numpy==2.3.0" in configuration["project"]["dependencies"]
+    assert "numba==0.64.0" in configuration["project"]["dependencies"]
 
 
 def test_frozen_runtime_constraints_match_documented_environment() -> None:

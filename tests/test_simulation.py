@@ -71,6 +71,14 @@ def test_scalar_mode_rejects_unused_tensor(tmp_path: Path) -> None:
         validate_simulation_inputs(subpath, mode="scalar", tensor_file=tensor)
 
 
+def test_simulation_requires_charm_directory_name(tmp_path: Path) -> None:
+    subpath, _ = _make_subject(tmp_path)
+    renamed = tmp_path / "subject"
+    subpath.rename(renamed)
+    with pytest.raises(ValueError, match=r"m2m_<subject>"):
+        validate_simulation_inputs(renamed, mode="scalar", tensor_file=None)
+
+
 def test_anisotropic_mode_requires_tensor(tmp_path: Path) -> None:
     subpath, _ = _make_subject(tmp_path)
     with pytest.raises(ValueError, match="fallback is forbidden"):
@@ -189,6 +197,7 @@ def test_build_tdcs_session_maps_tensor_and_montage(monkeypatch, tmp_path: Path)
     monkeypatch.setitem(sys.modules, "simnibs.sim_struct", sim_struct)
     contract = {
         "subpath": "/tmp/m2m_test",
+        "head_mesh": "/tmp/custom-head.msh",
         "eeg_cap": "/tmp/cap.csv",
         "mode": "vn",
         "tensor": {"path": "/tmp/tensor.nii.gz"},
@@ -197,6 +206,7 @@ def test_build_tdcs_session_maps_tensor_and_montage(monkeypatch, tmp_path: Path)
     session = build_tdcs_session(contract, tmp_path / "output")
 
     assert session.map_to_vol is True
+    assert session.fnamehead == "/tmp/custom-head.msh"
     assert session.tissues_in_niftis == [1, 2, 3]
     assert session.fname_tensor == "/tmp/tensor.nii.gz"
     assert session.tdcs.currents == [0.001, -0.001]

@@ -86,6 +86,8 @@ def validate_simulation_inputs(
     subject_path = Path(subpath).resolve()
     if not subject_path.is_dir():
         raise FileNotFoundError(f"m2m directory does not exist: {subject_path}")
+    if not subject_path.name.startswith("m2m_") or not subject_path.name[4:]:
+        raise ValueError("Simulation requires a CHARM directory named m2m_<subject>")
     head_mesh, t1_file, final_tissues, eeg_cap = _discover_subject_files(subject_path)
     required: dict[str, Path | None] = {
         "head_mesh": head_mesh,
@@ -196,6 +198,7 @@ def build_tdcs_session(
         )
     session = sim_struct.SESSION()
     session.subpath = input_contract["subpath"]
+    session.fnamehead = input_contract["head_mesh"]
     session.pathfem = str(Path(output_directory).resolve())
     session.open_in_gmsh = False
     session.map_to_surf = False

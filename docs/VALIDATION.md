@@ -1,9 +1,11 @@
 # Validation
 
-The final `v0.3.0` correctness gate completed with `641 passed, 5 skipped` in
-the FSL-configured main batch, `12 passed` in the montage batch, and
-`13,478/13,478` executable statements covered (`100.00%`). Real synthetic
-TOPUP, EDDY, and FNIRT CLI paths were included in the coverage union.
+The final `v0.3.0` correctness gate completed with `670 passed` and no skips
+when every real FSL reference probe was configured. The independent clean
+coverage gate completed with `658 passed` in the main batch, `12 passed` in the
+montage batch, and `13,607/13,607` executable statements covered (`100.00%`).
+Real synthetic TOPUP, EDDY, and FNIRT CLI paths were included in the same
+coverage run.
 Cross-platform CI enforces the same source, coverage, documentation, CLI, and
 package gates. A replacement tag is
 published only after main CI succeeds; the tag-triggered Release workflow then
@@ -33,16 +35,20 @@ verified independently.
 
 ## Numerical references
 
-The final-tag independent re-audit identified `6 P1 + 9 P2/P3` finding clusters
-across workflow composition, legacy MCFLIRT control flow, scientific QA/cache
-lineage, FEM transactions, and public API boundaries. The
+The final-tag independent re-audits identified workflow composition, legacy
+MCFLIRT control-flow, scientific QA/cache lineage, FEM transaction, orientation,
+dependency, and public API defects. The
 [independent re-audit](V0.3.0_LATEST_TAG_INDEPENDENT_REAUDIT_REPORT_2026-08-26.md)
-records the discriminative counterexamples, and the
+records the earlier discriminative counterexamples. The
 [final remediation report](V0.3.0_LATEST_TAG_REMEDIATION_REPORT_2026-08-27.md)
-records their fixes and acceptance gates. The final release retains explicit
-limits: EDDY/FNIRT optimizer trajectories are not claimed bitwise-identical for
-arbitrary inputs, and no new full HCP TOPUP-to-EDDY-to-FNIRT-to-FEM run is
-inferred from synthetic stage evidence.
+records their fixes and acceptance gates. The
+[latest independent re-audit](V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-29.md)
+and its [latest remediation report](V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-29.md)
+record the final orientation, dependency, cache, CHARM/FEM composition, and VN
+singular-tensor closures. The final release retains explicit limits: EDDY/FNIRT
+optimizer trajectories are not claimed bitwise-identical for arbitrary inputs,
+and no new full HCP TOPUP-to-EDDY-to-FNIRT-to-FEM run is inferred from synthetic
+stage evidence.
 
 A non-identity 90-degree premat plus one-voxel GRE shift was also compared with
 real FSL `convertwarp` and `applywarp`; the corrected Python trilinear result is
