@@ -429,6 +429,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "to the configured anisotropy bound before determinant normalization"
         ),
     )
+    conductivity.add_argument(
+        "--eigensystem-mode",
+        choices=("stable", "simnibs46-literal"),
+        default="stable",
+        help=(
+            "Use the stable symmetric eigensolver, or reproduce the literal "
+            "SimNIBS 4.6 general-eigensolver basis"
+        ),
+    )
     conductivity.add_argument("--qa-json")
     brain_mask = subparsers.add_parser(
         "charm-brain-mask",
@@ -1311,6 +1320,7 @@ def main(argv: list[str] | None = None) -> int:
             excentricity_scaling=args.excentricity_scaling,
             correct_intensity=not args.no_correct_intensity,
             vn_singular_policy=args.vn_singular_policy,
+            eigensystem_mode=args.eigensystem_mode,
             qa_file=args.qa_json,
         )
         print(f"Done: {args.output_mesh}", flush=True)

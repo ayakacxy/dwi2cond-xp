@@ -68,6 +68,30 @@ def _fit_force(
     return 2.0 * (inward_minimum - local_threshold)
 
 
+def _fsl_inward_sampling_contract(
+    voxel_sizes: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return BET2's one-to-seven millimetre ray samples and Imax membership."""
+
+    sizes = np.asarray(voxel_sizes, dtype=np.float64)
+    if sizes.shape != (3,) or not np.all(np.isfinite(sizes)) or np.any(sizes <= 0):
+        raise ValueError("voxel_sizes must contain three positive finite values")
+    distance_scale = min(float(np.min(sizes)), 1.0)
+    distances = [1.0, 7.0]
+    updates_maximum = [True, False]
+    source_distance = 2.0
+    physical_distance = 1.0
+    while source_distance < 7.0:
+        physical_distance += distance_scale
+        distances.append(physical_distance)
+        updates_maximum.append(source_distance < 3.0)
+        source_distance += distance_scale
+    return (
+        np.asarray(distances, dtype=np.float64),
+        np.asarray(updates_maximum, dtype=np.bool_),
+    )
+
+
 def _increase_outward_smoothing(
     smoothing: np.ndarray,
     normal_amount: np.ndarray,
@@ -93,6 +117,8 @@ def _evolve_surface_optimized(
     incident_faces: np.ndarray,
     incident_valid: np.ndarray,
     voxel_sizes: np.ndarray,
+    inward_distances: np.ndarray,
+    inward_updates_maximum: np.ndarray,
     threshold_2: float,
     threshold: float,
     median: float,
@@ -205,10 +231,12 @@ def _evolve_surface_optimized(
                 and 0 <= last_y < shape_y
                 and 0 <= last_z < shape_z
             )
-            inward_minimum = median
-            inward_maximum = threshold
+            fit = 0.0
             if valid_path:
-                for distance in range(1, 7):
+                inward_minimum = median
+                inward_maximum = threshold
+                for sample_index in range(inward_distances.size):
+                    distance = inward_distances[sample_index]
                     voxel_x = int(
                         (evolved[vertex, 0] - distance * nx) / voxel_sizes[0] + 0.5
                     )
@@ -220,15 +248,15 @@ def _evolve_surface_optimized(
                     )
                     sample = image[voxel_x, voxel_y, voxel_z]
                     inward_minimum = min(inward_minimum, sample)
-                    if distance <= 2:
+                    if inward_updates_maximum[sample_index]:
                         inward_maximum = max(inward_maximum, sample)
                 inward_minimum = max(threshold_2, inward_minimum)
                 inward_maximum = min(median, inward_maximum)
-            local_threshold = (
-                inward_maximum - threshold_2
-            ) * local_parameter + threshold_2
-            denominator = inward_maximum - threshold_2
-            fit = _fit_force(inward_minimum, local_threshold, denominator)
+                local_threshold = (
+                    inward_maximum - threshold_2
+                ) * local_parameter + threshold_2
+                denominator = inward_maximum - threshold_2
+                fit = _fit_force(inward_minimum, local_threshold, denominator)
             fit *= 0.05 * mean_edge
             updated[vertex, 0] = (
                 evolved[vertex, 0]
@@ -488,8 +516,9 @@ def _sample_inward_extrema(
     threshold_2: float,
     threshold: float,
     median: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    distances = np.arange(1.0, 8.0)[:, None]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    distances, updates_maximum = _fsl_inward_sampling_contract(voxel_sizes)
+    distances = distances[:, None]
     base = vertices / voxel_sizes + 0.5
     step = normals / voxel_sizes
     voxel_x = (base[None, :, 0] - distances * step[None, :, 0]).astype(np.int64)
@@ -503,25 +532,25 @@ def _sample_inward_extrema(
         & (voxel_y[0] < bounds[1])
         & (voxel_z[0] >= 0)
         & (voxel_z[0] < bounds[2])
-        & (voxel_x[6] >= 0)
-        & (voxel_x[6] < bounds[0])
-        & (voxel_y[6] >= 0)
-        & (voxel_y[6] < bounds[1])
-        & (voxel_z[6] >= 0)
-        & (voxel_z[6] < bounds[2])
+        & (voxel_x[1] >= 0)
+        & (voxel_x[1] < bounds[0])
+        & (voxel_y[1] >= 0)
+        & (voxel_y[1] < bounds[1])
+        & (voxel_z[1] >= 0)
+        & (voxel_z[1] < bounds[2])
     )
     samples = image[
-        np.clip(voxel_x[:6], 0, bounds[0] - 1),
-        np.clip(voxel_y[:6], 0, bounds[1] - 1),
-        np.clip(voxel_z[:6], 0, bounds[2] - 1),
+        np.clip(voxel_x, 0, bounds[0] - 1),
+        np.clip(voxel_y, 0, bounds[1] - 1),
+        np.clip(voxel_z, 0, bounds[2] - 1),
     ]
     minimum = np.minimum(median, np.min(samples, axis=0))
-    maximum = np.maximum(threshold, np.max(samples[:2], axis=0))
+    maximum = np.maximum(threshold, np.max(samples[updates_maximum], axis=0))
     minimum = np.maximum(minimum, threshold_2).astype(np.float64, copy=False)
     maximum = np.minimum(maximum, median).astype(np.float64, copy=False)
     minimum[~valid_path] = median
     maximum[~valid_path] = threshold
-    return minimum, maximum
+    return minimum, maximum, valid_path
 
 
 def _self_intersection_score(
@@ -595,6 +624,9 @@ def _evolve_surface(
     original_mean_edge = float(np.mean(original_distances))
     if backend == "optimized":
         incident_faces, incident_valid = _incident_face_arrays(faces, vertices.shape[0])
+        inward_distances, inward_updates_maximum = _fsl_inward_sampling_contract(
+            voxel_sizes
+        )
         set_available_numba_threads(workers)
         evolved = _evolve_surface_optimized(
             image,
@@ -605,6 +637,8 @@ def _evolve_surface(
             incident_faces,
             incident_valid,
             voxel_sizes,
+            inward_distances,
+            inward_updates_maximum,
             threshold_2,
             threshold,
             median,
@@ -666,7 +700,7 @@ def _evolve_surface(
                 0.0,
                 1.0,
             )
-        inward_minimum, inward_maximum = _sample_inward_extrema(
+        inward_minimum, inward_maximum, valid_path = _sample_inward_extrema(
             image,
             evolved,
             normals,
@@ -682,6 +716,7 @@ def _evolve_surface(
             2.0 * (inward_minimum - local_threshold) / denominator,
             2.0 * (inward_minimum - local_threshold),
         )
+        fit[~valid_path] = 0.0
         fit *= 0.05 * mean_edge
         evolved += (
             0.5 * tangential

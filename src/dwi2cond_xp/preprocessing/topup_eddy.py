@@ -161,6 +161,7 @@ def run_topup_eddy_nifti(
             "reverse_b0_mean": str(reverse_mean),
             "topup_coefficients": str(topup / "field_coefficients.nii.gz"),
             "topup_movement": str(topup / "movement_parameters.txt"),
+            "fsl_topup_prefix": str(topup / "topup"),
             "topup_field_hz": str(topup / "field_hz.nii.gz"),
             "corrected_b0_mask": str(corrected_mask),
             "corrected_dwi": str(eddy / "corrected_dwi.nii.gz"),

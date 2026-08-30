@@ -7,10 +7,40 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 
 
-def _sorted_eigensystem(tensors: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Return a symmetric tensor eigensystem ordered by descending eigenvalue."""
-    eigenvalues, eigenvectors = np.linalg.eigh(tensors)
-    return eigenvalues[:, ::-1], eigenvectors[:, :, ::-1]
+def _sorted_eigensystem(
+    tensors: np.ndarray, mode: str = "stable"
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return descending eigensystems using the selected compatibility contract."""
+
+    if mode == "stable":
+        eigenvalues, eigenvectors = np.linalg.eigh(tensors)
+        return eigenvalues[:, ::-1], eigenvectors[:, :, ::-1]
+    if mode == "simnibs46-literal":
+        eigenvalues, eigenvectors = np.linalg.eig(tensors)
+        eigenvalues = np.real(eigenvalues)
+        eigenvectors = np.real(eigenvectors)
+        order = eigenvalues.argsort(axis=1)[:, ::-1]
+        eigenvalues = np.sort(eigenvalues, axis=1)[:, ::-1]
+        sorted_vectors = np.zeros_like(tensors)
+        for index in range(3):
+            sorted_vectors[:, :, index] = eigenvectors[
+                np.arange(len(eigenvectors)), :, order[:, index]
+            ]
+        return eigenvalues, sorted_vectors
+    raise ValueError("eigensystem_mode must be stable or simnibs46-literal")
+
+
+def _eigensystem_qa(eigenvectors: np.ndarray) -> dict[str, float | int]:
+    """Summarize loss of basis orthogonality without changing literal output."""
+
+    gram = np.einsum(
+        "nji,njk->nik", eigenvectors, eigenvectors, optimize=True
+    )
+    errors = np.max(np.abs(gram - np.eye(3)), axis=(1, 2))
+    return {
+        "max_abs_orthogonality_error": float(np.max(errors, initial=0.0)),
+        "nonorthogonal_bases": int(np.count_nonzero(errors > 1.0e-8)),
+    }
 
 
 def _form_tensors(eigenvalues: np.ndarray, eigenvectors: np.ndarray) -> np.ndarray:
@@ -122,6 +152,7 @@ def tensors_to_conductivity(
     excentricity_scaling: float | None = None,
     correct_intensity: bool = True,
     vn_singular_policy: str = "error",
+    eigensystem_mode: str = "stable",
 ) -> tuple[np.ndarray, dict[str, object]]:
     """Convert element- or voxel-sampled diffusion tensors to conductivity.
 
@@ -137,6 +168,10 @@ def tensors_to_conductivity(
         raise ValueError("mode must be dir, vn, or mc")
     if vn_singular_policy not in {"error", "regularize"}:
         raise ValueError("vn_singular_policy must be error or regularize")
+    if eigensystem_mode not in {"stable", "simnibs46-literal"}:
+        raise ValueError(
+            "eigensystem_mode must be stable or simnibs46-literal"
+        )
     if mode != "vn" and vn_singular_policy != "error":
         raise ValueError("vn_singular_policy is only consumed by vn mode")
     if max_ratio < 1 or max_cond <= 0:
@@ -166,6 +201,7 @@ def tensors_to_conductivity(
         "mode": mode,
         "tissues": {},
         "vn_singular_policy": vn_singular_policy,
+        "eigensystem_mode": eigensystem_mode,
     }
     pending: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
     mean_determinant: dict[int, float] = {}
@@ -180,7 +216,10 @@ def tensors_to_conductivity(
         zero = np.all(np.isclose(tissue_tensors.reshape(-1, 9), 0), axis=1)
         if mode == "vn":
             tissue_tensors[zero] = conductivity * np.eye(3)
-        eigenvalues, eigenvectors = _sorted_eigensystem(tissue_tensors)
+        eigenvalues, eigenvectors = _sorted_eigensystem(
+            tissue_tensors, eigensystem_mode
+        )
+        eigensystem_qa = _eigensystem_qa(eigenvectors)
 
         if mode == "vn":
             determinant_scale = np.abs(np.prod(eigenvalues, axis=1)) ** (1.0 / 3.0)
@@ -223,6 +262,7 @@ def tensors_to_conductivity(
                 "singular_regularization_fix": regularization,
                 "first_fix": first,
                 "second_fix": second,
+                "eigensystem": eigensystem_qa,
             }
             continue
 
@@ -245,6 +285,7 @@ def tensors_to_conductivity(
                 "elements": int(indices.size),
                 "zero_tensors": int(np.count_nonzero(zero)),
                 "first_fix": first,
+                "eigensystem": eigensystem_qa,
             }
         else:
             eigenvalues, fixed = _fix_eigenvalues(
@@ -260,6 +301,7 @@ def tensors_to_conductivity(
                 "elements": int(indices.size),
                 "zero_tensors": int(np.count_nonzero(zero)),
                 "fix": fixed,
+                "eigensystem": eigensystem_qa,
             }
 
     if pending:

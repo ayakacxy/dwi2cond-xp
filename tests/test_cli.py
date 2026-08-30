@@ -296,6 +296,8 @@ def test_registration_and_mesh_routes(monkeypatch, tmp_path: Path) -> None:
                 str(cond),
                 "--vn-singular-policy",
                 "regularize",
+                "--eigensystem-mode",
+                "simnibs46-literal",
             ]
         )
         == 0
@@ -304,6 +306,7 @@ def test_registration_and_mesh_routes(monkeypatch, tmp_path: Path) -> None:
     assert calls["register"][1]["alignment_assumption"] == "external_world_transform"
     assert calls["mesh"][1]["scalar_conductivity"] == {1: 0.12, 2: 0.27}
     assert calls["mesh"][1]["vn_singular_policy"] == "regularize"
+    assert calls["mesh"][1]["eigensystem_mode"] == "simnibs46-literal"
 
 
 def test_automatic_t1_registration_route_uses_charm_contract(

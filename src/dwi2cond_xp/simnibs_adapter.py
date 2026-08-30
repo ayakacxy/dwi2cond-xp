@@ -26,6 +26,7 @@ def tensor_to_mesh_conductivity(
     excentricity_scaling: float | None = None,
     correct_intensity: bool = True,
     vn_singular_policy: str = "error",
+    eigensystem_mode: str = "stable",
     qa_file: str | Path | None = None,
 ) -> Path:
     """Interpolate tensors to tetrahedra and write nine-component conductivity.
@@ -83,6 +84,7 @@ def tensor_to_mesh_conductivity(
         excentricity_scaling=excentricity_scaling,
         correct_intensity=correct_intensity,
         vn_singular_policy=vn_singular_policy,
+        eigensystem_mode=eigensystem_mode,
     )
     full = np.zeros((mesh.elm.nr, 9), dtype=np.float64)
     full[tetrahedra] = conductivity.reshape(-1, 9)
@@ -111,6 +113,7 @@ def tensor_to_mesh_conductivity(
             "max_cond": max_cond,
             "correct_intensity": correct_intensity,
             "vn_singular_policy": vn_singular_policy,
+            "eigensystem_mode": eigensystem_mode,
         }
     )
     qa_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

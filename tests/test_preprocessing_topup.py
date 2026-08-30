@@ -52,6 +52,9 @@ FSL_TOPUP = Path(os.environ.get("FSL_TOPUP", "/path/not/configured/topup"))
 FSL_TOPUP_CONFIG = Path(
     os.environ.get("FSL_TOPUP_CONFIG", "/path/not/configured/b02b0_nosubsamp.cnf")
 )
+FSL_APPLYTOPUP = Path(
+    os.environ.get("FSL_APPLYTOPUP", str(FSL_TOPUP.with_name("applytopup")))
+)
 
 
 def test_simnibs46_schedule_is_frozen() -> None:
@@ -483,10 +486,35 @@ def test_topup_nifti_writes_public_artifacts(tmp_path, monkeypatch) -> None:
         "joint_mask.nii.gz",
         "field_coefficients.nii.gz",
         "movement_parameters.txt",
+        "topup_fieldcoef.nii.gz",
+        "topup_movpar.txt",
         "topup_qa.json",
     ):
         assert (output / name).is_file()
     assert nib.load(output / "corrected_pair.nii.gz").shape == (*shape, 2)
+    coefficient = nib.load(output / "field_coefficients.nii.gz")
+    coefficient_header = coefficient.header
+    assert int(coefficient_header["intent_code"]) == 2016
+    np.testing.assert_allclose(
+        [
+            coefficient_header["intent_p1"],
+            coefficient_header["intent_p2"],
+            coefficient_header["intent_p3"],
+        ],
+        nib.affines.voxel_sizes(affine),
+        rtol=0.0,
+        atol=1.0e-7,
+    )
+    assert int(coefficient_header["qform_code"]) == 1
+    assert int(coefficient_header["sform_code"]) == 0
+    np.testing.assert_array_equal(
+        np.asarray(coefficient.dataobj),
+        np.asarray(nib.load(output / "topup_fieldcoef.nii.gz").dataobj),
+    )
+    assert (output / "movement_parameters.txt").read_bytes() == (
+        output / "topup_movpar.txt"
+    ).read_bytes()
+    assert report["fsl_topup_prefix"] == str(output / "topup")
 
 
 def test_periodic_cubic_sampler_matches_fsl604_oracle() -> None:
@@ -868,10 +896,14 @@ def test_topup_restores_one_common_arithmetic_mean_scale(monkeypatch) -> None:
 
 
 @pytest.mark.skipif(
-    not FSL_TOPUP.is_file() or not FSL_TOPUP_CONFIG.is_file(),
+    not FSL_TOPUP.is_file()
+    or not FSL_TOPUP_CONFIG.is_file()
+    or not FSL_APPLYTOPUP.is_file(),
     reason="FSL TOPUP reference and SimNIBS config are required",
 )
-def test_unequal_mean_corrected_pair_matches_real_fsl_common_scale(tmp_path) -> None:
+def test_unequal_mean_corrected_pair_matches_real_fsl_common_scale(
+    tmp_path, monkeypatch
+) -> None:
     shape = (16, 14, 12)
     grid = np.indices(shape, dtype=np.float64)
     base = (
@@ -941,3 +973,57 @@ def test_unequal_mean_corrected_pair_matches_real_fsl_common_scale(tmp_path) -> 
         fsl_means[1] / fsl_means[0], rel=5e-4
     )
     assert not np.any(ours[~result.joint_mask.astype(bool)])
+
+    forward_file = tmp_path / "forward.nii.gz"
+    reverse_file = tmp_path / "reverse.nii.gz"
+    nib.save(nib.Nifti1Image(forward, affine), forward_file)
+    nib.save(nib.Nifti1Image(reverse, affine), reverse_file)
+    monkeypatch.setattr(topup, "run_simnibs46_topup", lambda *_args, **_kwargs: result)
+    local_output = tmp_path / "local-topup"
+    run_topup_nifti(
+        forward_file,
+        reverse_file,
+        local_output,
+        readout_seconds=0.05,
+        phase_encoding_direction="y",
+    )
+    local_header = nib.load(local_output / "topup_fieldcoef.nii.gz").header
+    fsl_header = nib.load(tmp_path / "fsl_fieldcoef.nii.gz").header
+    assert int(local_header["intent_code"]) == int(fsl_header["intent_code"]) == 2016
+    np.testing.assert_allclose(
+        [
+            local_header["intent_p1"],
+            local_header["intent_p2"],
+            local_header["intent_p3"],
+        ],
+        [
+            fsl_header["intent_p1"],
+            fsl_header["intent_p2"],
+            fsl_header["intent_p3"],
+        ],
+        rtol=0.0,
+        atol=1.0e-7,
+    )
+    np.testing.assert_allclose(
+        local_header["pixdim"][1:4],
+        fsl_header["pixdim"][1:4],
+        rtol=0.0,
+        atol=1.0e-7,
+    )
+    subprocess.run(
+        [
+            str(FSL_APPLYTOPUP),
+            f"--imain={forward_file},{reverse_file}",
+            f"--datain={acqp}",
+            "--inindex=1,2",
+            f"--topup={local_output / 'topup'}",
+            f"--out={tmp_path / 'local_applytopup'}",
+            "--method=jac",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    applied = np.asarray(nib.load(tmp_path / "local_applytopup.nii.gz").dataobj)
+    assert np.all(np.isfinite(applied))

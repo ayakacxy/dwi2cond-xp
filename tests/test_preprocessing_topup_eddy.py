@@ -45,7 +45,9 @@ def test_topup_eddy_uses_reverse_4d_and_corrected_b0_mask(
         _nifti(output / "corrected_pair.nii.gz", np.ones((3, 3, 3, 2)))
         _nifti(output / "field_hz.nii.gz", np.zeros((3, 3, 3)))
         _nifti(output / "field_coefficients.nii.gz", np.zeros((3, 3, 3)))
+        _nifti(output / "topup_fieldcoef.nii.gz", np.zeros((3, 3, 3)))
         (output / "movement_parameters.txt").write_text("0 0 0 0 0 0\n", encoding="utf-8")
+        (output / "topup_movpar.txt").write_text("0 0 0 0 0 0\n", encoding="utf-8")
         return {"status": "completed", "forward": str(forward), "reverse": str(reverse_mean)}
 
     def fake_bet(source, destination, **kwargs):

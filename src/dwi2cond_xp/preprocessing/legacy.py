@@ -29,10 +29,29 @@ from .rigid import (
     _optimize_one_stage,
     write_aligned_b0_mean,
 )
-from .transforms import fsl_matrix_to_world
+from .transforms import fsl_matrix_to_world, fsl_voxel_to_scaled_mm
 
 
 LegacyProgress = Callable[[str, int, int], None]
+
+
+def _local_scaled_matrix_to_fsl(
+    matrix: np.ndarray, shape: Sequence[int], affine: np.ndarray
+) -> np.ndarray:
+    """Conjugate a local scaled-mm matrix into FSL's radiological grid."""
+
+    transform = np.asarray(matrix, dtype=np.float64)
+    world = np.asarray(affine, dtype=np.float64)
+    if (
+        transform.shape != (4, 4)
+        or world.shape != (4, 4)
+        or not np.all(np.isfinite(transform))
+        or not np.all(np.isfinite(world))
+    ):
+        raise ValueError("The matrix and affine must be finite 4x4 arrays")
+    local = np.diag([*nib.affines.voxel_sizes(world), 1.0])
+    local_to_fsl = fsl_voxel_to_scaled_mm(shape, world) @ np.linalg.inv(local)
+    return local_to_fsl @ transform @ np.linalg.inv(local_to_fsl)
 
 
 def _optimize_stage_payload(
@@ -252,7 +271,11 @@ def _register_mcflirt_series(
             if executor is not None:
                 executor.shutdown()
         matrices = stage_output
-    return matrices, evaluations, costs
+    fsl_matrices = [
+        _local_scaled_matrix_to_fsl(matrix, spatial_shape, affine)
+        for matrix in matrices
+    ]
+    return fsl_matrices, evaluations, costs
 
 
 def _resample_series(
@@ -578,8 +601,11 @@ def run_legacy_nifti(
         degrees_of_freedom=12,
         workers=workers,
     )
-    np.savetxt(paths["mean_transform"], mean_registration.matrix, fmt="%.10g")
-    final_matrices = [mean_registration.matrix @ matrix for matrix in pass2]
+    mean_matrix = _local_scaled_matrix_to_fsl(
+        mean_registration.matrix, image.shape[:3], image.affine
+    )
+    np.savetxt(paths["mean_transform"], mean_matrix, fmt="%.10g")
+    final_matrices = [mean_matrix @ matrix for matrix in pass2]
     direct_b0, b0_evaluations, b0_costs = _register_mcflirt_series(
         volumes,
         nodif,

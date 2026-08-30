@@ -2705,11 +2705,19 @@ def run_topup_nifti(
     coefficient_image = nib.Nifti1Image(
         result.field_coefficients.astype(np.float32), coefficient_affine
     )
+    coefficient_image.header.set_intent(2016, allow_unknown=True)
+    coefficient_image.header["intent_p1"] = voxel_sizes[0]
+    coefficient_image.header["intent_p2"] = voxel_sizes[1]
+    coefficient_image.header["intent_p3"] = voxel_sizes[2]
     coefficient_image.set_qform(coefficient_affine, code=1)
     coefficient_image.set_sform(coefficient_affine, code=0)
     nib.save(coefficient_image, output / "field_coefficients.nii.gz")
+    nib.save(coefficient_image, output / "topup_fieldcoef.nii.gz")
     np.savetxt(
         output / "movement_parameters.txt", result.movement_parameters, fmt="%.10g"
+    )
+    np.savetxt(
+        output / "topup_movpar.txt", result.movement_parameters, fmt="%.10g"
     )
     uncorrected_difference = forward.astype(np.float64) - reverse.astype(np.float64)
     corrected_difference = result.corrected_scans[..., 0].astype(
@@ -2725,6 +2733,7 @@ def run_topup_nifti(
         "phase_encoding_direction": phase_encoding_direction,
         "readout_seconds": readout_seconds,
         "workers": workers,
+        "fsl_topup_prefix": str(output / "topup"),
         "field_hz_range": [float(result.field_hz.min()), float(result.field_hz.max())],
         "joint_mask_voxels": int(np.count_nonzero(result.joint_mask)),
         "uncorrected_pair_l2": float(np.linalg.norm(uncorrected_difference)),

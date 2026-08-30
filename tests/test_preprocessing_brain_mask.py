@@ -168,6 +168,9 @@ def test_optimized_python_body_and_reference_smoothing_paths() -> None:
     incident, incident_valid = brain_mask_module._incident_face_arrays(
         faces, len(vertices)
     )
+    inward_distances, inward_updates_maximum = (
+        brain_mask_module._fsl_inward_sampling_contract(np.full(3, 2.0))
+    )
     optimized = brain_mask_module._evolve_surface_optimized.py_func(
         image,
         vertices,
@@ -177,6 +180,8 @@ def test_optimized_python_body_and_reference_smoothing_paths() -> None:
         incident,
         incident_valid,
         np.full(3, 2.0),
+        inward_distances,
+        inward_updates_maximum,
         0.0,
         45.0,
         450.0,
@@ -207,6 +212,92 @@ def test_optimized_python_body_and_reference_smoothing_paths() -> None:
     )
     assert reference.shape == vertices.shape
     assert np.isfinite(score) and mean_edge > 0
+
+
+def test_bet_inward_sampling_matches_fsl_endpoint_and_submillimetre_loop() -> None:
+    one_mm_distances, one_mm_maximum = (
+        brain_mask_module._fsl_inward_sampling_contract(np.ones(3))
+    )
+    np.testing.assert_array_equal(one_mm_distances, [1, 7, 2, 3, 4, 5, 6])
+    np.testing.assert_array_equal(
+        one_mm_maximum, [True, False, True, False, False, False, False]
+    )
+
+    half_mm_distances, half_mm_maximum = (
+        brain_mask_module._fsl_inward_sampling_contract(
+            np.array([0.5, 0.8, 1.2])
+        )
+    )
+    np.testing.assert_array_equal(
+        half_mm_distances,
+        [1, 7, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6],
+    )
+    np.testing.assert_array_equal(
+        half_mm_maximum,
+        [
+            True,
+            False,
+            True,
+            True,
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+        ],
+    )
+    with pytest.raises(ValueError, match="positive finite"):
+        brain_mask_module._fsl_inward_sampling_contract(np.array([1.0, 0.0, 1.0]))
+
+    image = np.full((12, 3, 3), 100.0, dtype=np.float32)
+    image[1, 1, 1] = 0.0
+    minimum, maximum, valid = brain_mask_module._sample_inward_extrema(
+        image,
+        np.array([[8.0, 1.0, 1.0]]),
+        np.array([[1.0, 0.0, 0.0]]),
+        np.ones(3),
+        0.0,
+        10.0,
+        100.0,
+    )
+    np.testing.assert_array_equal(valid, [True])
+    np.testing.assert_array_equal(minimum, [0.0])
+    np.testing.assert_array_equal(maximum, [100.0])
+    force = brain_mask_module._fit_force(
+        minimum[0],
+        (maximum[0] - 0.0) * (0.2**0.275),
+        maximum[0],
+    )
+    assert force < 0.0
+
+    submillimetre = np.full((20, 3, 3), 100.0, dtype=np.float32)
+    submillimetre[13, 1, 1] = 0.0
+    minimum, maximum, valid = brain_mask_module._sample_inward_extrema(
+        submillimetre,
+        np.array([[8.0, 0.5, 0.5]]),
+        np.array([[1.0, 0.0, 0.0]]),
+        np.full(3, 0.5),
+        0.0,
+        10.0,
+        100.0,
+    )
+    np.testing.assert_array_equal(valid, [True])
+    np.testing.assert_array_equal(minimum, [0.0])
+    np.testing.assert_array_equal(maximum, [100.0])
+
+    _minimum, _maximum, valid = brain_mask_module._sample_inward_extrema(
+        image,
+        np.array([[5.0, 1.0, 1.0]]),
+        np.array([[1.0, 0.0, 0.0]]),
+        np.ones(3),
+        0.0,
+        10.0,
+        100.0,
+    )
+    np.testing.assert_array_equal(valid, [False])
 
 
 def test_bet_self_intersection_rerun_path(monkeypatch) -> None:
@@ -274,5 +365,44 @@ def test_bet_matches_configured_fsl(tmp_path: Path) -> None:
     )
     ours = bet_brain_mask(values, np.full(3, 2.0), workers=2).mask > 0
     reference = np.asarray(nib.load(tmp_path / "fsl_mask.nii.gz").dataobj) > 0
+    dice = 2.0 * np.count_nonzero(ours & reference) / (ours.sum() + reference.sum())
+    assert dice > 0.985
+
+
+@pytest.mark.skipif(not os.environ.get("FSL_BET"), reason="FSL_BET is not configured")
+def test_bet_submillimetre_adversarial_mask_matches_configured_fsl(
+    tmp_path: Path,
+) -> None:
+    shape = (64, 64, 64)
+    voxel_size = 0.5
+    coordinates = np.indices(shape, dtype=np.float64) * voxel_size
+    center = (np.asarray(shape) - 1.0) * voxel_size * 0.5
+    radius = np.sqrt(
+        np.sum((coordinates - center[:, None, None, None]) ** 2, axis=0)
+    )
+    values = np.where(radius <= 12.0, 500.0 - 5.0 * radius, 0.0)
+    values[(radius >= 4.35) & (radius <= 4.65)] = 20.0
+    values = values.astype(np.float32)
+    input_file = tmp_path / "submillimetre.nii.gz"
+    affine = np.diag([voxel_size, voxel_size, voxel_size, 1.0])
+    nib.save(nib.Nifti1Image(values, affine), input_file)
+    subprocess.run(
+        [
+            os.environ["FSL_BET"],
+            str(input_file),
+            str(tmp_path / "fsl-submillimetre"),
+            "-f",
+            "0.2",
+            "-m",
+        ],
+        check=True,
+        env={**os.environ, "FSLOUTPUTTYPE": "NIFTI_GZ"},
+        capture_output=True,
+        text=True,
+    )
+    ours = bet_brain_mask(values, np.full(3, voxel_size), workers=2).mask > 0
+    reference = np.asarray(
+        nib.load(tmp_path / "fsl-submillimetre_mask.nii.gz").dataobj
+    ) > 0
     dice = 2.0 * np.count_nonzero(ours & reference) / (ours.sum() + reference.sum())
     assert dice > 0.985

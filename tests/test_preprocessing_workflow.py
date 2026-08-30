@@ -743,7 +743,11 @@ def test_reverse_pe_workflow_and_grad_dev_form_one_complete_contract(
         _json(output / "topup_eddy_qa.json")
         _nifti(output / "topup/field_hz.nii.gz", (3, 3, 3))
         _nifti(output / "topup/field_coefficients.nii.gz", (3, 3, 3))
+        _nifti(output / "topup/topup_fieldcoef.nii.gz", (3, 3, 3))
         (output / "topup/movement_parameters.txt").write_text(
+            "0 0 0 0 0 0\n", encoding="utf-8"
+        )
+        (output / "topup/topup_movpar.txt").write_text(
             "0 0 0 0 0 0\n", encoding="utf-8"
         )
         _nifti(
@@ -1126,7 +1130,9 @@ def test_simnibs_runtime_identity_records_missing_distribution(monkeypatch) -> N
     )
     identity = workflow._simnibs_runtime_identity()
     assert identity["distribution_version"] == "not-installed"
+    assert identity["diagnostic_identity_complete"] is False
     assert identity["cache_safe"] is False
+    assert identity["cache_safety_reason"] == "simnibs-not-installed"
     with pytest.raises(ValueError, match="Unsupported FEM solver identity"):
         workflow._simnibs_runtime_identity("unknown")
 
@@ -1233,7 +1239,12 @@ def test_simnibs_runtime_identity_records_installed_module(
     identity = workflow._simnibs_runtime_identity()
     assert identity["distribution_version"] == "4.6.0"
     assert identity["record_sha256"] == workflow.hashlib.sha256(b"record\n").hexdigest()
-    assert identity["cache_safe"] is True
+    assert identity["diagnostic_identity_complete"] is True
+    assert identity["cache_safe"] is False
+    assert (
+        identity["cache_safety_reason"]
+        == "disabled-unresolved-execution-closure"
+    )
 
     before = identity["module_files"]["simnibs/simulation/fem.py"]["sha256"]
     (tmp_path / "simnibs/simulation/fem.py").write_text("changed\n", encoding="utf-8")
@@ -1245,6 +1256,7 @@ def test_simnibs_runtime_identity_records_installed_module(
     (tmp_path / "simnibs/simulation/fem.py").unlink()
     incomplete = workflow._simnibs_runtime_identity()
     assert incomplete["module_files"]["simnibs/simulation/fem.py"] is None
+    assert incomplete["diagnostic_identity_complete"] is False
     assert incomplete["cache_safe"] is False
 
 

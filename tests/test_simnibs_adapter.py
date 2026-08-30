@@ -81,6 +81,7 @@ def test_tensor_to_mesh_writes_conductivity_and_qa(monkeypatch, tmp_path: Path) 
         assert matrices.shape == (2, 3, 3)
         assert tags.tolist() == [1, 2]
         assert scalar == {1: 0.1, 2: 0.2}
+        assert kwargs["eigensystem_mode"] == "simnibs46-literal"
         return np.repeat(np.eye(3)[None, :, :], 2, axis=0), {"mode": kwargs["mode"]}
 
     monkeypatch.setattr(simnibs_adapter, "tensors_to_conductivity", fake_conversion)
@@ -93,6 +94,7 @@ def test_tensor_to_mesh_writes_conductivity_and_qa(monkeypatch, tmp_path: Path) 
         mode="vn",
         scalar_conductivity={1: 0.1, 2: 0.2},
         vn_singular_policy="regularize",
+        eigensystem_mode="simnibs46-literal",
         qa_file=qa,
     )
 
@@ -104,6 +106,7 @@ def test_tensor_to_mesh_writes_conductivity_and_qa(monkeypatch, tmp_path: Path) 
     assert report["tetrahedra"] == 2
     assert report["mode"] == "vn"
     assert report["vn_singular_policy"] == "regularize"
+    assert report["eigensystem_mode"] == "simnibs46-literal"
 
 
 def test_tensor_to_mesh_counts_true_tetrahedra_in_boolean_mask(

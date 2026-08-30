@@ -44,6 +44,57 @@ def test_vn_preserves_direction_and_sets_determinant():
     assert np.allclose(np.linalg.det(conductivity[0]), 0.126**3)
     assert np.argmax(np.diag(conductivity[0])) == 0
     assert report["mode"] == "vn"
+    assert report["eigensystem_mode"] == "stable"
+
+
+def test_repeated_eigenvalue_modes_expose_literal_simnibs46_basis() -> None:
+    direction = np.array(
+        [0.503178628918432, 0.10541287877480549, -0.8577292069110012]
+    )
+    tensor = (np.eye(3) + 2.0 * np.outer(direction, direction))[None]
+    literal_values, literal_vectors = conductivity_module._sorted_eigensystem(
+        tensor, "simnibs46-literal"
+    )
+    expected_values, expected_vectors = np.linalg.eig(tensor)
+    expected_values = np.real(expected_values)
+    expected_vectors = np.real(expected_vectors)
+    order = expected_values.argsort(axis=1)[:, ::-1]
+    expected_values = np.sort(expected_values, axis=1)[:, ::-1]
+    expected_vectors = np.take_along_axis(
+        expected_vectors, order[:, None, :], axis=2
+    )
+    np.testing.assert_array_equal(literal_values, expected_values)
+    np.testing.assert_array_equal(literal_vectors, expected_vectors)
+
+    stable, stable_report = tensors_to_conductivity(
+        tensor,
+        np.array([1]),
+        {1: 0.126},
+        mode="vn",
+        anisotropic_tissues=(1,),
+        eigensystem_mode="stable",
+    )
+    literal, literal_report = tensors_to_conductivity(
+        tensor,
+        np.array([1]),
+        {1: 0.126},
+        mode="vn",
+        anisotropic_tissues=(1,),
+        eigensystem_mode="simnibs46-literal",
+    )
+    assert np.linalg.det(stable[0]) > 1.0e-6
+    assert np.linalg.det(literal[0]) < 1.0e-12
+    assert stable_report["tissues"]["1"]["eigensystem"][
+        "nonorthogonal_bases"
+    ] == 0
+    assert literal_report["tissues"]["1"]["eigensystem"][
+        "nonorthogonal_bases"
+    ] == 1
+
+
+def test_sorted_eigensystem_rejects_unknown_mode() -> None:
+    with pytest.raises(ValueError, match="eigensystem_mode"):
+        conductivity_module._sorted_eigensystem(np.eye(3)[None], "bad")
 
 
 def test_mc_is_isotropic_and_uses_simnibs_global_scale():
@@ -124,6 +175,7 @@ def test_eigenvalue_repairs_and_excentricity_branches():
         ({"max_cond": 0}, "max_cond"),
         ({"weights": np.array([0.0])}, "weights"),
         ({"vn_singular_policy": "bad"}, "vn_singular_policy"),
+        ({"eigensystem_mode": "bad"}, "eigensystem_mode"),
     ],
 )
 def test_conductivity_rejects_invalid_contract(kwargs, message):

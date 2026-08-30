@@ -56,6 +56,24 @@ def test_float32_mean_and_validation() -> None:
     assert count > 0
 
 
+def test_local_scaled_matrix_to_fsl_matches_nifti_handedness() -> None:
+    matrix = np.eye(4, dtype=np.float64)
+    matrix[0, 3] = -2.0
+    neurological = np.diag((2.0, 2.0, 2.0, 1.0))
+    radiological = np.diag((-2.0, 2.0, 2.0, 1.0))
+
+    converted = legacy._local_scaled_matrix_to_fsl(
+        matrix, (4, 3, 2), neurological
+    )
+    assert converted[0, 3] == 2.0
+    np.testing.assert_array_equal(
+        legacy._local_scaled_matrix_to_fsl(matrix, (4, 3, 2), radiological),
+        matrix,
+    )
+    with pytest.raises(ValueError, match="finite 4x4"):
+        legacy._local_scaled_matrix_to_fsl(matrix, (4, 3, 2), np.eye(3))
+
+
 def test_register_series_contract_and_progress(monkeypatch) -> None:
     values = [_volume(1), _volume(0.9), _volume(0.8)]
     progress = []
@@ -238,11 +256,14 @@ def test_mcflirt_fix2d_uses_first_resampled_reference_fov(
     assert ("parameter_axes" in kwargs) is expected_fix_2d
 
 
+@pytest.mark.parametrize("x_spacing", (-2.0, 2.0))
 @pytest.mark.skipif(
     not FSL_MCFLIRT.is_file(),
     reason="FSL reference disabled; set FSL_MCFLIRT to a local mcflirt executable",
 )
-def test_mcflirt_thin_volume_matches_fsl_fix2d_matrices(tmp_path: Path) -> None:
+def test_mcflirt_thin_volume_matches_fsl_fix2d_matrices(
+    tmp_path: Path, x_spacing: float
+) -> None:
     x, y = np.indices((32, 32), dtype=np.float32)
     base = np.exp(-((x - 15.3) ** 2 + (y - 16.1) ** 2) / 45.0)
     base += 0.55 * np.exp(-((x - 9.0) ** 2 + (y - 23.0) ** 2) / 12.0)
@@ -266,8 +287,8 @@ def test_mcflirt_thin_volume_matches_fsl_fix2d_matrices(tmp_path: Path) -> None:
             )
         volumes.append(volume)
     data = np.stack(volumes, axis=3)
-    affine = np.diag((-2.0, 2.0, 5.0, 1.0))
-    affine[0, 3] = 62.0
+    affine = np.diag((x_spacing, 2.0, 5.0, 1.0))
+    affine[0, 3] = 62.0 if x_spacing < 0 else -31.0
     dwi_file = tmp_path / "thin_dwi.nii.gz"
     reference_file = tmp_path / "thin_reference.nii.gz"
     nib.save(nib.Nifti1Image(data, affine), dwi_file)
@@ -313,7 +334,10 @@ def test_mcflirt_thin_volume_matches_fsl_fix2d_matrices(tmp_path: Path) -> None:
         expected_stack
     ) < 0.06
     assert np.max(np.abs(actual_stack - expected_stack)) < 0.2
-    np.testing.assert_allclose(actual_stack[:, 2, :], expected_stack[:, 2, :], atol=1e-12)
+    if x_spacing < 0:
+        np.testing.assert_allclose(
+            actual_stack[:, 2, :], expected_stack[:, 2, :], atol=1e-12
+        )
 
 
 def test_resample_series_rotate_bvecs_and_save(tmp_path, monkeypatch) -> None:

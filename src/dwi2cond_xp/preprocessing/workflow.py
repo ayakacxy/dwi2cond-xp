@@ -336,7 +336,9 @@ def _simnibs_runtime_identity(solver: str = "pardiso") -> dict[str, object]:
                 "petsc4py": _package_version("petsc4py"),
             },
             "solver_native_files": [],
+            "diagnostic_identity_complete": False,
             "cache_safe": False,
+            "cache_safety_reason": "simnibs-not-installed",
         }
     relative_modules = (
         "simnibs/simulation/run_simnibs.py",
@@ -377,7 +379,11 @@ def _simnibs_runtime_identity(solver: str = "pardiso") -> dict[str, object]:
             "petsc4py": _package_version("petsc4py"),
         },
         "solver_native_files": native_files,
-        "cache_safe": bool(record_sha256 and complete_modules and native_files),
+        "diagnostic_identity_complete": bool(
+            record_sha256 and complete_modules and native_files
+        ),
+        "cache_safe": False,
+        "cache_safety_reason": "disabled-unresolved-execution-closure",
     }
 
 
@@ -758,6 +764,8 @@ def run_dwi2cond_pipeline(
                     ArtifactContract(preprocess / "topup" / "field_hz.nii.gz", "nifti", ndim=3),
                     ArtifactContract(preprocess / "topup" / "field_coefficients.nii.gz", "nifti", ndim=3),
                     ArtifactContract(preprocess / "topup" / "movement_parameters.txt", "text"),
+                    ArtifactContract(preprocess / "topup" / "topup_fieldcoef.nii.gz", "nifti", ndim=3),
+                    ArtifactContract(preprocess / "topup" / "topup_movpar.txt", "text"),
                     ArtifactContract(
                         preprocess
                         / "topup_preparation"
