@@ -43,16 +43,18 @@ This is an independent community project. It is not an official SimNIBS or FSL
 distribution.
 
 The `v0.1.0`--`v0.3.0` tags were republished on 2026-08-29 to correct and
-consolidate documentation and release metadata. Their versioned algorithm
-source and the scientific baselines recorded in the changelog were unchanged.
+consolidate documentation and release metadata. `v0.3.0` was replaced again on
+2026-08-30 after a fourth independent source audit found correctness defects;
+the exact replacement baseline and evidence boundary are recorded in the
+changelog.
 
 ## ⚡ Validation at a glance
 
 | Contract | Result | Evidence boundary |
 | --- | ---: | --- |
 | SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
-| Final-tag correctness gate | **671 passed · 0 skipped** | Frozen dependency stack with every configured real-FSL probe enabled |
-| Clean coverage gate | **100.00% statement coverage** | 659 main + 12 montage tests, real synthetic TOPUP/EDDY/FNIRT CLI paths, and 13,607/13,607 executable statements |
+| Final-tag correctness gate | **666 passed · 0 skipped** | Frozen dependency stack with every configured real-FSL probe enabled |
+| Clean coverage gate | **100.00% statement coverage** | 666 main + 12 montage tests, real synthetic TOPUP/EDDY/FNIRT CLI paths, and 13,663/13,663 executable statements |
 | Final-tag SimNIBS composition | **`SESSION._prepare()` completed** | Real SimNIBS 4.6 preparation with the explicit mesh; the final remediation did not rerun the FEM solver |
 
 No anatomical image, subject identifier, voxel derivative, or machine-readable
@@ -86,7 +88,7 @@ The final v0.3.0 remediation also closes the later orientation, dependency,
 cache, CHARM/FEM composition, and singular-VN findings. This does not assert
 bitwise equality for every FSL optimizer or a new full-subject official A/B;
 the current numerical boundary is documented in the
-[latest remediation report](docs/V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-29.md).
+[latest remediation report](docs/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md).
 
 The pure-Python DTI and tensor-mapping core uses NumPy, SciPy, NiBabel, h5py,
 and tqdm. The validated nonlinear runtime is pinned to NumPy 2.3.0 and Numba
@@ -200,6 +202,15 @@ singular eigensystem to the configured anisotropy bound before the existing
 SimNIBS safety passes and records the repaired-element count in QA. This
 extension is explicit and is not presented as the literal SimNIBS 4.6
 rank-deficient branch.
+
+The standalone converter uses `--eigensystem-mode stable` by default. This
+selects the symmetric `eigh` solver and keeps repeated-eigenvalue tensors on an
+orthogonal, full-rank basis. `--eigensystem-mode simnibs46-literal` is an
+explicit compatibility mode that reproduces SimNIBS 4.6's general `eig`
+ordering, including its non-orthogonal repeated-eigenvalue edge output; the QA
+JSON records the selected mode and basis-orthogonality diagnostics. Formal FEM
+workflow runs still delegate conductivity construction to the installed
+SimNIBS SESSION rather than this standalone converter.
 
 References:
 
@@ -394,8 +405,11 @@ dwi2cond-xp prepare-topup \
 ```
 
 This writes the field, spline coefficients, movement parameters, corrected
-pair, joint validity mask, and `topup_qa.json`. Only the x/y single-axis subset
-accepted by FSL 6.0.4 TOPUP is supported; z phase encoding fails explicitly.
+pair, joint validity mask, and `topup_qa.json`. The legacy project names are
+retained, and `topup_fieldcoef.nii.gz` plus `topup_movpar.txt` form an
+FSL-readable `--topup=topup` bundle with the official cubic-spline intent
+metadata. Only the x/y single-axis subset accepted by FSL 6.0.4 TOPUP is
+supported; z phase encoding fails explicitly.
 
 Run the fixed single-shell EDDY path, optionally composing the TOPUP field:
 
@@ -517,11 +531,11 @@ They must retain the HCP acknowledgment and are not a substitute for accepting t
 - The final tag separately completed real SimNIBS 4.6 `SESSION._prepare()` with
   the resolved explicit mesh. It did not rerun the complete HCP raw-DWI-to-FEM
   chain or the solver after the last composition and cache-identity changes.
-- The final v0.3.0 gate completed with `671 passed` and no skips when every real
-  FSL probe was configured. The clean coverage run completed with `659 passed`
+- The final v0.3.0 gate completed with `666 passed` and no skips when every real
+  FSL probe was configured. The clean coverage run repeated those `666` tests
   in the main batch, `12 passed` in the montage batch, all real synthetic
   TOPUP/EDDY/FNIRT CLI paths, and strict `100.00%` statement coverage over all
-  `13,607/13,607` executable statements.
+  `13,663/13,663` executable statements.
   Cross-platform CI enforces the same threshold; optional reference and
   integration tests are skipped only when their external prerequisites are
   unavailable.

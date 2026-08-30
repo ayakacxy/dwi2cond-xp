@@ -4,21 +4,21 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/), and
 released versions follow semantic versioning.
 
 The `v0.1.0`--`v0.3.0` tags were republished on 2026-08-29 for documentation
-and release-metadata corrections. The algorithm baselines below were not
-changed.
+and release-metadata corrections. `v0.3.0` was replaced again on 2026-08-30
+after a fourth independent source audit found two algorithm defects and three
+conditional compatibility/artifact defects.
 
 ## Release map
 
-The commit column records the original algorithm baseline for each release.
-Documentation and release-metadata corrections may point to descendants of
-these commits; they do not change the versioned algorithm source or the
-evidence boundary.
+The commit column records the algorithm baseline for each release. A tagged
+documentation or release-metadata descendant does not change that baseline or
+the stated evidence boundary.
 
 | Release | Algorithm baseline | Release role |
 | --- | --- | --- |
 | `v0.1.0` | `29f98a4` | Established DTI fitting, tensor-to-conductivity conversion, and SimNIBS-facing FEM/lead-field interfaces. |
 | `v0.2.0` | `20f4092` | Added the pure-Python fixed preprocessing and registration subset used by SimNIBS 4.6 `dwi2cond`. |
-| `v0.3.0` | `0464486` | Current stable release; corrected workflow composition, numerical contracts, cache/provenance behavior, and cross-platform release gates. |
+| `v0.3.0` | `ae5a6a7` | Current stable release; includes the fourth independent-audit remediation for matrix, BET, eigensystem, FEM-cache, and TOPUP contracts. |
 
 ## [Unreleased]
 
@@ -34,7 +34,7 @@ evidence boundary.
   samples are not a baseline, a release target, or a current development
   commitment.
 
-## [0.3.0] - 2026-08-29
+## [0.3.0] - 2026-08-30
 
 ### Summary
 
@@ -67,13 +67,28 @@ and runtime identity checks found by independent source and same-input audits.
 - Added complete raw and pre-fitted pipeline entry points, SHA-256 provenance,
   structured QA, validated cache reuse, progress/resource reporting, and
   `scalar`/`vn`/`dir`/`mc` SimNIBS orchestration.
+- Closed the positive-determinant legacy matrix mismatch by converting every
+  local registration producer into the FSL radiological scaled-mm contract
+  before composition, saved matrices, resampling, and corrected b-vectors.
+- Transcribed BET2's 1 mm and 7 mm endpoints, sub-millimetre `dscale` loop,
+  near-surface maximum samples, and zero-force out-of-bounds behavior into the
+  shared reference/optimized sampling contract.
+- Kept stable symmetric conductivity decomposition as the default and added an
+  explicit, QA-recorded `simnibs46-literal` eigensystem mode for exact
+  repeated-eigenvalue compatibility testing.
+- Disabled cache hits for real SimNIBS FEM execution until the complete dynamic
+  Python/native solver closure can be fingerprinted; deterministic dry-run
+  preparation remains cacheable.
+- Added official TOPUP cubic-spline intent parameters and an FSL-readable
+  `topup_fieldcoef`/`topup_movpar` prefix bundle while retaining the existing
+  project artifact names.
 
 ### Validation
 
 - With all real FSL probes configured, the final repository gate completed with
-  `671 passed` and no skips. The independent coverage run completed with
-  `659 passed` in the main batch, `12 passed` in the montage batch, and
-  `13,607/13,607` production statements covered; real synthetic TOPUP, EDDY,
+  `666 passed` and no skips. The independent coverage run repeated those
+  `666 passed`, completed `12 passed` in the montage batch, and covered
+  `13,663/13,663` production statements; real synthetic TOPUP, EDDY,
   and FNIRT CLI paths were included.
 - Carried-forward stage references, collected before the final remediation,
   include HCP WLS tensor relative L2 `4.18e-6` against FSL 6.0.4, a local

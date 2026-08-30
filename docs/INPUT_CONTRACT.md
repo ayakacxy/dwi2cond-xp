@@ -63,8 +63,12 @@ NIfTIs with identical shape and affine. `--readout-seconds` must be positive,
 and `--phase-encoding-direction` is limited to `x`, `x-`, `y`, or `y-` because
 FSL 6.0.4 TOPUP rejects z phase encoding. The command writes the Hz field,
 float32 spline coefficients, six movement parameters per scan, corrected pair,
-joint mask, and QA JSON. Any failure aborts; no alternative field estimator is
-selected silently.
+joint mask, and QA JSON. It preserves `field_coefficients.nii.gz` and
+`movement_parameters.txt`, and also writes the FSL prefix bundle
+`topup_fieldcoef.nii.gz`/`topup_movpar.txt`. The coefficient NIfTI uses cubic
+TOPUP intent code 2016 with the source voxel sizes in `intent_p1..p3`; the
+bundle was exercised through the real FSL 6.0.4 `applytopup` reader. Any
+failure aborts; no alternative field estimator is selected silently.
 
 `prepare-eddy <dwi> <bvals> <bvecs> <brain_mask> <output_directory>` implements
 the fixed SimNIBS 4.6 single-shell EDDY path. The DWI and mask must share shape
@@ -170,6 +174,14 @@ by default. `--vn-singular-policy regularize` explicitly projects its
 eigenvalues to the configured anisotropy ratio before the ordinary safety
 passes and records `regularized_singular_tensors` in the QA JSON. Supplying this
 VN-only option with `dir` or `mc` is rejected as an unused-input error.
+
+`tensor-to-mesh` defaults to `--eigensystem-mode stable`, using `eigh` for an
+orthogonal symmetric-tensor basis. The explicit `simnibs46-literal` mode uses
+the same `eig`, real-part conversion, descending sort, and reconstruction basis
+as SimNIBS 4.6, including repeated-eigenvalue non-orthogonality. The QA JSON
+records the selected mode, maximum orthogonality error, and affected basis
+count. Formal FEM workflow runs use the installed SimNIBS SESSION and do not
+substitute this standalone converter.
 
 Shape, affine, finite-value, valid-mask, and provenance failures are reported
 explicitly. An anisotropic workflow never falls back silently to scalar FEM.

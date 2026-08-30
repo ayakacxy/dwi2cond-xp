@@ -8,6 +8,13 @@ backup ref and the project ledger, and rebuilds every published asset. The
 `main` branch remains the current development line; an older release receives a
 temporary backport branch only when maintenance is required.
 
+An explicitly authorized same-version correctness replacement is a separate
+exception: it may change algorithm source only after source-level re-audit,
+discriminative numerical tests, the complete release gate, exact tag/release
+rollback capture, and final remote CI/security verification. Its changelog and
+public notes must say that the release was replaced; it is never represented as
+a metadata-only correction.
+
 ## Prepare
 
 1. Move user-visible entries from `Unreleased` in [the changelog](CHANGELOG.md)
@@ -68,6 +75,12 @@ named assets in place while preserving its curated notes unless a separate
 notes correction was explicitly approved. Finally, download the replacement
 assets and perform the same verification used for a new release. A correction
 is complete only after the new and rollback object IDs are both recorded.
+
+For an authorized same-version correctness replacement, use the same exact
+backup and force-with-lease mechanics, but branch from current `main`, run the
+full cross-platform and scientific gate for the changed source, update the
+version section with the corrected algorithms and retained evidence limits,
+and require the replacement tag to resolve to the new verified `main` commit.
 
 ## Verify the public release
 

@@ -40,15 +40,16 @@
 发布入口，本文件同步最重要的安装、输入和科学边界。
 
 `v0.1.0`--`v0.3.0` 三个 tag 于 2026-08-29 为修正文档和发布元数据而重新发布；
-各版本的算法源码及更新记录中列出的科学基线没有改变。
+第四轮独立源码审计发现正确性缺陷后，`v0.3.0` 又于 2026-08-30 进行同版本正确性
+替换。替换后的精确算法基线和证据边界记录在更新日志中。
 
 ## ⚡ 验证概览
 
 | 合同 | 结果 | 证据边界 |
 | --- | ---: | --- |
 | SimNIBS 4.6 预处理子集 | **纯 Python · 运行时无 FSL** | `nomoco`、legacy、固定 GRE/TOPUP/EDDY、线性/FNIRT 配准和 PPD 张量重定向 |
-| 最终 tag 正确性门禁 | **671 passed · 0 skipped** | 冻结依赖栈并显式启用全部已配置真实 FSL probes |
-| 独立 coverage 门禁 | **100.00% statement coverage** | 主批次 659 + montage 12、真实 synthetic TOPUP/EDDY/FNIRT CLI，以及 13,607/13,607 条可执行语句 |
+| 最终 tag 正确性门禁 | **666 passed · 0 skipped** | 冻结依赖栈并显式启用全部已配置真实 FSL probes |
+| 独立 coverage 门禁 | **100.00% statement coverage** | 主批次 666 + montage 12、真实 synthetic TOPUP/EDDY/FNIRT CLI，以及 13,663/13,663 条可执行语句 |
 | 最终 tag SimNIBS 组合 | **`SESSION._prepare()` completed** | 真实 SimNIBS 4.6 保留显式 mesh；最终整改没有重跑 FEM solver |
 
 仓库不分发任何解剖影像、被试标识、体数据派生物或机器可读被试产物。完整方法与证据
@@ -76,7 +77,7 @@ reference 保留，不会被正式预处理运行路径调用。
 最终 v0.3.0 整改也关闭了后续发现的方向判定、依赖栈、cache、CHARM/FEM 组合和
 奇异 VN 合同问题；这不等于所有 FSL optimizer 逐位一致，也不冒充新的真实被试完整
 官方 A/B。当前数值边界见
-[最新整改报告](docs/V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-29.md)。
+[最新整改报告](docs/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md)。
 
 纯 Python DTI/tensor 映射核心依赖 NumPy、SciPy、NiBabel、h5py 和 tqdm；已验证的
 nonlinear 运行栈固定为 NumPy 2.3.0 与 Numba 0.64.0。Mesh 电导率、FEM 与 lead field
@@ -175,6 +176,13 @@ $\boldsymbol\Sigma_i=\sigma_t\mathbf I$。
 数值稳定扩展：先把奇异特征系统投影到配置的最大各向异性比，再执行既有 SimNIBS
 安全修正，并在 QA 中记录修复单元数。该扩展不会被描述成 SimNIBS 4.6 秩亏分支的逐句
 等价实现。
+
+standalone converter 默认使用 `--eigensystem-mode stable`，即对称 `eigh` 求解器；
+重复特征值 tensor 仍保持正交、满秩 basis。显式指定
+`--eigensystem-mode simnibs46-literal` 时，才逐句复现 SimNIBS 4.6 的通用 `eig`
+排序及其重复特征值非正交边界；QA JSON 会记录模式和 basis 正交性诊断。正式 FEM
+workflow 仍把 conductivity 构造交给已安装的 SimNIBS SESSION，不会静默改走 standalone
+converter。
 
 参考文献：
 
@@ -343,7 +351,9 @@ tensor/FA/SSE、valid mask和`legacy_qa.json`。`corrected` bvec模式是相对S
 分支会显式拒绝，不使用近似解缠。
 
 `prepare-topup`按SimNIBS 4.6九级固定配置输出Hz field、spline coefficients、movement、
-corrected pair、joint mask和QA；运行时不依赖FSL。FSL 6.0.4不支持的z向PE会显式报错。
+corrected pair、joint mask和QA；运行时不依赖FSL。旧项目文件名继续保留，同时新增
+`topup_fieldcoef.nii.gz`与`topup_movpar.txt`，组成可由FSL按`--topup=topup`读取且带官方
+cubic-spline intent的bundle。FSL 6.0.4不支持的z向PE会显式报错。
 
 `prepare-eddy`按SimNIBS 4.6固定五轮单壳EDDY流程执行motion/quadratic EC、spherical GP、
 prediction-based `--repol`、rotated bvec和shell alignment；可选组合TOPUP Hz场。输出
@@ -376,9 +386,9 @@ FEM 也曾在同一被试上完成；最终整改只重新验证了真实 SimNIB
 `SESSION._prepare()`，没有重跑完整 raw-DWI→FEM 链或 solver。全电极 lead-field 接口
 和数据合同已支持并测试，但当前证据不包含真实被试的全电极完整运行。
 
-最终 v0.3.0 在显式配置全部真实 FSL probes 后为 `671 passed`、零跳过。独立干净
-coverage 门禁为主批次 `659 passed`、montage `12 passed`，真实 synthetic
-TOPUP/EDDY/FNIRT CLI 均完成，全部 `13,607/13,607` 个可执行语句严格达到
+最终 v0.3.0 在显式配置全部真实 FSL probes 后为 `666 passed`、零跳过。独立干净
+coverage 门禁重复主批次 `666 passed`，另有 montage `12 passed`；真实 synthetic
+TOPUP/EDDY/FNIRT CLI 均完成，全部 `13,663/13,663` 个可执行语句严格达到
 `100.00%` 覆盖率；跨平台 CI 同样强制该门槛。只有外部 reference 或集成前置条件
 不可用时才跳过对应可选测试。
 

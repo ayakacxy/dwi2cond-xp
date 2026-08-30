@@ -1,13 +1,13 @@
 # Validation
 
-The final `v0.3.0` correctness gate is tied to algorithm baseline commit
-`04644866ce9ce3ca3cf6fa88ecab356391c3c1f6`. A later documentation and
-release-metadata correction does not change that scientific baseline. With
-every configured real-FSL probe enabled, it completed with `671 passed` and no
-skips. The independent clean
-coverage gate completed with `659 passed` in the main batch, `12 passed` in the
-montage batch, all three real synthetic TOPUP/EDDY/FNIRT CLI paths, and
-`13,607/13,607` executable statements covered (`100.00%`).
+The replaced `v0.3.0` correctness gate is tied to algorithm baseline commit
+`ae5a6a73f9f475cb51355af085f7832771cf8d77`. A tagged documentation or
+release-metadata descendant does not change that scientific baseline. With
+every configured real-FSL probe enabled, the clean main batch completed with
+`666 passed` and no skips. The independent coverage gate repeated those `666`
+tests, completed `12 passed` in the montage batch, exercised all three real
+synthetic TOPUP/EDDY/FNIRT CLI paths, and covered `13,663/13,663` executable
+statements (`100.00%`).
 
 ## Evidence levels
 
@@ -55,13 +55,14 @@ verified independently.
 
 The [v0.2.0 algorithm audit](V0.2.0_ALGORITHM_AUDIT_REPORT_2026-08-25.md)
 records the workflow and numerical defects that motivated the correctness
-release. The final
-[v0.3.0 independent re-audit](V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-29.md)
-and [remediation report](V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-29.md)
-record the final orientation, dependency, cache, CHARM/FEM composition, and VN
-singular-tensor closure. Intermediate audit snapshots remain recoverable from
-algorithm baseline commit `0464486` but are not current documentation entry
-points.
+release. The
+[fourth independent v0.3.0 re-audit](V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-30.md)
+and [its remediation report](V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md)
+record the current matrix, BET, conductivity eigensystem, FEM-cache, and TOPUP
+closure. The earlier
+[third re-audit](V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-29.md)
+remains the evidence for orientation, dependency, CHARM/FEM composition, and VN
+singular-tensor findings that were not superseded.
 
 The final dependency stack retains a nonzero FNIRT residual against FSL 6.0.4:
 corrected-image relative L2 `0.001298916`, dense-field relative L2 `0.175488519`,

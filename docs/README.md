@@ -28,12 +28,12 @@
   baselines, and user-visible changes for `v0.1.0`, `v0.2.0`, and `v0.3.0`.
 - [v0.2.0 algorithm audit](V0.2.0_ALGORITHM_AUDIT_REPORT_2026-08-25.md):
   workflow and numerical defects that motivated the v0.3.0 correctness release.
-- [v0.3.0 final independent algorithm re-audit](V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-29.md):
-  final released-tree review of orientation, dependency stability, cache,
-  CHARM/FEM composition, and rank-deficient VN behavior.
-- [v0.3.0 final remediation](V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-29.md):
-  issue-by-issue closure and the final real-FSL, SimNIBS preparation, coverage,
-  package, and publication gates.
+- [v0.3.0 fourth independent algorithm re-audit](V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-30.md):
+  final released-tree review of matrix handedness, BET sampling, conductivity
+  eigensystems, FEM cache closure, and TOPUP coefficient artifacts.
+- [v0.3.0 fourth remediation](V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md):
+  issue-by-issue closure and the real-FSL, regression, package, and publication
+  gates for the replacement release.
 - [Release process](RELEASE_PROCESS.md): version, tag, asset, provenance, and
   post-publication verification gates.
 

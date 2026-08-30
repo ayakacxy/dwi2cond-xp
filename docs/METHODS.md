@@ -58,10 +58,12 @@ The workflow DAG fingerprints input content with SHA-256, writes stage outputs
 and manifests atomically, validates cached structure and current content hashes
 before reuse, and records parameters, versions, backend, timing, resource use,
 and QA. Raw-DTI QA fingerprints include the selected fitting compatibility
-mode. FEM cache identity includes the SimNIBS distribution RECORD, the actual
+mode. FEM diagnostics include the SimNIBS distribution RECORD, the inspected
 run/session/FEM/conductivity/mesh modules, numerical package versions, and
-native solver-library hashes; FEM cache reuse is disabled when that identity is
-incomplete. A cache hit is reported as reuse rather than fresh computation.
+native solver-library hashes. Real FEM cache reuse is fail-closed even when
+those hashes are present because the complete dynamic solver closure has not
+been proven; deterministic dry-run preparation remains cacheable. A cache hit
+is reported as reuse rather than fresh computation.
 Reference and optimized backends remain explicit so numerical A/B can be
 repeated after an optimization.
 
@@ -80,7 +82,12 @@ follow the SimNIBS 4.6 compatibility contract.
   eigenvalue is the geometric mean of the three local conductivity
   eigenvalues, preserving the determinant and DTI-driven spatial variation.
 
-The same SimNIBS FEM assembly is used for scalar and tensor conductivity.
+The same SimNIBS FEM assembly is used for scalar and tensor conductivity. The
+standalone mesh converter defaults to a stable symmetric `eigh` basis and
+offers an explicit `simnibs46-literal` `eig` mode. The latter preserves the
+official repeated-eigenvalue edge behavior and reports basis non-orthogonality
+instead of silently presenting it as the stable result. Formal FEM workflow
+runs use the installed SimNIBS conductivity path.
 Nonzero rank-deficient VN tensors are rejected by default because determinant
 normalization is undefined. The opt-in `regularize` policy first raises the
 singular eigensystem to the configured anisotropy bound, then applies the
