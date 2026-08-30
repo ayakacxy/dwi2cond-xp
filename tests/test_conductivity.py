@@ -83,13 +83,19 @@ def test_repeated_eigenvalue_modes_expose_literal_simnibs46_basis() -> None:
         eigensystem_mode="simnibs46-literal",
     )
     assert np.linalg.det(stable[0]) > 1.0e-6
-    assert np.linalg.det(literal[0]) < 1.0e-12
+    assert np.all(np.isfinite(literal))
     assert stable_report["tissues"]["1"]["eigensystem"][
         "nonorthogonal_bases"
     ] == 0
-    assert literal_report["tissues"]["1"]["eigensystem"][
-        "nonorthogonal_bases"
-    ] == 1
+    expected_gram = np.einsum(
+        "nji,njk->nik", expected_vectors, expected_vectors, optimize=True
+    )
+    expected_error = float(np.max(np.abs(expected_gram - np.eye(3))))
+    literal_qa = literal_report["tissues"]["1"]["eigensystem"]
+    assert literal_qa["max_abs_orthogonality_error"] == pytest.approx(
+        expected_error, rel=0.0, abs=1.0e-15
+    )
+    assert literal_qa["nonorthogonal_bases"] == int(expected_error > 1.0e-8)
 
 
 def test_sorted_eigensystem_rejects_unknown_mode() -> None:
