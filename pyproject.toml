@@ -34,7 +34,7 @@ dependencies = [
   "h5py>=3.10,<4",
   "matplotlib>=3.8,<4",
   "nibabel>=5,<6",
-  "numba==0.64.0",
+  "numba==0.67.0",
   "numpy==2.3.0",
   "scipy>=1.11,<2",
   "threadpoolctl>=3.1,<4",
