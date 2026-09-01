@@ -1,5 +1,5 @@
 # Matches the validated read-only SimNIBS 4.6 runtime package by package.
-numpy==2.3.0
+numpy==2.4.6
 scipy==1.17.1
 nibabel==5.3.3
 numba==0.64.0
