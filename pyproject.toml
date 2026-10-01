@@ -43,7 +43,7 @@ dependencies = [
 
 [project.optional-dependencies]
 simnibs46 = ["simnibs==4.6.0"]
-viz = ["mne==1.12.1"]
+viz = ["mne==1.13.2"]
 test = ["pytest>=8,<10", "pytest-cov>=7,<8", "ruff>=0.12,<1"]
 release = [
   "build>=1.3,<2",
