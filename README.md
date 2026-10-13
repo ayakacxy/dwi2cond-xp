@@ -8,12 +8,14 @@ Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 [![CI](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ayakacxy/dwi2cond-xp/badge)](https://scorecard.dev/viewer/?uri=github.com/ayakacxy/dwi2cond-xp)
-[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#validation-at-a-glance)
+[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#-validation-at-a-glance)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
 [![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/en/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
 [简体中文](README.zh-CN.md) · [Documentation](docs/en/README.md) · [Validation](docs/en/VALIDATION.md) · [Benchmarks](docs/en/BENCHMARKS.md) · [Release notes](docs/en/CHANGELOG.md)
+
+🧠 **DTI fitting** · ⚡ **FSL-free runtime** · 🧭 **Tensor reorientation** · ⚡ **Anisotropic FEM** · 🧪 **100% statement coverage**
 
 </div>
 
@@ -31,7 +33,7 @@ simulations without requiring FSL at runtime.
 This is an independent community project. It is not an official SimNIBS or FSL
 distribution.
 
-## Validation at a glance
+## ⚡ Validation at a glance
 
 | Check | Result | Test conditions and scope |
 | --- | ---: | --- |
@@ -46,7 +48,7 @@ No anatomical image, subject identifier, voxel derivative, or machine-readable
 subject artifact is distributed. Methods, test conditions, and limitations are in
 [Validation](docs/en/VALIDATION.md) and [Benchmarks](docs/en/BENCHMARKS.md).
 
-## Scope
+## 🧭 Scope
 
 The `v0.2.0` preprocessing and conductivity path is:
 
@@ -64,7 +66,7 @@ Version `0.2.0` implements the SimNIBS 4.6 legacy motion/eddy path, the fixed GR
 fieldmap and TOPUP branches, and the fixed single-shell EDDY `--repol` subset
 with an optional TOPUP field. Automatic 6/12-DOF linear DTI-to-T1 registration
 and the fixed SimNIBS 4.6 FNIRT plus nonlinear PPD tensor branch are implemented.
-Unified QA, atomic DAG manifests, cache validation, and progress reporting are
+Unified QA, atomic stage manifests, cache validation, and progress reporting are
 included. FSL is retained only as an optional local numerical reference; it is
 not called by the released preprocessing runtime.
 
@@ -73,7 +75,7 @@ and tqdm. Mesh conductivity, FEM, and lead-field workflows require exactly
 SimNIBS 4.6.0. Platform support for those workflows is limited to platforms on
 which SimNIBS 4.6.0 itself can be installed and validated.
 
-## Conductivity modes
+## 🧩 Conductivity modes
 
 | Mode | Meaning |
 | --- | --- |
@@ -189,7 +191,7 @@ References:
 The corresponding SimNIBS definitions are summarized in
 the official [dwi2cond documentation](https://simnibs.github.io/simnibs/build/html/documentation/command_line/dwi2cond.html).
 
-## Installation
+## 🐍 Installation
 
 The full pipeline was validated with Python 3.11 and SimNIBS 4.6.0. Installing
 into an existing SimNIBS 4.6 environment is the primary path. If that environment
@@ -237,7 +239,7 @@ pytest -q --cov=dwi2cond_xp --cov-report=term-missing --cov-fail-under=100
 ruff check src tests tools scripts
 ```
 
-## Input requirements
+## 📥 Input requirements
 
 `fit-dti` accepts a preprocessed 4-D NIfTI with matching b-values, b-vectors,
 and diffusion brain mask. `preprocess-nomoco` accepts a raw single-shell DWI and
@@ -273,7 +275,7 @@ dwi2cond-xp register-t1 dti_outputs m2m_subject t1_registration_outputs \
   --mode affine --workers 8
 ```
 
-## Minimal workflow
+## 🚀 Minimal workflow
 
 Run the FSL-free SimNIBS 4.6 `nomoco` raw-DWI path with eight workers:
 
@@ -386,7 +388,7 @@ Each formal simulation exports one T1-grid vector E-field NIfTI with final axis
 outputs are strictly masked to WM, GM, and CSF labels `1,2,3`; skull, scalp,
 electrodes, and extracranial tissues are excluded.
 
-## Voxel-level comparison
+## 🎨 Voxel-level comparison
 
 ```bash
 dwi2cond-xp compare-fields \
@@ -406,7 +408,7 @@ The magnitude view uses the same four vector NIfTIs and a shared positive scale:
 
 ![Four-mode electric-field magnitude](docs/images/electric_field_magnitude_2x2.png)
 
-## Lead-field support
+## ⚡ Lead-field support
 
 `simulate-leadfield` builds SimNIBS 4.6 `TDCSLEADFIELD` configurations for all
 four conductivity modes. It keeps the original HDF5 provenance and can export a
@@ -418,7 +420,7 @@ This interface and its HDF5/NPY formats are unit tested, but the current
 release evidence does not include a full-subject, all-electrode lead-field run.
 See [SimNIBS integration](docs/en/SIMNIBS_INTEGRATION.md).
 
-## Validation evidence
+## 🧪 Validation evidence
 
 One private HCP subject was used for historical release-line validation. No source
 image, volumetric derivative, subject identifier, or machine-readable
@@ -450,7 +452,7 @@ Exact methods, timing boundaries, and limitations are in
 [Validation](docs/en/VALIDATION.md), [Benchmarks](docs/en/BENCHMARKS.md), and
 [Reproducibility](docs/en/REPRODUCIBILITY.md).
 
-## Documentation and community
+## 🗂️ Documentation and community
 
 - [Documentation index](docs/en/README.md)
 - [Methods](docs/en/METHODS.md)
@@ -461,7 +463,7 @@ Exact methods, timing boundaries, and limitations are in
 - [Changelog](docs/en/CHANGELOG.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-## Citation and license
+## 🙏 Citation and license
 
 Please cite this software using [CITATION.cff](CITATION.cff), and cite SimNIBS
 and the diffusion-processing software used upstream. This project is released

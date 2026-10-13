@@ -2,6 +2,8 @@
 
 [English](en/CHANGELOG.md) | [简体中文](zh/CHANGELOG.md)
 
+[Documentation](en/README.md) · [Project home](../README.md)
+
 All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and
 versions follow semantic versioning.
 
