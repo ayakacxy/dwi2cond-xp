@@ -1,33 +1,33 @@
-name: Feature request
-description: Propose a scoped capability with a validation plan.
+name: Feature request / 功能建议
+description: Propose a feature and explain how to validate it. / 提出具体功能并说明验证方式。
 title: "[Feature]: "
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
-      value: "Do not upload human MRI or controlled-access data. Explain the scientific contract and use shareable synthetic examples."
+      value: "Do not upload human MRI or controlled-access data. Describe the proposed method and use shareable synthetic examples. / 请勿上传人体 MRI 或受控数据；说明拟采用的方法，并使用可共享的合成示例。"
   - type: textarea
     id: problem
     attributes:
-      label: Problem and intended users
+      label: Problem and intended users / 使用需求与面向的用户
     validations:
       required: true
   - type: textarea
     id: contract
     attributes:
-      label: Proposed input, output, coordinates, and failure behavior
+      label: Proposed input, output, coordinates, and error handling / 输入、输出、坐标与错误处理
     validations:
       required: true
   - type: textarea
     id: validation
     attributes:
-      label: Reference and validation plan
+      label: Reference and validation plan / 参考方法与验证计划
     validations:
       required: true
   - type: checkboxes
     id: scope
     attributes:
-      label: Scope confirmation
+      label: Scope confirmation / 提交范围检查
       options:
-        - label: This request does not include private medical data or credentials.
+        - label: This request does not include private medical data or credentials. / 本建议不包含私有医学数据或凭据。
           required: true

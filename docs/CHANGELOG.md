@@ -1,7 +1,15 @@
 # Changelog
 
+[English](en/CHANGELOG.md) | [简体中文](zh/CHANGELOG.md)
+
 This changelog stops at the historical `v0.1.0` release. Later-version changes
 belong to their corresponding tags.
+
+## Documentation update — 2026-10-13
+
+The documentation has been edited and paired in English and Chinese. Links stay
+in the selected language. The algorithms, commands, dependency requirements,
+and version-specific results are unchanged.
 
 ## [0.1.0] - 2026-08-21
 
@@ -20,12 +28,12 @@ into SimNIBS 4.6 scalar or anisotropic-conductivity workflows.
 - SimNIBS 4.6 fixed-montage FEM orchestration with Pardiso as the default.
 - Strict WM/GM/CSF subject-volume E-field masking and four-mode NIfTI figures.
 - Lead-field configuration plus HDF5-to-NPY/JSON validation and export
-  contracts.
+  formats.
 - Full statement-level tests for all 1,644 executable package statements in the
   recorded release environment, including the optional local FSL reference
   comparison.
 
-### Evidence boundary
+### Validation scope
 
 - The retained HCP DTI, synthetic-sphere conductivity, and four-mode fixed-
   montage FEM results apply to the documented inputs and stages only.
@@ -38,7 +46,7 @@ into SimNIBS 4.6 scalar or anisotropic-conductivity workflows.
 ### Documentation maintenance - 2026-08-29
 
 - Reissued the same `v0.1.0` tag to correct scientific wording, distinguish
-  historical experiments from tag-local tests, and make Release publication a
-  fail-closed upsert.
+  historical experiments from tests for this tag, and update the Release workflow
+  to refresh existing releases and stop publication if validation fails.
 - The algorithm source remains the original `v0.1.0` baseline; this maintenance
   update adds no preprocessing stage, numerical method, or performance result.

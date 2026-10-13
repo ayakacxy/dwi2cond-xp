@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Usage questions
+  - name: Usage questions / 使用问题
     url: https://github.com/ayakacxy/dwi2cond-xp/discussions
-    about: Ask questions without sharing private medical data.
+    about: Ask questions without sharing private medical data. / 讨论使用问题，请勿分享私有医学数据。
