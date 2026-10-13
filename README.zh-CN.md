@@ -1,215 +1,41 @@
-<div align="center">
-
 # dwi2cond-xp
 
-面向 SimNIBS 4.6 的跨平台、运行时无 FSL 的 DTI→电导率流程。
+面向 SimNIBS 4.6 的扩散 MRI 预处理、张量拟合与电导率建模。
 
 [![Release](https://img.shields.io/github/v/release/ayakacxy/dwi2cond-xp?display_name=tag&sort=semver)](https://github.com/ayakacxy/dwi2cond-xp/releases/latest)
 [![CI](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml)
-[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#-验证概览)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ayakacxy/dwi2cond-xp/badge)](https://scorecard.dev/viewer/?uri=github.com/ayakacxy/dwi2cond-xp)
+[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](docs/zh/VALIDATION.md)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
-[![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/SIMNIBS_INTEGRATION.md)
+[![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/zh/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-[English](README.md) · [文档](docs/README.md) · [验证](docs/VALIDATION.md) · [路线图](docs/ROADMAP.md) · [更新记录](docs/CHANGELOG.md)
+[文档目录](docs/zh/README.md) · [输入文件](docs/zh/INPUTS.md) · [验证记录](docs/zh/VALIDATION.md) · [更新记录](docs/zh/CHANGELOG.md)
 
-🧠 **DTI 拟合** · ⚡ **运行时无 FSL** · 🧭 **张量重定向** · ⚡ **各向异性 FEM** · 🧪 **100% 语句覆盖**
+`dwi2cond-xp` 处理受支持的原始或已预处理单壳扩散 MRI，将扩散张量映射到 CHARM T1
+网格，并运行 SimNIBS 电导率与有限元流程。预处理和张量计算采用 Python 实现，运行时
+不需要 FSL；FEM 与先导场命令使用 SimNIBS 4.6.0。
 
-</div>
+本项目由社区独立维护。当前稳定版本为 `v0.3.0`，处于[维护阶段](docs/zh/ROADMAP.md)。
 
-## 📚 目录
+## 支持的流程
 
-- [验证概览](#-验证概览)
-- [支持范围](#-支持范围)
-- [电导率模式](#-电导率模式)
-- [安装](#-安装)
-- [输入合同](#-输入合同)
-- [最小流程](#-最小流程)
-- [四模式图](#-四模式图)
-- [证据边界](#-证据边界)
-- [后续路线图](#-后续路线图)
-- [文档与社区](#-文档与社区)
-- [引用与许可证](#-引用与许可证)
+- 单壳 DTI 拟合，可使用 HCP/FSL 梯度非线性校正。
+- SimNIBS 4.6 使用的固定 `nomoco`、legacy、GRE、TOPUP 和 EDDY 预处理。
+- 仿射或非线性 DTI→T1 配准及张量重定向。
+- `scalar`、`vn`、`dir`、`mc` 电导率，固定电极 FEM 和先导场接口。
 
-`dwi2cond-xp` 是一个跨平台 Python 流程：对支持的原始或已预处理单壳 diffusion MRI
-执行预处理，生成 SimNIBS 4.6 电导率张量，并组织各向异性有限元仿真。正式计算路径
-不依赖 FSL。
+实现范围限于 SimNIBS `dwi2cond` 使用的设置，不包含任意 FSL 配置、需要 PRELUDE 的
+缠绕相位，也不直接将多个非零壳层用于单张量拟合。依赖 SimNIBS 的命令只能在已安装并
+验证 SimNIBS 4.6.0 的平台运行。各命令的具体要求见[输入文件与坐标](docs/zh/INPUTS.md)。
 
-这是独立社区项目，不是 SimNIBS 或 FSL 官方发行物。英文 [README](README.md) 是默认
-发布入口，本文件同步最重要的安装、输入和科学边界。
+## 安装
 
-`v0.1.0`--`v0.3.0` 三个 tag 于 2026-08-29 为修正文档和发布元数据而重新发布；
-第四轮独立源码审计发现正确性缺陷后，`v0.3.0` 又于 2026-08-30 进行同版本正确性
-替换。替换后的精确算法基线和证据边界记录在更新日志中。
-
-## ⚡ 验证概览
-
-| 合同 | 结果 | 证据边界 |
-| --- | ---: | --- |
-| SimNIBS 4.6 预处理子集 | **纯 Python · 运行时无 FSL** | `nomoco`、legacy、固定 GRE/TOPUP/EDDY、线性/FNIRT 配准和 PPD 张量重定向 |
-| 最终 tag 正确性门禁 | **666 passed · 0 skipped** | 冻结依赖栈并显式启用全部已配置真实 FSL probes |
-| 独立 coverage 门禁 | **100.00% statement coverage** | 主批次 666 + montage 12、真实 synthetic TOPUP/EDDY/FNIRT CLI，以及 13,663/13,663 条可执行语句 |
-| 最终 tag SimNIBS 组合 | **`SESSION._prepare()` completed** | 真实 SimNIBS 4.6 保留显式 mesh；最终整改没有重跑 FEM solver |
-
-仓库不分发任何解剖影像、被试标识、体数据派生物或机器可读被试产物。完整方法与证据
-边界见 [验证](docs/VALIDATION.md) 和 [基准](docs/BENCHMARKS.md)。
-
-## 🧭 支持范围
-
-```text
-原始或已预处理单壳 DWI，或六分量 diffusion tensor
-  -> 选择 SimNIBS 4.6 预处理分支并执行两遍 WLS DTI 拟合
-  -> 统一 QA、manifest 和 cache 验证
-  -> 显式映射/重定向到 CHARM T1 网格
-  -> scalar / vn / dir / mc 电导率
-  -> SimNIBS 4.6 固定 montage FEM
-  -> 三分量 E-field NIfTI 与 QA manifest
-```
-
-`v0.3.0` 已实现 SimNIBS 4.6 legacy motion/eddy 路径、接受已换算 rad/s 场图的固定
-GRE/FUGUE分支、固定TOPUP分支，以及支持可选TOPUP场的单壳EDDY `--repol`子集。
-自动6/12 DOF线性DTI→T1配准，以及SimNIBS 4.6固定FNIRT与nonlinear PPD tensor
-重定向分支均已实现；同时包含统一 QA、原子 DAG manifest、cache 验证和进度显示。
-本版本还修复了 v0.2.0 审计发现的产物流向、mask、拟合语义、TOPUP→EDDY 闭环、
-官方默认值、预拟合 tensor 导入和 m2m 发布问题。FSL 仅作为可选的本地数值
-reference 保留，不会被正式预处理运行路径调用。
-最终 v0.3.0 整改也关闭了后续发现的方向判定、依赖栈、cache、CHARM/FEM 组合和
-奇异 VN 合同问题；这不等于所有 FSL optimizer 逐位一致，也不冒充新的真实被试完整
-官方 A/B。当前数值边界见
-[最新整改报告](docs/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md)。
-
-纯 Python DTI/tensor 映射核心依赖 NumPy、SciPy、NiBabel、h5py 和 tqdm；已验证的
-nonlinear 运行栈固定为 NumPy 2.3.0 与 Numba 0.64.0。Mesh 电导率、FEM 与 lead field
-固定要求 `SimNIBS 4.6.0 + Python 3.11`；完整流程的平台范围受 SimNIBS 4.6.0 可安装
-和已验证平台限制。
-
-## 🧩 电导率模式
-
-| 模式 | 含义 |
-| --- | --- |
-| `scalar` | 每种组织使用固定标量电导率，不使用 DTI。 |
-| `vn` | 保留主方向和各向异性比例，并逐位置归一化行列式；这是主各向异性模式。 |
-| `dir` | 保留方向、比例及局部强度变化，再进行总体强度校准。 |
-| `mc` | 保留 DTI 驱动的空间平均电导率变化，但局部各向同性；它是强度变化对照。 |
-
-### 实现公式
-
-下面的公式就是本项目实现并与 SimNIBS 4.6 对照过的映射。对于各向异性组织 $t$
-中的单元或体素 $i$，把修复后的扩散张量写成
-
-$$
-\mathbf D_i = \mathbf V_i\mathrm{diag}
-(d_{i1},d_{i2},d_{i3})\mathbf V_i^{\mathsf T},
-\qquad d_{i1}\ge d_{i2}\ge d_{i3}>0,
-$$
-
-其中 $\mathbf V_i$ 的列是主方向，$\sigma_t$ 是组织 $t$ 的参考标量电导率，$w_i$
-是四面体体积；在不加权的 voxel 计算中取 $w_i=1$。
-
-#### `vn`：体积归一化各向异性映射
-
-定义局部几何均值 $g_i=(d_{i1}d_{i2}d_{i3})^{1/3}$，核心映射为
-
-$$
-\boldsymbol\Sigma_i^{\mathrm{vn}}
-=\sigma_t\mathbf V_i
-\mathrm{diag}\left(
-\frac{d_{i1}}{g_i},\frac{d_{i2}}{g_i},\frac{d_{i3}}{g_i}
-\right)\mathbf V_i^{\mathsf T},
-\qquad
-\det\left(\boldsymbol\Sigma_i^{\mathrm{vn}}\right)^{1/3}=\sigma_t.
-$$
-
-因此，`vn` 保留特征向量和相对各向异性，同时把每个位置的几何平均电导率设为对应
-组织的参考值。这是 Güllmar 等提出并被 SimNIBS 推荐使用的体积归一化映射 [3,4]。
-
-#### `dir`：直接缩放各向异性映射
-
-先对每种各向异性组织计算体积加权张量尺度
-
-$$
-m_t=
-\left(
-\frac{\sum_{i\in t}w_i\det(\mathbf D_i)}
-     {\sum_{i\in t}w_i}
-\right)^{1/3}.
-$$
-
-然后在全部各向异性组织之间联合拟合一个全局缩放因子：
-
-$$
-s=\underset{a}{\mathrm{argmin}}
-\sum_t(am_t-\sigma_t)^2
-=\frac{\sum_t\sigma_t m_t}{\sum_t m_t^2},
-\qquad
-\boldsymbol\Sigma_i^{\mathrm{dir}}=s\mathbf D_i.
-$$
-
-该映射保留 DTI 给出的方向、各向异性和空间强度变化。它属于 Tuch 等提出的线性
-扩散率到电导率映射，并对应 Rullmann 等和 Opitz 等使用的 direct mapping [1,2,4]。
-
-#### `mc`：平均电导率对照
-
-`mc` 使用与 `dir` 相同的全局因子 $s$，但把每个局部张量替换为具有相同行列式的
-各向同性张量：
-
-$$
-\boldsymbol\Sigma_i^{\mathrm{mc}}
-=\det\left(\boldsymbol\Sigma_i^{\mathrm{dir}}\right)^{1/3}\mathbf I
-=s\det(\mathbf D_i)^{1/3}\mathbf I.
-$$
-
-所以它保留 DTI 驱动的几何平均电导率空间变化，却移除了方向各向异性。`mc` 是
-DTI 派生的对照模式，而不是各向异性张量场 [4]。
-
-三种映射会对其支持的输入执行已有 SimNIBS 兼容特征值、最大电导率和各向异性比规则，
-但退化输入按模式分别处理，而不是统一“自动修复”：非零秩亏 `vn` tensor 默认报错；
-默认 `correct_intensity=True` 时，全零各向异性 `dir/mc` 组织因全局尺度无定义而被拒绝；
-显式指定 `--no-correct-intensity` 时改走非校准安全路径，并接受该输入。`vn` 实际执行
-“归一化→安全修正→再次归一化→再次安全修正”；如果最后的边界修正被触发，上式中
-理想的行列式等式可能出现轻微偏移。不参与各向异性的组织统一使用
-$\boldsymbol\Sigma_i=\sigma_t\mathbf I$。
-
-非零秩亏张量没有定义良好的 VN 行列式归一化。默认策略会明确报错，不再产生 NaN 或
-静默把缩放因子替换成 1。`tensor-to-mesh --vn-singular-policy regularize` 是显式的
-数值稳定扩展：先把奇异特征系统投影到配置的最大各向异性比，再执行既有 SimNIBS
-安全修正，并在 QA 中记录修复单元数。该扩展不会被描述成 SimNIBS 4.6 秩亏分支的逐句
-等价实现。
-
-standalone converter 默认使用 `--eigensystem-mode stable`，即对称 `eigh` 求解器；
-重复特征值 tensor 仍保持正交、满秩 basis。显式指定
-`--eigensystem-mode simnibs46-literal` 时，才逐句复现 SimNIBS 4.6 的通用 `eig`
-排序及其重复特征值非正交边界；QA JSON 会记录模式和 basis 正交性诊断。正式 FEM
-workflow 仍把 conductivity 构造交给已安装的 SimNIBS SESSION，不会静默改走 standalone
-converter。
-
-参考文献：
-
-1. Tuch DS, Wedeen VJ, Dale AM, George JS, Belliveau JW. *Conductivity tensor
-   mapping of the human brain using diffusion tensor MRI*. PNAS. 2001;
-   98(20):11697-11701. [doi:10.1073/pnas.171473898](https://doi.org/10.1073/pnas.171473898)
-2. Rullmann M, Anwander A, Dannhauer M, Warfield SK, Duffy FH, Wolters CH.
-   *EEG source analysis of epileptiform activity using a 1 mm anisotropic
-   hexahedra finite element head model*. NeuroImage. 2009;44(2):399-410.
-   [doi:10.1016/j.neuroimage.2008.09.009](https://doi.org/10.1016/j.neuroimage.2008.09.009)
-3. Güllmar D, Haueisen J, Reichenbach JR. *Influence of anisotropic electrical
-   conductivity in white matter tissue on the EEG/MEG forward and inverse
-   solution. A high-resolution whole head simulation study*. NeuroImage.
-   2010;51(1):145-163.
-   [doi:10.1016/j.neuroimage.2010.02.014](https://doi.org/10.1016/j.neuroimage.2010.02.014)
-4. Opitz A, Windhoff M, Heidemann RM, Turner R, Thielscher A. *How the brain
-   tissue shapes the electric field induced by transcranial magnetic
-   stimulation*. NeuroImage. 2011;58(3):849-859.
-   [doi:10.1016/j.neuroimage.2011.06.069](https://doi.org/10.1016/j.neuroimage.2011.06.069)
-
-对应的 SimNIBS 实现级定义见官方
-[dwi2cond 文档](https://simnibs.github.io/simnibs/build/html/documentation/command_line/dwi2cond.html)。
-
-## 🐍 安装
-
-首选方式就是直接基于已有 SimNIBS 4.6 环境安装。若该环境需要保持冻结，可用
-`--no-deps` 安装 wheel，避免 pip 改动其依赖：
+使用 Python 3.11。已有兼容的 SimNIBS 4.6 环境时，从
+[Releases](https://github.com/ayakacxy/dwi2cond-xp/releases/tag/v0.3.0) 下载 wheel，
+通过以下方式安装，保留该环境现有依赖：
 
 ```bash
 conda activate simnibs
@@ -218,20 +44,10 @@ python -m pip install --no-deps dwi2cond_xp-0.3.0-py3-none-any.whl
 dwi2cond-xp --help
 ```
 
-从源码开发时把 wheel 命令换为 `python -m pip install --no-deps -e .`。当前 wheel
-已经通过临时 overlay 与现有 SimNIBS 4.6.0 同时导入验证，该验证没有修改参考环境。
+非线性流程已验证的依赖版本为 NumPy 2.3.0 和 Numba 0.64.0。新建环境或从源码安装
+请参阅[安装与结果复现](docs/zh/REPRODUCIBILITY.md)。
 
-如果希望另建独立环境：
-
-```bash
-conda env create -f environment.yml
-conda activate dwi2cond-xp-simnibs46
-python -m pip install -e .
-python -c "import simnibs; assert simnibs.__version__ == '4.6.0'"
-dwi2cond-xp --help
-```
-
-仅安装纯 Python 核心：
+不使用 SimNIBS 时，也可只安装 Python 核心：
 
 ```bash
 python -m venv .venv
@@ -240,32 +56,12 @@ python -m pip install --upgrade pip
 python -m pip install .
 ```
 
-非冻结开发环境可安装 `python -m pip install -e '.[test,viz]'`。日常只运行与修改相关的
-focused tests、Ruff 和 Markdown 链接检查；发布前再运行
-`python scripts/run_coverage.py`。该完整门禁会在隔离 Numba cache 中执行单元测试及
-真实合成 TOPUP/EDDY/FNIRT E2E，并强制 100% 语句覆盖率。
+Windows PowerShell 改用 `.venv\Scripts\Activate.ps1` 激活。运行 FEM 和先导场仍需 SimNIBS。
 
-## 📥 输入合同
+## 快速开始
 
-`fit-dti` 接受已预处理的四维 NIfTI，bvals、bvecs、brain mask 必须与其体积顺序一致。
-`preprocess-nomoco` 接受原始单壳 DWI 并生成 b0 参考和脑掩膜，但按 SimNIBS 4.6
-`nomoco` 合同明确不对 DWI volumes 做 motion、eddy-current 或 susceptibility correction；
-只有在该合同适合数据时才能使用。DTI 模型显式使用 b=0 加一个非零壳层，不会静默
-拟合全部多壳数据。可选 `grad_dev` 使用 HCP/FSL 九分量约定。
-
-`preprocess-legacy`按SimNIBS 4.6顺序执行两轮6/12 DOF校正，并保证每个正式volume
-只做一次最终sinc重采样。默认`compat46`逐字节保留原bvec，复现上游脚本；只有显式
-选择`corrected`时才按最终变换旋转bvec。
-
-Tensor NIfTI 的末维固定为 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`。映射到 T1 前，调用者必须
-选择自动`register-t1`，或为通用`register-tensor`提供外部估计的
-input-world→reference-world 4×4 affine；只有已有外部对齐证据时才能显式使用
-`--assume-aligned`。同一被试并不自动意味着 DWI 与 T1 已经对齐。
-
-## 🚀 最小流程
-
-运行官方默认的正确性路径（`legacy + nonlinear`），并把最终 tensor 原子发布到
-m2m 目录：
+准备好单壳 DWI、对应的 b 值和 b 向量，以及完整 CHARM 头模型后，默认流程执行 legacy
+预处理和非线性 T1 配准：
 
 ```bash
 dwi2cond-xp run-pipeline \
@@ -273,150 +69,72 @@ dwi2cond-xp run-pipeline \
   --workers 8
 ```
 
-reverse-PE 采集应使用完整 TOPUP→EDDY 闭环，不要手工拼接 standalone 产物：
+最终张量保存为 `m2m_subject/DTI_coregT1_tensor.nii.gz`。反向相位编码数据和预拟合
+张量的用法见[命令示例](docs/zh/USAGE.md)。
+
+张量 NIfTI 形状为 `(X,Y,Z,6)`，分量顺序为 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`。同一被试的
+影像不一定已经对齐，应使用自动配准或已知世界坐标变换；只有外部处理已确认对齐时，
+才使用 `--assume-aligned`。
+
+检查 C3→C4、1 mA 的仿真设置而不启动求解器：
 
 ```bash
-dwi2cond-xp run-pipeline \
-  raw_dwi.nii.gz bvals bvecs m2m_subject workflow_outputs \
-  --preprocessing-mode eddy \
-  --reverse-phase-encoding reverse_pe_4d.nii.gz \
-  --readout-seconds 0.05 --phase-encoding-direction y --workers 8
-```
-
-官方格式的预拟合 tensor 可进入同一 T1、发布和 QA DAG：
-
-```bash
-dwi2cond-xp run-prefit-pipeline \
-  DTI_tensor.nii.gz m2m_subject workflow_outputs --workers 8
-```
-
-```bash
-dwi2cond-xp preprocess-nomoco \
-  raw_dwi.nii.gz bvals bvecs nomoco_outputs --workers 8
-
-dwi2cond-xp preprocess-legacy \
-  raw_dwi.nii.gz bvals bvecs legacy_outputs \
-  --workers 8 --bvec-mode compat46
-
-dwi2cond-xp prepare-fieldmap \
-  magnitude.nii.gz field_rads.nii.gz nodif_brain.nii.gz fieldmap_out \
-  --dwell-ms 0.5 --phase-encoding-direction y- --workers 8
-
-dwi2cond-xp prepare-topup \
-  forward_b0.nii.gz reverse_b0.nii.gz topup_out \
-  --readout-seconds 0.05 --phase-encoding-direction y --workers 8
-
-dwi2cond-xp prepare-eddy \
-  raw_dwi.nii.gz bvals bvecs brain_mask.nii.gz eddy_out \
-  --readout-seconds 0.05 --phase-encoding-direction y --workers 8 \
-  --susceptibility-field topup_out/field_hz.nii.gz
-
-dwi2cond-xp preprocess-legacy \
-  raw_dwi.nii.gz bvals bvecs legacy_fieldmap_outputs \
-  --fieldmap-displacement fieldmap_out/displacement_world_mm.nii.gz \
-  --fieldmap-corrected-mask fieldmap_out/corrected_mask.nii.gz --workers 8
-
-dwi2cond-xp fit-dti \
-  preprocessed_dwi.nii.gz bvals bvecs brain_mask.nii.gz tensor_dwi.nii.gz \
-  --grad-dev grad_dev.nii.gz --workers 8 \
-  --valid-mask-out tensor_valid_mask.nii.gz --qa-json tensor_fit_qa.json
-
-dwi2cond-xp register-t1 \
-  dti_outputs m2m_subject t1_registration_outputs \
-  --mode affine --workers 8
-
-dwi2cond-xp register-tensor \
-  tensor_dwi.nii.gz m2m_subject/T1.nii.gz \
-  m2m_subject/DTI_coregT1_tensor.nii.gz \
-  --source-mask tensor_valid_mask.nii.gz --assume-aligned \
-  --qa-json tensor_registration_qa.json
-
 dwi2cond-xp simulate-tdcs m2m_subject simulation_outputs \
   --mode vn --anode C3 --cathode C4 --current-ma 1 \
   --shape rect --dimensions 50 50 --thickness 4 \
   --solver pardiso --volume-tissues 1 2 3 --cpus 8 --dry-run
 ```
 
-`preprocess-nomoco` 输出 `DTI_tensor.nii.gz`、`DTI_FA.nii.gz`、`DTI_sse.nii.gz`、
-brain/valid mask 和 `nomoco_qa.json`，不会生成伪造的 motion、eddy 或 field artifact。
-满足float32、FSL标准方向、有限且非负合同的未压缩`.nii`经分块验证后直接mmap；
-`.nii.gz`只解压一次到所有worker共享的未压缩中间文件，所选策略会写入QA。
+去掉 `--dry-run` 后执行求解。各模式使用独立输出目录，向量电场 NIfTI 的分量顺序为
+`Ex,Ey,Ez`，仅保留 WM/GM/CSF 标签 1/2/3。FEM 与先导场输出说明见
+[SimNIBS 集成](docs/zh/SIMNIBS_INTEGRATION.md)。
 
-`preprocess-legacy`输出校正DWI与mean、每个volume的最终矩阵、nodif与brain mask、
-tensor/FA/SSE、valid mask和`legacy_qa.json`。`corrected` bvec模式是相对SimNIBS 4.6
-行为的显式科学修正，不会被静默启用。
+## 电导率模式
 
-`prepare-fieldmap`输出rad/s场图、voxel shift、带符号的NIfTI world-mm pull位移、
-校正b0/mask和单位manifest。原始Siemens wrapped phase仍依赖PRELUDE，本固定rad/s
-分支会显式拒绝，不使用近似解缠。
+| 模式 | 含义 |
+| --- | --- |
+| `scalar` | 每种组织使用固定标量电导率，不依赖 DTI。 |
+| `vn` | 保留方向与相对各向异性，逐张量归一化行列式，使其对应组织参考值。 |
+| `dir` | 保留方向、各向异性和空间幅度，对选定组织共同拟合一个全局强度比例。 |
+| `mc` | 将 `dir` 结果局部各向同性化，同时保留行列式和空间变化。 |
 
-`prepare-topup`按SimNIBS 4.6九级固定配置输出Hz field、spline coefficients、movement、
-corrected pair、joint mask和QA；运行时不依赖FSL。旧项目文件名继续保留，同时新增
-`topup_fieldcoef.nii.gz`与`topup_movpar.txt`，组成可由FSL按`--topup=topup`读取且带官方
-cubic-spline intent的bundle。FSL 6.0.4不支持的z向PE会显式报错。
+[电导率模型](docs/zh/CONDUCTIVITY.md)给出公式、参考文献、安全限制、奇异张量策略，
+以及稳定/逐句兼容两种特征系统选项。
 
-`prepare-eddy`按SimNIBS 4.6固定五轮单壳EDDY流程执行motion/quadratic EC、spherical GP、
-prediction-based `--repol`、rotated bvec和shell alignment；可选组合TOPUP Hz场。输出
-corrected DWI、outlier-free data、每volume 16参数、outlier map、迭代history和QA JSON。
+## 验证与性能
 
-移除 `--dry-run` 后才执行求解。`scalar/vn/dir/mc` 分目录保存；各向异性 tensor 缺失
-时直接报错，不静默回退 scalar。正式体数据只保留 WM/GM/CSF（标签 1/2/3），严格
-排除颅骨、头皮、电极和颅外组织。每种模式只保存一个末维为 `Ex/Ey/Ez` 的向量
-E-field NIfTI，模长现场计算。
+最终算法版本在配置全部真实 FSL 比较后完成 **666 项测试，无跳过**。独立覆盖率运行
+覆盖 **13,663/13,663 条语句**，包括 666 项主测试、12 项电极组合测试和合成
+TOPUP/EDDY/FNIRT CLI 流程。最后的 FEM 修改通过真实 SimNIBS `SESSION._prepare()`
+检查；修改后没有重跑求解器或完整 HCP 原始 DWI→FEM 流程。
 
-## 🎨 四模式图
+早期工作包含私有 HCP DTI 与 FSL 比较（张量相对 L2 `4.18e-6`）、四种电导率 FEM 和
+各阶段基准。`11.09x` 的 DTI 拟合耗时比来自单台服务器、16 个 Python worker：
+`9.76 s` 对 FSL 的 `108.23 s`，不代表完整流程或当前 tag 的速度。先导场接口已通过
+单元测试，但尚未完成真实被试全部电极的完整运行。
 
-分量主图是三行 `Ex/Ey/Ez` × 四列 `scalar/vn/dir/mc` 的 3×4 axial 布局，12 个
-panel 共用对称色标；切片只由 brain mask 最大面积决定，不根据场强挑选。
+详细数值、输入规模、计时方式和限制见[验证记录](docs/zh/VALIDATION.md)与
+[历史基准](docs/zh/BENCHMARKS.md)。
 
-![四模式电场分量](docs/images/electric_field_xyz_3x4.png)
+## 电场示例
 
-![四模式电场模长](docs/images/electric_field_magnitude_2x2.png)
+分量图为三行 `Ex/Ey/Ez`、四列 `scalar/vn/dir/mc`，共用对称色标。切片按脑掩膜
+最大面积选择。模长图使用相同电场和共用正值色标。
 
-这两张图是沿用的结果示意，不代表最终 `v0.3.0` tag 又重新运行了完整被试流程。
+![四种模式的电场分量](docs/images/electric_field_xyz_3x4.png)
 
-## 🧪 证据边界
+![四种模式的电场模长](docs/images/electric_field_magnitude_2x2.png)
 
-私有 HCP 数据曾用于 DTI、CHARM 和真实四模式 FEM 验证。原始影像、体数据派生物、
-被试标识和机器可读的被试级产物都不进入仓库或 Release；README 只保留两张无被试
-标识的历史结果示意 PNG，并附 HCP 致谢与数据使用条款链接。早期 16 worker DTI 拟合
-在同一服务器、同一输出边界下相对 FSL 6.0.4 实测为 `11.09x`；这只是历史单机 DTI
-fitting 结果，不能外推到最终 tag 的预处理、配准、建模或 FEM。四种 C3→C4 Pardiso
-FEM 也曾在同一被试上完成；最终整改只重新验证了真实 SimNIBS
-`SESSION._prepare()`，没有重跑完整 raw-DWI→FEM 链或 solver。全电极 lead-field 接口
-和数据合同已支持并测试，但当前证据不包含真实被试的全电极完整运行。
+这两张去标识图片展示早期 HCP 结果，不是最终 tag 的新运行。仓库不分发原始 MRI 或
+被试体数据衍生结果。使用时请保留[HCP 致谢并遵守数据条款](THIRD_PARTY_NOTICES.zh-CN.md#human-connectome-project-数据)。
 
-最终 v0.3.0 在显式配置全部真实 FSL probes 后为 `666 passed`、零跳过。独立干净
-coverage 门禁重复主批次 `666 passed`，另有 montage `12 passed`；真实 synthetic
-TOPUP/EDDY/FNIRT CLI 均完成，全部 `13,663/13,663` 个可执行语句严格达到
-`100.00%` 覆盖率；跨平台 CI 同样强制该门槛。只有外部 reference 或集成前置条件
-不可用时才跳过对应可选测试。
+## 贡献与引用
 
-## 🛣️ 后续路线图
+[贡献指南](docs/zh/CONTRIBUTING.md) · [获取帮助](docs/zh/SUPPORT.md) · [安全报告](docs/zh/SECURITY.md) · [行为准则](docs/zh/CODE_OF_CONDUCT.md)
 
-`v0.3.0` 是根据 v0.2.0 审计和后续独立复审形成的当前正确性版本。项目现进入维护状态：
-没有正在执行的 `v0.4.0` 性能周期或 10 倍目标；现有时间数据按对应版本保留为历史测量，
-不作为最终 tag 的端到端基线。
+请使用 [CITATION.cff](CITATION.cff) 引用项目，并引用实际使用的 SimNIBS 和扩散处理
+软件。许可证为 [GPL-3.0-only](LICENSE)，另见[第三方声明](THIRD_PARTY_NOTICES.zh-CN.md)。
 
-维护工作可以继续改善复现、兼容性、文档或范围明确的正确性问题。未来若明确重启性能
-开发，必须重新建立可靠的同输入、同输出基线，并继续通过现有数值与失败合同门禁。
-当前状态见[项目状态](docs/ROADMAP.md)，版本变化见[更新记录](docs/CHANGELOG.md)，历史
-时间数据见[基准记录](docs/BENCHMARKS.md)。
-
-## 🗂️ 文档与社区
-
-- [文档目录](docs/README.md)
-- [输入合同](docs/INPUT_CONTRACT.md)
-- [方法](docs/METHODS.md)
-- [验证](docs/VALIDATION.md)
-- [复现](docs/REPRODUCIBILITY.md)
-- [贡献指南](docs/CONTRIBUTING.md)
-- [支持](docs/SUPPORT.md)
-- [安全与医学数据报告](docs/SECURITY.md)
-- [更新记录](docs/CHANGELOG.md)
-
-## 🙏 引用与许可证
-
-请使用 [CITATION.cff](CITATION.cff) 引用本项目，并同时引用工作流实际使用的 SimNIBS
-和 diffusion preprocessing 软件。项目采用 [GPL-3.0-only](LICENSE)，第三方来源及
-许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+验证数据部分来自 WU-Minn Human Connectome Project，由 David Van Essen 和
+Kamil Ugurbil 领导，获 NIH Blueprint 及华盛顿大学 McDonnell Center for Systems
+Neuroscience 支持。

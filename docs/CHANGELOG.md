@@ -1,5 +1,7 @@
 # Changelog
 
+[English](en/CHANGELOG.md) | [简体中文](zh/CHANGELOG.md)
+
 All notable changes follow [Keep a Changelog](https://keepachangelog.com/), and
 released versions follow semantic versioning.
 
@@ -8,17 +10,24 @@ and release-metadata corrections. `v0.3.0` was replaced again on 2026-08-30
 after a fourth independent source audit found two algorithm defects and three
 conditional compatibility/artifact defects.
 
+## Documentation update — 2026-10-13
+
+The documentation for `v0.1.0`, `v0.2.0`, and `v0.3.0` has been edited and
+paired in English and Chinese, with links that stay in the selected language.
+Algorithms, command behavior, dependency requirements, and recorded scientific
+results are unchanged.
+
 ## Release map
 
 The commit column records the algorithm baseline for each release. A tagged
 documentation or release-metadata descendant does not change that baseline or
-the stated evidence boundary.
+the stated scope of the evidence.
 
 | Release | Algorithm baseline | Release role |
 | --- | --- | --- |
 | `v0.1.0` | `29f98a4` | Established DTI fitting, tensor-to-conductivity conversion, and SimNIBS-facing FEM/lead-field interfaces. |
 | `v0.2.0` | `20f4092` | Added the pure-Python fixed preprocessing and registration subset used by SimNIBS 4.6 `dwi2cond`. |
-| `v0.3.0` | `ae5a6a7` | Current stable release; includes the fourth independent-audit remediation for matrix, BET, eigensystem, FEM-cache, and TOPUP contracts. |
+| `v0.3.0` | `ae5a6a7` | Current stable release; includes the fourth independent-audit remediation for matrix, BET, eigensystem, FEM-cache, and TOPUP requirements. |
 
 ## [Unreleased]
 
@@ -40,7 +49,7 @@ the stated evidence boundary.
 
 `v0.3.0` is the correctness-remediated stable release. It retains the fixed
 SimNIBS 4.6 `dwi2cond` scope introduced in `v0.2.0`, while correcting the
-producer-to-consumer workflow, numerical edge cases, publication transactions,
+data flow between processing stages, numerical edge cases, output publication transactions,
 and runtime identity checks found by independent source and same-input audits.
 
 ### Key changes
@@ -48,7 +57,7 @@ and runtime identity checks found by independent source and same-input audits.
 - Corrected the raw-DWI and pre-fitted-tensor workflows, including EDDY/TOPUP
   artifact lineage, final mask and threshold ordering, GRE displacement
   composition, legacy MCFLIRT control flow, strict single-shell fitting, and
-  affine/nonlinear DTI-to-T1 publication.
+  affine/nonlinear DTI-to-T1 output publication.
 - Restored the SimNIBS/FSL ordering for tensor decomposition, nonlinear PPD
   masking and reorientation, b-vector normalization, zero-tensor DIR/MC
   calibration, and derived FA/V1/validity outputs.
@@ -59,7 +68,7 @@ and runtime identity checks found by independent source and same-input audits.
   0.64.0, and expanded cache identity to cover fitting mode, scientific inputs,
   implementation modules, numerical packages, SimNIBS installation records,
   and native solver libraries.
-- Made workflow and FEM publication failure-atomic: failed retries preserve
+- Made workflow and FEM output publication failure-atomic: failed retries preserve
   diagnostic manifests and do not replace the last accepted tensor, m2m
   artifact, or simulation result.
 - Replaced silent VN handling of nonzero singular tensors with an explicit
@@ -68,16 +77,16 @@ and runtime identity checks found by independent source and same-input audits.
   structured QA, validated cache reuse, progress/resource reporting, and
   `scalar`/`vn`/`dir`/`mc` SimNIBS orchestration.
 - Closed the positive-determinant legacy matrix mismatch by converting every
-  local registration producer into the FSL radiological scaled-mm contract
+  local registration producer into the FSL radiological scaled-mm convention
   before composition, saved matrices, resampling, and corrected b-vectors.
 - Transcribed BET2's 1 mm and 7 mm endpoints, sub-millimetre `dscale` loop,
   near-surface maximum samples, and zero-force out-of-bounds behavior into the
-  shared reference/optimized sampling contract.
+  shared reference/optimized sampling rules.
 - Kept stable symmetric conductivity decomposition as the default and added an
   explicit, QA-recorded `simnibs46-literal` eigensystem mode for exact
   repeated-eigenvalue compatibility testing.
-- Disabled cache hits for real SimNIBS FEM execution until the complete dynamic
-  Python/native solver closure can be fingerprinted; deterministic dry-run
+- Disabled cache hits for real SimNIBS FEM execution until the complete set of dynamically loaded
+  Python and native solver dependencies can be fingerprinted; deterministic dry-run
   preparation remains cacheable.
 - Added official TOPUP cubic-spline intent parameters and an FSL-readable
   `topup_fieldcoef`/`topup_movpar` prefix bundle while retaining the existing
@@ -85,17 +94,17 @@ and runtime identity checks found by independent source and same-input audits.
 
 ### Validation
 
-- With all real FSL probes configured, the final repository gate completed with
+- With all real FSL probes configured, the final repository check completed with
   `666 passed` and no skips. The independent coverage run repeated those
   `666 passed`, completed `12 passed` in the montage batch, and covered
   `13,663/13,663` production statements; real synthetic TOPUP, EDDY,
   and FNIRT CLI paths were included.
-- Carried-forward stage references, collected before the final remediation,
+- Earlier stage references, collected before the final remediation,
   include HCP WLS tensor relative L2 `4.18e-6` against FSL 6.0.4, a local
   synthetic-sphere conductivity summary of maximum absolute error `0` for `vn`
   and `2.22e-16` for `dir`/`mc`, and a private T1/T2 CHARM-to-C3/C4 FEM run for
   all four conductivity modes with finite, strictly tissue-masked vector fields.
-  They remain versioned experimental evidence, not a final-tag full-chain rerun.
+  They remain versioned experimental evidence, not a release full-chain rerun.
 - Ubuntu, macOS, and Windows CI, package construction, dependency and metadata
   checks, CodeQL, OpenSSF Scorecard, release checksums, CycloneDX SBOM, build
   provenance, and isolated wheel installation all passed for the final tag.
@@ -104,10 +113,10 @@ and runtime identity checks found by independent source and same-input audits.
 
 - This is an independent implementation of the fixed FSL behavior used by
   SimNIBS 4.6 `dwi2cond`, not a general replacement for FSL commands. FSL is an
-  optional numerical oracle and is not a runtime dependency.
+  optional numerical reference and is not a runtime dependency.
 - Strict tensor fitting is single-shell. Wrapped phase requiring PRELUDE and
   arbitrary TOPUP/EDDY/FNIRT configurations remain outside the supported
-  contract; the GRE path accepts an already unwrapped radians-per-second field.
+  scope; the GRE path accepts an already unwrapped radians-per-second field.
 - The evidence supports the tested stage and workflow boundaries. It does not
   assert arbitrary-input bitwise identity for iterative EDDY/FNIRT, a universal
   end-to-end speed ratio, population-level generalization from one private HCP
@@ -125,18 +134,18 @@ subset called by SimNIBS 4.6 `dwi2cond`.
 
 - Added `nomoco` and legacy raw-DWI preprocessing, weighted tensor fitting,
   gradient-nonlinearity support, aligned b0/mask generation, and explicit
-  `compat46` and finite-strain-corrected b-vector contracts.
+  `compat46` and finite-strain-corrected b-vector modes.
 - Added fixed GRE/FUGUE, TOPUP, and single-shell EDDY `--repol` paths, including
   optional TOPUP-to-EDDY field composition and structured intermediate QA.
 - Added automatic 6/12-DOF affine registration, four-level FNIRT, nonlinear PPD
-  tensor resampling/reorientation, and standard tensor/FA/V1 publication.
-- Added a unified workflow DAG with input fingerprints, atomic manifests,
+  tensor resampling/reorientation, and standard tensor/FA/V1 output publication.
+- Added a unified workflow with input fingerprints, atomic manifests,
   validated cache reuse, progress/resource metrics, and conductivity/FEM smoke
   orchestration while preserving the `v0.1.0` interfaces.
 
 ### Validation and measured results
 
-- The Linux release gate completed with `535 passed, 7 skipped` and
+- The Linux release check completed with `535 passed, 7 skipped` and
   `12,443/12,443` executable statements covered. The 100% coverage threshold
   also passed on Ubuntu, macOS, and Windows; optional external-reference tests
   skipped visibly when their prerequisites were unavailable.
@@ -153,7 +162,7 @@ subset called by SimNIBS 4.6 `dwi2cond`.
 - The fixed subset did not cover PRELUDE-wrapped phase or arbitrary FSL command
   configurations. Strict fitting remained single-shell.
 - A later source/control-flow audit found material workflow composition and
-  numerical-contract defects in `v0.2.0`; those defects motivated and were
+  numerical defects in `v0.2.0`; those defects motivated and were
   addressed by `v0.3.0`. New deployments should use the current stable release.
 
 ## [0.1.0] - 2026-08-21
@@ -172,7 +181,7 @@ diffusion tensor.
 - Added affine tensor resampling and finite-strain reorientation to T1, and the
   SimNIBS-compatible `vn`, `dir`, and `mc` conductivity mappings.
 - Added fixed-montage SimNIBS 4.6 FEM orchestration, strict WM/GM/CSF vector
-  E-field publication, visualization, and lead-field validation/export
+  E-field output publication, visualization, and lead-field validation/export
   interfaces.
 
 ### Validation and measured results

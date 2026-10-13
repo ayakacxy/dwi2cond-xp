@@ -31,3 +31,4 @@ __pycache__/
 *.msh
 *.hdf5
 *.mat
+/.work/

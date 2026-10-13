@@ -1,14 +1,5 @@
-# Code of conduct
+# Code of conduct / 文档导航
 
-We are committed to a respectful, inclusive, and harassment-free community.
-Participants should communicate constructively, respect privacy and data-use
-restrictions, give scientific claims an evidence boundary, and accept good-faith
-technical review.
+[English](en/CODE_OF_CONDUCT.md) | [简体中文](zh/CODE_OF_CONDUCT.md)
 
-Harassment, discrimination, doxxing, threats, and the publication of private or
-controlled-access data are unacceptable. Maintainers may edit or remove content
-and restrict participation when needed to protect the community.
-
-Report conduct concerns privately to the repository owner through GitHub. The
-maintainer will review reports fairly, preserve confidentiality where possible,
-and disclose conflicts of interest.
+Choose a language to read this guide. 请选择语言阅读全文。
