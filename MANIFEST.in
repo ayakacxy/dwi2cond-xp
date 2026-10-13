@@ -1,5 +1,6 @@
 include LICENSE
 include THIRD_PARTY_NOTICES.md
+include THIRD_PARTY_NOTICES.zh-CN.md
 include CITATION.cff
 include .editorconfig
 include README.md

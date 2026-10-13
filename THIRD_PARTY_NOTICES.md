@@ -1,5 +1,7 @@
 # Third-party notices
 
+[English](THIRD_PARTY_NOTICES.md) · [简体中文](THIRD_PARTY_NOTICES.zh-CN.md) · [Project home](README.md)
+
 ## SimNIBS
 
 [SimNIBS 4.6.0](https://github.com/simnibs/simnibs/releases/tag/v4.6.0) is the
@@ -9,7 +11,7 @@ redistribute SimNIBS binaries, resources, atlases, or source code. Users install
 SimNIBS separately through the documented environment.
 
 The conductivity conversion and integration code in this project was developed
-to reproduce the documented behavior and numerical contracts of SimNIBS 4.6.0.
+to reproduce the documented behavior and numerical behavior of SimNIBS 4.6.0.
 The project is therefore distributed under GPL-3.0-only.
 
 ## FSL

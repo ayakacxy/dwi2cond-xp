@@ -1,7 +1,15 @@
 # Changelog
 
+[English](en/CHANGELOG.md) | [简体中文](zh/CHANGELOG.md)
+
 All notable changes follow [Keep a Changelog](https://keepachangelog.com/) and
 versions follow semantic versioning.
+
+## Documentation update — 2026-10-13
+
+The documentation has been edited and paired in English and Chinese. Links stay
+in the selected language. The algorithms, commands, dependency requirements,
+and version-specific results are unchanged.
 
 ## [Unreleased]
 
@@ -12,7 +20,7 @@ No changes yet.
 > **Maintenance republication (2026-08-29):** this tag was republished to
 > correct and consolidate documentation and release metadata. The algorithm
 > source remains the original v0.2 baseline. A later audit identified workflow
-> and numerical-contract defects that were fixed in `v0.3.0`; new deployments
+> and numerical errors that were fixed in `v0.3.0`; new deployments
 > should use `v0.3.0`.
 
 ### Added
@@ -28,12 +36,12 @@ No changes yet.
   transforms, one formal sinc resampling per volume, WLS fitting, per-volume
   matrices, and structured QA.
 - Added separate `compat46` byte-preserved and finite-strain-rotated `corrected`
-  b-vector contracts, plus optional precomputed field-displacement composition.
+  b-vector modes, plus optional precomputed field-displacement composition.
 - Added `register-t1` for the SimNIBS 4.6 automatic 6/12-DOF FA-to-T1 path,
   affine tensor reorientation, FA/V1 decomposition, and 6-DOF FA/SSE QA.
 - Added `prepare-fieldmap` for the fixed SimNIBS 4.6 GRE/FUGUE path from an
   already unwrapped radians-per-second fieldmap, including explicit dwell and
-  phase-encoding contracts, 6-DOF MI registration, voxel shift, world-mm
+  phase-encoding parameters, 6-DOF MI registration, voxel shift, world-mm
   displacement, corrected b0/mask, and structured QA.
 - Added `prepare-topup` for the SimNIBS 4.6 `b02b0_nosubsamp.cnf` fixed subset,
   including default source regridding, periodic cubic interpolation, rigid
@@ -64,7 +72,7 @@ No changes yet.
 - Added a verified direct-mmap path for already normalized uncompressed NIfTI;
   gzip and nonconforming inputs still use one decode and one shared uncompressed
   intermediate. Both paths are bitwise identical on the HCP fixture.
-- Measured the eight-worker HCP `nomoco` closure at 18.82 seconds for validated
+- Measured the eight-worker HCP `nomoco` workflow at 18.82 seconds for validated
   `.nii` mmap and 52.92 seconds for `.nii.gz`; the older local SimNIBS 4.6/FSL
   6.0.4 reference took 257.30 seconds. Its input encoding was not frozen, so
   the derived `13.67x` and `4.86x` ratios remain planning comparisons rather
@@ -78,7 +86,7 @@ No changes yet.
   uses eight processes only for independent 4 mm volume stages. Three complete
   synthetic runs took 2.75/2.71/2.87 seconds versus 6.77 seconds for FSL, with
   matrices and final Python artifacts bitwise equal to the pre-optimization path.
-- Profiled and optimized the complete T1-registration closure by overlapping
+- Profiled and optimized the complete T1-registration workflow by overlapping
   independent 6/12-DOF searches, tensor components/source mask, QA resampling,
   and tensor gzip with read-only FA/V1 decomposition. The private whole-head
   process fell from 100.90 to 53.23 seconds versus 233.18 seconds for FSL.
@@ -126,7 +134,7 @@ No changes yet.
   safety projection, and primary literature references in both READMEs.
 - Clarified that `mc` uses the geometric mean of the directly scaled local
   conductivity eigenvalues rather than an arithmetic mean.
-- Raised the release contract from post-preprocessing tensor workflows to the
+- Expanded this release from post-preprocessing tensor workflows to the
   pure-Python SimNIBS 4.6 `dwi2cond` preprocessing subset while retaining all
   `v0.1.0` tensor, conductivity, FEM, and lead-field interfaces.
 
@@ -150,7 +158,7 @@ No changes yet.
 - SimNIBS-compatible `vn`, `dir`, and `mc` conductivity conversion.
 - SimNIBS 4.6 fixed-montage FEM orchestration with Pardiso default.
 - Strict WM/GM/CSF subject-volume E-field output and four-mode NIfTI figures.
-- Lead-field configuration and HDF5-to-NPY/JSON validation/export contracts.
+- Lead-field configuration and HDF5-to-NPY/JSON validation/export formats.
 - Full statement-level tests for all 1,644 executable package statements,
   including DTI/NIfTI fitting, multiprocessing, tensor conversion and
   registration, SimNIBS adapters, simulations, lead fields, CLI dispatch,
@@ -158,7 +166,7 @@ No changes yet.
 
 ### Changed
 
-- Raised CI, SimNIBS integration, and release coverage gates from 75% to 100%.
+- Raised CI, SimNIBS integration, and release coverage thresholds from 75% to 100%.
 - Reworked the English and Simplified Chinese README entry pages with release,
   security, validation, performance, and scientific-boundary summaries.
 

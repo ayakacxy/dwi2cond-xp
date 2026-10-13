@@ -8,19 +8,17 @@ Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 [![CI](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ayakacxy/dwi2cond-xp/badge)](https://scorecard.dev/viewer/?uri=github.com/ayakacxy/dwi2cond-xp)
-[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#-validation-at-a-glance)
+[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#validation-at-a-glance)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
-[![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/SIMNIBS_INTEGRATION.md)
+[![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/en/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
-[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Validation](docs/VALIDATION.md) · [Benchmarks](docs/BENCHMARKS.md) · [Release notes](docs/CHANGELOG.md)
-
-🧠 **DTI fitting** · ⚡ **FSL-free runtime** · 🧭 **Tensor reorientation** · ⚡ **Anisotropic FEM** · 🧪 **100% statement coverage**
+[简体中文](README.zh-CN.md) · [Documentation](docs/en/README.md) · [Validation](docs/en/VALIDATION.md) · [Benchmarks](docs/en/BENCHMARKS.md) · [Release notes](docs/en/CHANGELOG.md)
 
 </div>
 
 > **Historical release.** `v0.2.0` records the original FSL-free preprocessing
-> milestone. A later audit found workflow and numerical-contract defects that
+> milestone. A later audit found workflow problems and numerical errors that
 > were corrected in `v0.3.0`; use `v0.3.0` for new deployments. On 2026-08-29
 > this tag was republished only to improve documentation and release metadata.
 > The algorithm source remains the original `v0.2.0` baseline.
@@ -33,22 +31,22 @@ simulations without requiring FSL at runtime.
 This is an independent community project. It is not an official SimNIBS or FSL
 distribution.
 
-## ⚡ Validation at a glance
+## Validation at a glance
 
-| Contract | Result | Evidence boundary |
+| Check | Result | Test conditions and scope |
 | --- | ---: | --- |
 | SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
-| Python test suite | **100.00% statement coverage** | Recorded final v0.2 release-line gate: 12,443/12,443 executable statements |
-| DTI tensor parity | **relative L2 4.18e-6** | Carried-forward HCP stage result using the same input and WLS + gradient-nonlinearity contract versus FSL 6.0.4 |
-| DTI fitting wall time | **9.76 s vs 108.23 s · 11.09x** | Same server, input, worker/output boundary; not an end-to-end FEM claim |
+| Python test suite | **100.00% statement coverage** | Recorded final v0.2 release-line checks: 12,443/12,443 executable statements |
+| DTI tensor parity | **relative L2 4.18e-6** | Carried-forward HCP stage result using the same input and WLS with gradient-nonlinearity correction versus FSL 6.0.4 |
+| DTI fitting wall time | **9.76 s vs 108.23 s · 11.09x** | Same server, input, and outputs; 16 Python workers versus one FSL process; not an end-to-end FEM speedup |
 | Conductivity parity | **max abs 0 to 2.22e-16** | Carried-forward synthetic-mesh result versus SimNIBS 4.6 for `vn`, `dir`, and `mc` |
 | Fixed-montage FEM | **4/4 modes completed** | Historical real `scalar`, `vn`, `dir`, `mc` C3→C4 runs with Pardiso |
 
 No anatomical image, subject identifier, voxel derivative, or machine-readable
-subject artifact is distributed. Full methods and evidence boundaries are in
-[Validation](docs/VALIDATION.md) and [Benchmarks](docs/BENCHMARKS.md).
+subject artifact is distributed. Methods, test conditions, and limitations are in
+[Validation](docs/en/VALIDATION.md) and [Benchmarks](docs/en/BENCHMARKS.md).
 
-## 🧭 Scope
+## Scope
 
 The `v0.2.0` preprocessing and conductivity path is:
 
@@ -75,7 +73,7 @@ and tqdm. Mesh conductivity, FEM, and lead-field workflows require exactly
 SimNIBS 4.6.0. Platform support for those workflows is limited to platforms on
 which SimNIBS 4.6.0 itself can be installed and validated.
 
-## 🧩 Conductivity modes
+## Conductivity modes
 
 | Mode | Meaning |
 | --- | --- |
@@ -161,7 +159,7 @@ It therefore preserves the DTI-driven spatial variation in geometric-mean
 conductivity while removing directional anisotropy. `mc` is a DTI-derived
 control mode, not an anisotropic tensor field [4].
 
-All three mappings use the SimNIBS safety contract: invalid tensors are
+All three mappings apply the SimNIBS safeguards: invalid tensors are
 repaired, conductivity tensors are kept positive definite, eigenvalues are
 capped at 2 S/m by default, and the largest-to-smallest eigenvalue ratio is
 limited to 10. `vn` performs normalization, safety correction, renormalization,
@@ -188,12 +186,12 @@ References:
    stimulation*. NeuroImage. 2011;58(3):849-859.
    [doi:10.1016/j.neuroimage.2011.06.069](https://doi.org/10.1016/j.neuroimage.2011.06.069)
 
-The corresponding SimNIBS implementation-level definitions are summarized in
+The corresponding SimNIBS definitions are summarized in
 the official [dwi2cond documentation](https://simnibs.github.io/simnibs/build/html/documentation/command_line/dwi2cond.html).
 
-## 🐍 Installation
+## Installation
 
-The complete validated contract is Python 3.11 with SimNIBS 4.6.0. Installing
+The full pipeline was validated with Python 3.11 and SimNIBS 4.6.0. Installing
 into an existing SimNIBS 4.6 environment is the primary path. If that environment
 is intentionally frozen, install the wheel without dependency resolution:
 
@@ -223,11 +221,13 @@ For the pure-Python core only:
 
 ```bash
 python -m venv .venv
-. .venv/bin/activate              # Windows PowerShell: .venv\Scripts\Activate.ps1
+. .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install .
 dwi2cond-xp --help
 ```
+
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
 
 Developer installation in a non-frozen environment:
 
@@ -237,13 +237,13 @@ pytest -q --cov=dwi2cond_xp --cov-report=term-missing --cov-fail-under=100
 ruff check src tests tools scripts
 ```
 
-## 📥 Input contract
+## Input requirements
 
 `fit-dti` accepts a preprocessed 4-D NIfTI with matching b-values, b-vectors,
 and diffusion brain mask. `preprocess-nomoco` accepts a raw single-shell DWI and
 constructs the b0 reference and mask, but deliberately applies no motion,
 eddy-current, or susceptibility correction to the DWI volumes. Use it only
-when that explicit SimNIBS 4.6 `nomoco` contract is appropriate. Optional
+when that SimNIBS 4.6 `nomoco` behavior suits your data. Optional
 gradient-nonlinearity coefficients use the FSL/HCP nine-component `grad_dev`
 convention.
 
@@ -253,7 +253,7 @@ preserves the original b-vector file exactly, matching the upstream script;
 the explicit `corrected` mode rotates b-vectors with the final transforms.
 
 A tensor input must be a 4-D NIfTI whose final dimension is ordered as
-`Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`. Before mapping to T1, the caller must choose exactly
+`Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`. When using `register-tensor` to map to T1, choose exactly
 one of the following:
 
 - pass `--world-transform` with an externally estimated 4x4 input-world to
@@ -262,9 +262,8 @@ one of the following:
   the diffusion and T1 world coordinates.
 
 The final SimNIBS tensor is stored at
-`m2m_<subject>/DTI_coregT1_tensor.nii.gz`, matching the SimNIBS 4.6 contract.
-See [Input contract](docs/INPUT_CONTRACT.md) for coordinate, mask, and failure
-semantics.
+`m2m_<subject>/DTI_coregT1_tensor.nii.gz`, as expected by SimNIBS 4.6.
+See [Input requirements](docs/en/INPUTS.md) for coordinates, masks, and error handling.
 
 Estimate the SimNIBS 4.6 affine T1 registration and generate its tensor/QA
 artifacts automatically:
@@ -274,7 +273,7 @@ dwi2cond-xp register-t1 dti_outputs m2m_subject t1_registration_outputs \
   --mode affine --workers 8
 ```
 
-## 🚀 Minimal workflow
+## Minimal workflow
 
 Run the FSL-free SimNIBS 4.6 `nomoco` raw-DWI path with eight workers:
 
@@ -387,7 +386,7 @@ Each formal simulation exports one T1-grid vector E-field NIfTI with final axis
 outputs are strictly masked to WM, GM, and CSF labels `1,2,3`; skull, scalp,
 electrodes, and extracranial tissues are excluded.
 
-## 🎨 Voxel-level comparison
+## Voxel-level comparison
 
 ```bash
 dwi2cond-xp compare-fields \
@@ -407,7 +406,7 @@ The magnitude view uses the same four vector NIfTIs and a shared positive scale:
 
 ![Four-mode electric-field magnitude](docs/images/electric_field_magnitude_2x2.png)
 
-## ⚡ Lead-field support
+## Lead-field support
 
 `simulate-leadfield` builds SimNIBS 4.6 `TDCSLEADFIELD` configurations for all
 four conductivity modes. It keeps the original HDF5 provenance and can export a
@@ -415,11 +414,11 @@ NumPy matrix shaped `(N_spatial * 3, N_electrode - 1)` plus JSON metadata. The
 first cap electrode is the reference; each remaining column is a 1 A basis.
 Pardiso is the default and failures are not silently rerouted to another solver.
 
-This interface and its HDF5/NPY contracts are unit tested, but the current
+This interface and its HDF5/NPY formats are unit tested, but the current
 release evidence does not include a full-subject, all-electrode lead-field run.
-See [SimNIBS integration](docs/SIMNIBS_INTEGRATION.md).
+See [SimNIBS integration](docs/en/SIMNIBS_INTEGRATION.md).
 
-## 🧪 Validation evidence
+## Validation evidence
 
 One private HCP subject was used for historical release-line validation. No source
 image, volumetric derivative, subject identifier, or machine-readable
@@ -433,7 +432,7 @@ retain the HCP acknowledgment and are not a substitute for accepting the
 - Against FSL 6.0.4 WLS with gradient nonlinearity, the HCP tensor comparison
   had relative L2 error `4.18e-6`; mean and p99 absolute differences were
   `4.78e-10` and `2.10e-9`.
-- On the same server and output boundary, the 16-worker Python fit took 9.76 s
+- On the same server and with the same output set, the 16-worker Python fit took 9.76 s
   versus 108.23 s for FSL 6.0.4 (`11.09x`). This is a single-system DTI-fitting
   result, not an end-to-end FEM speed claim.
 - Synthetic-mesh conductivity agreed with SimNIBS 4.6 to max absolute error
@@ -441,28 +440,28 @@ retain the HCP acknowledgment and are not a substitute for accepting the
 - Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso;
   all vector E-field NIfTIs were finite and strictly excluded tissues outside
   WM/GM/CSF.
-- The recorded final v0.2 release-line gate ran on code-freeze commit `90a0553`:
-  Linux completed with `535 passed, 7 skipped` and the merged gate covered
+- The recorded final v0.2 release-line checks ran on code-freeze commit `90a0553`:
+  Linux completed with `535 passed, 7 skipped` and the combined coverage report covered
   `12,443/12,443` executable statements (`100.00%`). The subsequent original
   tag commit and the 2026-08-29 republication changed documentation or release
   metadata only, not the v0.2 algorithm source or tests.
 
 Exact methods, timing boundaries, and limitations are in
-[Validation](docs/VALIDATION.md), [Benchmarks](docs/BENCHMARKS.md), and
-[Reproducibility](docs/REPRODUCIBILITY.md).
+[Validation](docs/en/VALIDATION.md), [Benchmarks](docs/en/BENCHMARKS.md), and
+[Reproducibility](docs/en/REPRODUCIBILITY.md).
 
-## 🗂️ Documentation and community
+## Documentation and community
 
-- [Documentation index](docs/README.md)
-- [Methods](docs/METHODS.md)
-- [Contributing](docs/CONTRIBUTING.md)
-- [Security and medical-data reporting](docs/SECURITY.md)
-- [Support](docs/SUPPORT.md)
-- [Code of conduct](docs/CODE_OF_CONDUCT.md)
-- [Changelog](docs/CHANGELOG.md)
+- [Documentation index](docs/en/README.md)
+- [Methods](docs/en/METHODS.md)
+- [Contributing](docs/en/CONTRIBUTING.md)
+- [Security and medical-data reporting](docs/en/SECURITY.md)
+- [Support](docs/en/SUPPORT.md)
+- [Code of conduct](docs/en/CODE_OF_CONDUCT.md)
+- [Changelog](docs/en/CHANGELOG.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-## 🙏 Citation and license
+## Citation and license
 
 Please cite this software using [CITATION.cff](CITATION.cff), and cite SimNIBS
 and the diffusion-processing software used upstream. This project is released
