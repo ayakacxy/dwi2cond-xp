@@ -1,5 +1,18 @@
-# Security policy / 文档导航
+# Security policy
 
 [English](en/SECURITY.md) | [简体中文](zh/SECURITY.md)
 
-Choose a language to read this guide. 请选择语言阅读全文。
+[Documentation](en/README.md) · [Project home](../README.md)
+
+Supported security fixes target the latest tagged release and the `main`
+branch. Report vulnerabilities privately through GitHub private vulnerability
+reporting when available. Do not open a public issue for an unpatched security
+problem.
+
+Never attach identifiable medical images, HCP controlled-access files, subject
+identifiers, tokens, environment files, or absolute paths that disclose private
+infrastructure. A minimal synthetic reproducer is preferred.
+
+This research software is not a medical device and does not provide clinical
+advice. Scientific disagreements or unexpected simulation results are support
+issues, not security vulnerabilities, unless they arise from a security defect.
