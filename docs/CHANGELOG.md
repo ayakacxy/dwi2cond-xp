@@ -2,6 +2,8 @@
 
 [English](en/CHANGELOG.md) | [简体中文](zh/CHANGELOG.md)
 
+[Documentation](en/README.md) · [Project home](../README.md)
+
 This changelog stops at the historical `v0.1.0` release. Later-version changes
 belong to their corresponding tags.
 

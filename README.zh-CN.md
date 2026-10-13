@@ -8,12 +8,14 @@
 [![CI](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ayakacxy/dwi2cond-xp/badge)](https://scorecard.dev/viewer/?uri=github.com/ayakacxy/dwi2cond-xp)
-[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#验证概览)
+[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#-验证概览)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
 [![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/zh/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
 [English](README.md) · [文档](docs/zh/README.md) · [验证](docs/zh/VALIDATION.md) · [性能测试](docs/zh/BENCHMARKS.md) · [更新记录](docs/zh/CHANGELOG.md)
+
+🧠 **DTI 拟合** · ⚡ **运行时无 FSL** · 🧭 **张量重定向** · ⚡ **各向异性 FEM** · 🧪 **100% 语句覆盖**
 
 </div>
 
@@ -23,7 +25,7 @@
 
 > **历史版本。** 本文档对应 2026-08-21 发布的 `v0.1.0`。该标签曾于 2026-08-29 因文档和发布元数据修正而重新发布，算法源码保持原始 `v0.1.0` 实现。以下结果适用于本版本所述的输入和处理步骤。
 
-## 验证概览
+## ⚡ 验证概览
 
 | 检查项目 | 结果 | 测试条件 |
 | --- | ---: | --- |
@@ -35,7 +37,7 @@
 
 仓库不分发解剖影像、被试标识、体素派生数据或被试级机器可读产物。方法及验证细节见[验证](docs/zh/VALIDATION.md)和[性能测试](docs/zh/BENCHMARKS.md)。
 
-## 支持范围
+## 🧭 支持范围
 
 预处理完成后的流程为：
 
@@ -52,7 +54,7 @@
 
 纯 Python DTI 与张量映射部分依赖 NumPy、SciPy、NiBabel、h5py 和 tqdm。网格电导率、有限元和先导场计算固定要求 SimNIBS 4.6.0；这些功能仅适用于能够安装并验证该 SimNIBS 版本的平台。
 
-## 电导率模式
+## 🧩 电导率模式
 
 | 模式 | 含义 |
 | --- | --- |
@@ -63,7 +65,7 @@
 
 所选各向异性组织中的精确全零张量会先替换为该组织的标量电导率张量，因此是可接受的输入。默认 `dir`/`mc` 校准要求各组织的加权平均行列式为正且有限。`--no-correct-intensity` 跳过全局校准，仍执行逐张量保护规则。`v0.1.0` 没有公开的 `strict-fsl`/`robust` 拟合模式切换。本版本的公式和退化张量处理见[方法](docs/zh/METHODS.md)。
 
-## 安装
+## 🐍 安装
 
 完整流程已在 Python 3.11 与 SimNIBS 4.6.0 环境中验证。推荐安装到现有 SimNIBS 4.6 环境；若需保持其依赖不变，可使用 `--no-deps` 安装 wheel：
 
@@ -90,13 +92,11 @@ dwi2cond-xp --help
 
 ```bash
 python -m venv .venv
-. .venv/bin/activate
+. .venv/bin/activate              # Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install .
 dwi2cond-xp --help
 ```
-
-Windows PowerShell 中请用 `.venv\Scripts\Activate.ps1` 激活虚拟环境。
 
 允许更新依赖的开发环境可执行：
 
@@ -106,7 +106,7 @@ pytest -q --cov=dwi2cond_xp --cov-report=term-missing --cov-fail-under=100
 ruff check src tests tools scripts
 ```
 
-## 输入文件与坐标
+## 📥 输入文件与坐标
 
 DWI 输入应为已预处理的四维 NIfTI，并配有一致的 b 值、b 向量和扩散脑掩膜。DTI 模型使用一个非零壳层加 b=0 体积。可选的梯度非线性系数 `grad_dev` 采用 FSL/HCP 九分量排列。
 
@@ -117,7 +117,7 @@ DWI 输入应为已预处理的四维 NIfTI，并配有一致的 b 值、b 向�
 
 最终张量按 SimNIBS 4.6 的要求保存到 `m2m_<subject>/DTI_coregT1_tensor.nii.gz`。坐标、掩膜及输入检查见[输入文件与坐标](docs/zh/INPUTS.md)。
 
-## 最小流程
+## 🚀 最小流程
 
 拟合预处理后的单壳 DWI：
 
@@ -156,7 +156,7 @@ dwi2cond-xp simulate-tdcs m2m_subject simulation_outputs \
 
 每次正式仿真在 T1 网格上输出一个向量电场 NIfTI，最后一维为 `Ex,Ey,Ez`，模长通过 `sqrt(Ex^2 + Ey^2 + Ez^2)` 计算。体数据仅保留白质、灰质和脑脊液标签 `1,2,3`，严格排除颅骨、头皮、电极及颅外组织。
 
-## 体素电场对比
+## 🎨 体素电场对比
 
 ```bash
 dwi2cond-xp compare-fields \
@@ -174,13 +174,13 @@ dwi2cond-xp compare-fields \
 
 ![四种模式的电场模长](docs/images/electric_field_magnitude_2x2.png)
 
-## 先导场
+## ⚡ 先导场
 
 `simulate-leadfield` 为四种电导率模式构建 SimNIBS 4.6 `TDCSLEADFIELD` 配置，保留原始 HDF5 来源信息，并可导出形状为 `(N_spatial * 3, N_electrode - 1)` 的 NumPy 矩阵及 JSON 元数据。电极帽的第一个电极为参考电极，其余每列对应一个 1 A 基。默认使用 Pardiso，求解失败时不会自动改用其他求解器。
 
 该接口及 HDF5/NPY 格式已通过单元测试，但 `v0.1.0` 的验证不包含真实被试的完整全电极先导场运行。详见 [SimNIBS 集成](docs/zh/SIMNIBS_INTEGRATION.md)。
 
-## 历史验证结果
+## 🧪 历史验证结果
 
 `v0.1.0` 发布验证使用过一名私有 HCP 被试。仓库不分发原始影像、体数据派生物、被试标识或被试级机器可读产物；仅提供两张已渲染、无被试标识的电场对比 PNG 作为结果展示。使用这些图片需保留 HCP 致谢；图片的公开展示不替代接受 [WU-Minn HCP 开放数据使用条款](https://hcp-db.humanconnectome.org/study/hcp-young-adult/document/wu-minn-hcp-consortium-open-access-data-use-terms)。
 
@@ -193,7 +193,7 @@ dwi2cond-xp compare-fields \
 
 方法、计时范围和限制见[验证](docs/zh/VALIDATION.md)、[性能测试](docs/zh/BENCHMARKS.md)及[复现](docs/zh/REPRODUCIBILITY.md)。2026-08-29 的文档维护没有重跑私有 HCP、球形网格或 FEM 实验。
 
-## 文档与社区
+## 🗂️ 文档与社区
 
 - [文档目录](docs/zh/README.md)
 - [方法](docs/zh/METHODS.md)
@@ -204,7 +204,7 @@ dwi2cond-xp compare-fields \
 - [更新记录](docs/zh/CHANGELOG.md)
 - [第三方声明](THIRD_PARTY_NOTICES.zh-CN.md)
 
-## 引用与许可证
+## 🙏 引用与许可证
 
 请按照 [CITATION.cff](CITATION.cff) 引用本软件，并引用 SimNIBS 及上游使用的扩散处理软件。本项目采用 [GPL-3.0-only](LICENSE)；第三方软件包与可选参考工具保留各自许可证。
 

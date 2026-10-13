@@ -1,5 +1,14 @@
-# Support / 文档导航
+# Support
 
-[English](en/SUPPORT.md) · [简体中文](zh/SUPPORT.md)
+[English](en/SUPPORT.md) | [简体中文](zh/SUPPORT.md)
 
-[English documentation](en/README.md) · [中文文档](zh/README.md)
+[Documentation](en/README.md) · [Project home](../README.md)
+
+Use GitHub Discussions for usage questions and the issue templates for
+reproducible bugs or feature requests. Include the package version, Python and
+SimNIBS versions, operating system, command, synthetic input description,
+traceback, and QA manifest when safe.
+
+Do not upload human MRI data, subject identifiers, credentials, or private
+absolute paths. This community project is independent of the SimNIBS and FSL
+teams; questions about those upstream tools should use their support channels.
