@@ -1948,7 +1948,7 @@ def test_shear_ppd_matches_fsl_vecreg(tmp_path):
 @pytest.mark.parametrize("support", ["full", "sparse", "empty"])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_fnirt_batched_projection_preserves_csc_order(spacing, support, dtype):
-    """多列投影保留稀疏转置乘法次序，覆盖空域与非等距样条支持。"""
+    """对照独立稀疏投影，覆盖空域、非等距支持与跨架构 FP64 舍入。"""
     from dwi2cond_xp.preprocessing.fnirt import (
         _selected_spline_basis_sparse, _spline_projection_many,
     )
@@ -1964,7 +1964,22 @@ def test_fnirt_batched_projection_preserves_csc_order(spacing, support, dtype):
         for weight in weights
     ])
     actual = _spline_projection_many(weights, selected, shape, spacing, 8)
-    np.testing.assert_array_equal(actual, expected)
+    assert actual.shape == expected.shape and actual.dtype == np.float64
+    if support == "empty":
+        np.testing.assert_array_equal(actual, np.zeros_like(expected))
+    else:
+        # 两条 FP64 点积的舍入界随非零项数和绝对项和缩放，近零相消不靠相对容差。
+        absolute_sum = np.column_stack([
+            abs(basis).T @ np.abs(weight.reshape(-1, order="F")[selected].astype(np.float64))
+            for weight in weights
+        ])
+        eps = np.finfo(np.float64).eps
+        operations = 2 * basis.getnnz(axis=0) + 3
+        gamma = operations * eps / (1 - operations * eps)
+        difference = actual - expected
+        assert np.all(np.abs(difference) <= 2 * gamma[:, None] * absolute_sum)
+        # 再约束整体误差，防止局部最坏舍入界掩盖有意义的数值偏差。
+        assert np.linalg.norm(difference) <= 64 * eps * np.linalg.norm(expected)
 
 
 @pytest.mark.parametrize("shape,handedness", [((9, 8, 7), -1), ((49, 48, 47), 1)])

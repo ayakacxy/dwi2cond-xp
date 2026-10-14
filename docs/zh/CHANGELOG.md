@@ -38,6 +38,7 @@ v0.4.0 之后，尚无新增变化记录。
 
 ### 修复
 
+- 修复 Windows 下 NIfTI 写回原文件或同一文件硬链接时的失败。
 - legacy 在最终运动变换所属的 FSL 基底中旋转梯度，默认改为 `--bvec-mode corrected`。
   存储轴重排同步转换 b 向量、张量分量及列主序梯度偏差矩阵
   （`--component-mode physical`）。
@@ -68,11 +69,9 @@ v0.4.0 之后，尚无新增变化记录。
 
 ### 验证与性能实测
 
-- 本地 955 个独立用例通过（主批次 942 + 独立回归 1 + 电极配置 12），无跳过，
-  已启用配置的真实 FSL/SimNIBS 探针。Numba-aware 全包门槛覆盖
-  15,363/15,363 条语句（100.00%），并执行真实合成 TOPUP/EDDY/FNIRT 三条 CLI。
-  无设备 CUDA 数学测试与独立真实 GPU 证据互补；语句覆盖率不代表完整分支覆盖或
-  任意输入正确性。
+- 本地 960 个独立用例通过，无跳过，覆盖 15,364/15,364 条语句（100.00%），
+  并执行真实合成 TOPUP/EDDY/FNIRT 三条 CLI。各批次与数值检查见
+  [验证记录](https://github.com/ayakacxy/dwi2cond-xp/blob/v0.4.0/docs/zh/VALIDATION.md)。
 - 同一 Linux HCP 单壳输入、八个物理核心、热缓存完整运行：CPU 为
   **205.452 秒 / 主机 RSS 6.498 GiB**，GPU 为 **163.342 秒 / 主机 RSS 6.723 GiB**，
   GPU 分配峰值为 **8.834 GiB**。FEM 关闭。

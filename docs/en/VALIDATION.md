@@ -6,33 +6,30 @@
 
 ## v0.4.0 validation — 2026-10-14
 
-The local release gate passed with **955 unique tests and no skips**: the
-main batch passed 942 tests, a separately executed ordered-evaluator regression
-added one passing case, and the montage batch passed 12. The focused case was
-included in the completed unit coverage data before aggregation and remains in
-the test tree for normal CI collection. Configured real FSL and SimNIBS probes
-were enabled. The main batch reported 12 fixture-related SimNIBS `UserWarning`
-messages; this is not a warning-free result.
+Linux release checks passed **960 unique tests with no skips**: 948 in the
+main batch and 12 montage tests. Configured real FSL and SimNIBS probes were
+enabled. The main batch reported 12 fixture-related SimNIBS `UserWarning`
+messages.
 
-`python scripts/run_coverage.py` completed successfully with **15,363/15,363
-executable statements covered (100.00%)**. Coverage used isolated cold Numba
-compilation caches with `NUMBA_JIT_COVERAGE=1`, combined with three real
-synthetic TOPUP, EDDY and FNIRT CLI end-to-end runs. The 100% statement threshold
-and source scope were retained; statement coverage does not establish complete
-branch coverage or correctness for arbitrary inputs.
+`python scripts/run_coverage.py` covered **15,364/15,364 executable statements
+(100.00%)** using isolated cold Numba caches with `NUMBA_JIT_COVERAGE=1` and
+three real synthetic TOPUP, EDDY and FNIRT CLI end-to-end runs.
 
-The 36 device-free CUDA tests exercise backend mathematics and error handling;
-they do not substitute for execution on a CUDA device. The separately completed
-Linux/RTX 2080 Ti CPU/GPU end-to-end comparison is documented in
-[Benchmarks](BENCHMARKS.md); it validates the recorded input and processing boundary.
-No other-platform GPU certification or new complete real-subject FEM run is
-inferred from these checks.
+The tensor-consumption adapter passed 18 tests without SimNIBS, with 12
+optional reference probes skipped and 100% adapter statement coverage. With
+SimNIBS installed, all 30 passed without skips. These checks include four
+independent conductivity reference cases. The CUDA backends also passed 36
+device-free tests of their mathematics and error handling.
 
-The release checks also passed Ruff, version synchronization, Markdown links
-and source-manifest validation. The runtime dependency audit inspected 19
-packages and found no known vulnerabilities in the audit database on this date.
-Remote platform/security CI and public distribution checks are separate release
-steps; the local gate does not replace them.
+Statement coverage records executed code; it does not establish complete
+branch coverage or correctness for arbitrary inputs. Real CPU/GPU end-to-end
+evidence uses the Linux/RTX 2080 Ti input documented in [Benchmarks](BENCHMARKS.md).
+This suite adds no other-platform GPU or complete real-subject FEM validation.
+The unconstrained WLS fit can still produce negative eigenvalues and FA>1.
+
+Ruff, version synchronization, Markdown links and source-manifest checks passed.
+The runtime dependency audit inspected 19 packages and found no known
+vulnerabilities in the audit database on this date.
 
 ## Historical v0.3.0 validation
 

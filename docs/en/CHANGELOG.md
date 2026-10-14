@@ -47,6 +47,8 @@ See the [release notes](https://github.com/ayakacxy/dwi2cond-xp/blob/v0.4.0/docs
 
 ### Fixed
 
+- Fix in-place NIfTI writes on Windows when the input and output refer to
+  the same file, including hard links.
 - Rotate legacy motion-corrected gradients in the FSL basis and make
   `--bvec-mode corrected` the default. Storage reordering now transforms
   b-vectors, tensor components and column-major gradient-deviation matrices
@@ -86,12 +88,10 @@ See the [release notes](https://github.com/ayakacxy/dwi2cond-xp/blob/v0.4.0/docs
 
 ### Validation and measured performance
 
-- Local release checks passed 955 unique cases (942 main + 1 focused regression
-  + 12 montage), with no skips and configured real FSL/SimNIBS probes enabled.
-  The Numba-aware full-package gate covered 15,363/15,363 statements (100.00%)
-  and ran three real synthetic TOPUP/EDDY/FNIRT CLI paths. Device-free CUDA
-  math tests complement the separate real-GPU evidence; statement coverage
-  is not complete branch coverage or an arbitrary-input correctness claim.
+- Local release checks passed 960 unique cases with no skips and covered
+  15,364/15,364 statements (100.00%), including three real synthetic
+  TOPUP/EDDY/FNIRT CLI runs. See the [validation record](https://github.com/ayakacxy/dwi2cond-xp/blob/v0.4.0/docs/en/VALIDATION.md)
+  for the test groups and numerical checks.
 - On one Linux HCP single-shell input, eight-core warm-cache complete runs
   took **205.452 s / 6.498 GiB host RSS** on CPU and **163.342 s / 6.723 GiB
   host RSS** on GPU; GPU allocation peaked at **8.834 GiB**. FEM was off.

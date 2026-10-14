@@ -331,7 +331,10 @@ def write_fsl_reoriented(
     if component_mode not in ("physical", "simnibs46-literal"):
         raise ValueError("component_mode must be 'physical' or 'simnibs46-literal'")
 
-    source = nib.load(str(input_file))
+    output = Path(output_file)
+    overwrite_input = output.exists() and Path(input_file).samefile(output)
+    # Windows 禁止截断仍被映射的文件；同文件及硬链接读取时就避开 memmap。
+    source = nib.load(str(input_file), mmap=not overwrite_input)
     qform_code = int(source.header["qform_code"])
     sform_code = int(source.header["sform_code"])
     if qform_code == 0 and sform_code == 0:
@@ -412,9 +415,8 @@ def write_fsl_reoriented(
     header = source.header.copy()
     header.set_data_shape(values.shape)
     header.set_data_dtype(np.float32 if float32 else source.get_data_dtype())
-    output = Path(output_file)
     output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists() and Path(input_file).samefile(output):
+    if overwrite_input:
         # 同文件或硬链接覆盖会先截断 memmap；写盘前必须脱离输入存储。
         values = np.array(values, copy=True, order="F")
     image = nib.Nifti1Image(values, new_active_affine, header)

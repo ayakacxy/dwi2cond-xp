@@ -81,12 +81,10 @@ The local v0.4.0 release checks completed on 2026-10-14:
 
 | Check | Result | Conditions |
 | --- | ---: | --- |
-| v0.4.0 correctness checks | **955 passed · 0 skipped** | 942 main + 1 focused regression + 12 montage tests on Linux, with configured real FSL/SimNIBS probes enabled |
-| Full-package coverage gate | **100.00% statement coverage** | 15,363/15,363 statements; isolated cold Numba caches with JIT coverage and real synthetic TOPUP/EDDY/FNIRT CLI runs |
+| v0.4.0 correctness checks | **960 passed · 0 skipped** | Linux, with configured real FSL/SimNIBS probes enabled |
+| Full-package coverage gate | **100.00% statement coverage** | 15,364/15,364 statements; cold Numba caches and synthetic TOPUP/EDDY/FNIRT CLI runs |
 
-Statement coverage does not establish complete branch coverage or correctness
-for every input. The CUDA math checks and prior real-GPU end-to-end evidence
-are distinguished in [Validation](docs/en/VALIDATION.md).
+Test groups and numerical checks are documented in [Validation](docs/en/VALIDATION.md).
 
 The following historical checks describe the released `v0.3.0` tag; its test
 count and coverage are not new `v0.4.0` measurements.

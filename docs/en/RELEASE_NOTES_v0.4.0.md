@@ -22,6 +22,8 @@ as a runtime dependency.
   enters the required internal radiological coordinates consistently. Outputs
   return to their image storage without a second reflection of movement/EC
   parameters or FSL b-vectors.
+- **Windows NIfTI writes.** Writing back to the input file or its hard link
+  now works on Windows.
 - **NIfTI sampling scales.** Affine and dense-warp FSL sampling use header
   `pixdim` separately from the world affine. Raw/FNIRT paths that cannot
   represent a header/affine voxel-size mismatch reject it instead of guessing.
@@ -199,14 +201,10 @@ identity and historical measurements.
 
 ## Release validation
 
-Local release checks passed **955 unique tests with no skips** (942 main +
-1 focused regression + 12 montage), with configured real FSL/SimNIBS probes.
-The Numba-aware full-package gate covered **15,363/15,363 statements (100.00%)**
-and executed three real synthetic TOPUP/EDDY/FNIRT CLI paths. The main batch
-reported 12 fixture-related SimNIBS warnings. Device-free CUDA tests and the
-separate real-GPU evidence serve different purposes; statement coverage does
-not establish complete branch coverage or correctness for arbitrary inputs.
-The [validation record](VALIDATION.md) gives the exact groups and limitations.
+Local release checks passed **960 unique tests with no skips** and covered
+**15,364/15,364 statements (100.00%)**, including three real synthetic
+TOPUP/EDDY/FNIRT CLI runs. Test groups and numerical checks are documented
+in the [validation record](VALIDATION.md).
 
 ## Numerical checks and scope
 
@@ -220,13 +218,8 @@ ignores eigenvector sign, and had complete healthy-voxel coverage on this input.
 
 Algorithm regressions cover signed storage permutations, both handednesses,
 non-1-mm PPD, header/affine scale mismatch, formal conductivity consumers and
-publication failure. Stage-level checks include real FSL consumers. The
-unconstrained WLS fit can still have negative eigenvalues and FA>1; finite
-outputs are not evidence that every tensor is positive semidefinite.
+publication failure. Stage-level checks include real FSL consumers.
 
-This evidence covers the stated Linux input and processing boundary. It adds
-no complete real-subject raw-DWI-to-four-mode FEM run, other-acquisition study,
-other-platform GPU certification or cold-start performance guarantee. The
-existing fixed preprocessing scope, single-shell model and unsupported
-wrapped-phase/PRELUDE and arbitrary FSL configurations remain as documented
-in [Methods](METHODS.md) and [FSL reference](FSL_REFERENCE.md).
+The [validation record](VALIDATION.md) describes the scope of this evidence.
+Supported preprocessing and the single-shell model are documented in
+[Methods](METHODS.md) and [FSL reference](FSL_REFERENCE.md).

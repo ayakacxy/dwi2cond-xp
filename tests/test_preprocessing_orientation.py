@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import weakref
 
 import nibabel as nib
 import numpy as np
@@ -207,6 +208,35 @@ def test_reorientation_can_overwrite_its_uncompressed_memmap(tmp_path, alias):
     assert result.returncode == 0, result.stderr
     expected = reorient_spatial_array(values, fsl_canonical_orientation(affine))
     np.testing.assert_array_equal(np.asarray(nib.load(output).dataobj), expected)
+
+
+def test_in_place_hardlink_reorientation_has_no_live_mapping_at_write(tmp_path, monkeypatch):
+    """模拟 Windows 写锁：原地硬链接写出时不能留有输入文件映射。"""
+    values = np.arange(4 * 5 * 6, dtype=np.float32).reshape(4, 5, 6)
+    affine = _permuted_affine(positive=True)
+    source, output = tmp_path / "source.nii", tmp_path / "alias.nii"
+    _write_image(source, values, affine)
+    os.link(source, output)
+    mappings = []
+    original_read = nib.arrayproxy.ArrayProxy._get_unscaled
+    original_save = nib.save
+
+    def observe_read(self, *args, **kwargs):
+        array = original_read(self, *args, **kwargs)
+        if isinstance(array, np.memmap):
+            mappings.append(weakref.ref(array))
+        return array
+
+    def reject_live_mapping(image, filename, **kwargs):
+        assert not any(reference() is not None for reference in mappings)
+        return original_save(image, filename, **kwargs)
+
+    monkeypatch.setattr(nib.arrayproxy.ArrayProxy, "_get_unscaled", observe_read)
+    monkeypatch.setattr(nib, "save", reject_live_mapping)
+    write_fsl_reoriented(source, output, float32=True)
+    expected = reorient_spatial_array(values, fsl_canonical_orientation(affine))
+    np.testing.assert_array_equal(np.asarray(nib.load(output).dataobj), expected)
+    assert source.samefile(output)
 
 
 def test_voxel_basis_transform_preserves_vectors_and_tensors():

@@ -203,6 +203,93 @@ def test_literal_consumer_binding_leaves_instance_and_source_unchanged(tmp_path,
     assert source.read_bytes() == original_bytes
 
 
+def _oracle_consumer_method(self, mesh):
+    """接口替身直接交付已采样张量，不模拟网格采样或 FEM。"""
+    return simnibs.utils.cond_utils.cond2elmdata(  # noqa: F821
+        mesh, self.cond_values, anisotropy_volume=self.sampled_tensors,
+        affine=self.sampled_affine,
+    )
+
+
+def _oracle_leadfield_run(self, w_elec):
+    """保留上游静态调用形态，仅检验实例消费路由。"""
+    return SimuList.cond2elmdata(self, w_elec)  # noqa: F821
+
+
+@pytest.mark.parametrize("basis_mode", ["physical", "simnibs46-literal"])
+@pytest.mark.parametrize("eigensystem_mode", ["stable", "simnibs46-literal"])
+def test_consumer_adapter_math_and_static_route_without_simnibs(
+    tmp_path, monkeypatch, basis_mode, eigensystem_mode,
+):
+    """以显式基底及 NumPy 谱验证适配数学，不声称替身是上游 A/B。"""
+    source, tensors = _tensor_input(tmp_path / "tensor.nii.gz", angle=45.0)
+    source_bytes = source.read_bytes()
+    sampled = tensors.reshape(-1, 3, 3)[[0, 62, 124]].copy()
+    affine = nib.load(source).affine
+    half = np.sqrt(0.5)
+    physical_basis = np.array([[-half, -half, 0], [-half, half, 0], [0, 0, 1]])
+    literal_basis = np.array([[-half, -2 * half, 0], [-half / 2, half, 0], [0, 0, 1]])
+    forwarded = []
+
+    def sorted_numpy(tissue_tensors):
+        values, vectors = np.linalg.eigh(tissue_tensors)
+        return values[:, ::-1], vectors[:, :, ::-1]
+
+    def cond_interface(mesh, cond_list, anisotropy_volume=None, affine=None, correct_FSL=True):
+        # 接口替身只含显式 literal 基底和谱入口，不运行第三方组织缩放。
+        forwarded.append((mesh, bool(correct_FSL)))
+        matrices = np.asarray(anisotropy_volume, dtype=float)
+        if correct_FSL:
+            matrices = literal_basis @ matrices @ literal_basis.T
+        return _get_sorted_eigenv(matrices)  # noqa: F821
+
+    fake_simnibs, _ = _install_guard_simnibs(monkeypatch)
+    cond_function = _clone_function(cond_interface, {"_get_sorted_eigenv": sorted_numpy})
+    fake_simnibs.utils.cond_utils.cond2elmdata = cond_function
+    method = _clone_function(_oracle_consumer_method, {"simnibs": fake_simnibs})
+    fake_simnibs.sim_struct.SimuList.cond2elmdata = method
+    run = _clone_function(_oracle_leadfield_run, {"SimuList": fake_simnibs.sim_struct.SimuList})
+    leadfield_type = type("OracleLeadfield", (fake_simnibs.sim_struct.SimuList,), {"run": run})
+    consumer = leadfield_type()
+    consumer.cond_values = [0.126, 0.275]
+    consumer.sampled_tensors = sampled
+    consumer.sampled_affine = affine
+    cond_globals, method_globals, run_globals = (
+        dict(cond_function.__globals__), dict(method.__globals__), dict(run.__globals__),
+    )
+    report = bind_simnibs_tensor_consumer(
+        consumer, source, basis_mode=basis_mode, eigensystem_mode=eigensystem_mode,
+        leadfield=True,
+    )
+    mesh = object()
+    direct_values, direct_vectors = consumer.cond2elmdata(mesh)
+    run_values, run_vectors = consumer.run(mesh)
+    selected = physical_basis if basis_mode == "physical" else literal_basis
+    expected = selected @ sampled @ selected.T
+    expected_values = np.linalg.eigvalsh(expected)[:, ::-1]
+    np.testing.assert_allclose(direct_values, expected_values, rtol=2e-14, atol=1e-17)
+    reconstructed = (direct_vectors * direct_values[:, None, :]) @ direct_vectors.transpose(0, 2, 1)
+    np.testing.assert_allclose(reconstructed, expected, rtol=2e-14, atol=1e-17)
+    np.testing.assert_array_equal(run_values, direct_values)
+    np.testing.assert_array_equal(run_vectors, direct_vectors)
+    assert forwarded == [(mesh, basis_mode != "physical"), (mesh, basis_mode != "physical")]
+    adapted = basis_mode != "simnibs46-literal" or eigensystem_mode != "simnibs46-literal"
+    assert (consumer.cond2elmdata.__func__ is not method) == adapted
+    assert (consumer.run.__func__ is not run) == adapted
+    if adapted:
+        assert report["leadfield_static_call_adapted"]
+        assert consumer.run.__func__.__globals__["SimuList"] is not fake_simnibs.sim_struct.SimuList
+    else:
+        assert report["adapter"] == "upstream-unmodified"
+    assert fake_simnibs.sim_struct.SimuList.cond2elmdata is method
+    assert leadfield_type.run is run
+    assert cond_function.__globals__ == cond_globals
+    assert method.__globals__ == method_globals
+    assert run.__globals__ == run_globals
+    np.testing.assert_array_equal(consumer.sampled_tensors, sampled)
+    assert source.read_bytes() == source_bytes
+
+
 @pytest.mark.skipif(
     os.environ.get("DWI2COND_TEST_SIMNIBS") != "1",
     reason="Set DWI2COND_TEST_SIMNIBS=1 in the SimNIBS environment for upstream A/B",
