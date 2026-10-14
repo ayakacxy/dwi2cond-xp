@@ -10,10 +10,11 @@
 
 ```bash
 conda activate simnibs
-python -m pip install --no-deps dwi2cond_xp-0.3.0-py3-none-any.whl
+python -m pip install --no-deps dwi2cond_xp-0.4.0-py3-none-any.whl
 python -c "import simnibs, dwi2cond_xp; assert simnibs.__version__ == '4.6.0'"
 ```
 
+使用对应 GitHub Release 中的 v0.4.0 wheel。
 在该冻结环境中进行源码开发，可将 wheel 安装命令改为
 `python -m pip install --no-deps -e .`。该方式保留既有依赖版本，请确认其与已验证版本一致。
 
@@ -53,6 +54,18 @@ dwi2cond-xp simulate-tdcs --help
 核验发布文件时，从同一 GitHub Release 下载 wheel、源码包、SBOM 和 `SHA256SUMS`
 到新目录。运行 `sha256sum -c SHA256SUMS`，在新环境安装下载的 wheel，并检查导入与
 命令行。tag 工作流还检查 Twine、wheel 内容、归档中的隐私数据、依赖、构建来源和 SBOM。
+
+## CPU 与可选 CUDA
+
+FNIRT Hessian 组装和 PPD 均默认使用 CPU，不需要 CuPy 或 CUDA 设备。
+非线性配准及 pipeline 命令提供两个独立选项：`--fnirt-device cuda` 和
+`--ppd-device cuda`。前者使用 Numba CUDA，后者还需要兼容的 CuPy。
+CPU wheel 和环境文件不会安装这些 GPU 依赖。
+
+实际验证环境为 Linux、RTX 2080 Ti、CUDA 12.8、Numba 0.64.0 和 CuPy 14.2.0。
+这是已测运行环境，不是干净环境安装步骤或 macOS/Windows GPU 认证。
+显式 CUDA 执行失败会终止；无 GPU 时选择 `cpu`。细节见[方法](METHODS.md)和
+[v0.4.0 发布说明](RELEASE_NOTES_v0.4.0.md)。
 
 ## 参考工具
 

@@ -366,7 +366,8 @@ def _write_dwi(tmp_path):
     return dwi, bvals, reference, data
 
 
-def test_write_aligned_b0_mean_outputs_qa_and_progress(tmp_path) -> None:
+@pytest.mark.parametrize("fast_preparation", [False, True])
+def test_write_aligned_b0_mean_outputs_qa_and_progress(tmp_path, fast_preparation) -> None:
     dwi, bvals, reference, data = _write_dwi(tmp_path)
     output = tmp_path / "aligned.nii.gz"
     qa_file = tmp_path / "custom.json"
@@ -380,6 +381,7 @@ def test_write_aligned_b0_mean_outputs_qa_and_progress(tmp_path) -> None:
         workers=2,
         progress=lambda done, total: progress.append((done, total)),
         qa_file=qa_file,
+        fast_preparation=fast_preparation,
     )
     aligned = np.asarray(nib.load(result).dataobj)
     unaligned = np.mean(data[..., [0, 2, 4]], axis=3)
@@ -404,8 +406,9 @@ def test_write_aligned_b0_mean_outputs_qa_and_progress(tmp_path) -> None:
     assert qa["volumes"][1]["message"] == "reference volume"
 
 
+@pytest.mark.parametrize("fast_preparation", [False, True])
 def test_write_aligned_b0_mean_uses_raw_moving_and_official_fix2d(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, fast_preparation
 ) -> None:
     shape = (9, 8, 2)
     base = np.arange(np.prod(shape), dtype=np.float32).reshape(shape) + 1.0
@@ -440,6 +443,7 @@ def test_write_aligned_b0_mean_uses_raw_moving_and_official_fix2d(
         tmp_path / "aligned.nii.gz",
         stages_mm=(4.0,),
         workers=1,
+        fast_preparation=fast_preparation,
     )
 
     assert resampled_shapes == [shape]
@@ -608,3 +612,40 @@ def test_write_aligned_b0_mean_validation_and_failure(tmp_path) -> None:
     write_aligned_b0_mean(
         dwi, all_b0, tmp_path / "all_aligned.nii.gz", stages_mm=(2.0,)
     )
+
+
+def test_raw_preparation_projection_and_affine_sampling():
+    """投影重心、倾斜非等距采样与 extraslice 硬边界保持参考语义。"""
+    from dwi2cond_xp.preprocessing.rigid import (
+        _intensity_center_projected, _intensity_center_scaled_mm, _resample_b0_affine,
+    )
+    from dwi2cond_xp.preprocessing.resampling import resample_image
+    random = np.random.default_rng(144)
+    values = np.asfortranarray(random.uniform(1, 200, (9, 8, 7)).astype(np.float32))
+    spacing = np.array([1.25, 2., 3.])
+    np.testing.assert_allclose(
+        _intensity_center_projected(values, spacing),
+        _intensity_center_scaled_mm(values, spacing), rtol=2e-14, atol=2e-14,
+    )
+    np.testing.assert_array_equal(_intensity_center_projected(np.ones_like(values), spacing), np.zeros(3))
+    angle = .2
+    affine = np.array([[np.cos(angle), -np.sin(angle), 0, 15.],
+                       [np.sin(angle), np.cos(angle), 0, -32.],
+                       [0, 0, 1., 70.], [0, 0, 0, 1.]])
+    affine[:3, :3] *= spacing
+    for shift in ([.17, -.23, .31], [1., 0., 0.], [-1., 0., 0.]):
+        voxel_transform = np.eye(4)
+        voxel_transform[:3, 3] = shift
+        world = affine @ voxel_transform @ np.linalg.inv(affine)
+        arguments = (values, affine, values.shape, affine, world)
+        expected = resample_image(*arguments, linear_extrapolation='extraslice')
+        actual = _resample_b0_affine(*arguments, linear_extrapolation='extraslice')
+        np.testing.assert_allclose(actual, expected, rtol=2e-6, atol=1e-6)
+        np.testing.assert_array_equal(actual == 0, expected == 0)
+    # 极大世界坐标会放大矩阵重结合误差，应逐值保持参考路径。
+    affine[:3, 3] += 1e12
+    world = affine @ voxel_transform @ np.linalg.inv(affine)
+    arguments = (values, affine, values.shape, affine, world)
+    expected = resample_image(*arguments, linear_extrapolation='extraslice')
+    actual = _resample_b0_affine(*arguments, linear_extrapolation='extraslice')
+    np.testing.assert_array_equal(actual, expected)

@@ -17,8 +17,19 @@ jobs:
         os: [ubuntu-22.04, macos-14, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      TMPDIR: ${{ github.workspace }}/.work/ci-release/tmp
+      TMP: ${{ github.workspace }}/.work/ci-release/tmp
+      TEMP: ${{ github.workspace }}/.work/ci-release/tmp
+      PIP_CACHE_DIR: ${{ github.workspace }}/.work/ci-release/pip
+      NUMBA_CACHE_DIR: ${{ github.workspace }}/.work/ci-release/numba
+      XDG_CACHE_HOME: ${{ github.workspace }}/.work/ci-release/cache
+      PYTHONPYCACHEPREFIX: ${{ github.workspace }}/.work/ci-release/pycache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Prepare project temporary and cache directories
+        shell: bash
+        run: mkdir -p .work/ci-release/tmp .work/ci-release/pip .work/ci-release/numba .work/ci-release/cache .work/ci-release/pycache
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
@@ -39,8 +50,18 @@ jobs:
   package:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    env:
+      TMPDIR: ${{ github.workspace }}/.work/ci-release/tmp
+      TMP: ${{ github.workspace }}/.work/ci-release/tmp
+      TEMP: ${{ github.workspace }}/.work/ci-release/tmp
+      PIP_CACHE_DIR: ${{ github.workspace }}/.work/ci-release/pip
+      NUMBA_CACHE_DIR: ${{ github.workspace }}/.work/ci-release/numba
+      XDG_CACHE_HOME: ${{ github.workspace }}/.work/ci-release/cache
+      PYTHONPYCACHEPREFIX: ${{ github.workspace }}/.work/ci-release/pycache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Prepare project temporary and cache directories
+        run: mkdir -p .work/ci-release/tmp .work/ci-release/pip .work/ci-release/numba .work/ci-release/cache .work/ci-release/pycache
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
@@ -61,10 +82,10 @@ jobs:
           python scripts/verify_release.py --dist dist
       - name: Test wheel installation
         run: |
-          python -m venv /tmp/dwi2cond-wheel
-          /tmp/dwi2cond-wheel/bin/python -m pip install --upgrade pip
-          /tmp/dwi2cond-wheel/bin/python -m pip install dist/*.whl
-          /tmp/dwi2cond-wheel/bin/dwi2cond-xp --help
+          python -m venv .work/ci-release/wheel-venv
+          .work/ci-release/wheel-venv/bin/python -m pip install --upgrade pip
+          .work/ci-release/wheel-venv/bin/python -m pip install dist/*.whl
+          .work/ci-release/wheel-venv/bin/dwi2cond-xp --help
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: python-distributions

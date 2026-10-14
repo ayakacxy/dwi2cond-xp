@@ -7,6 +7,7 @@ from dwi2cond_xp.conductivity import (
     _anisotropic_intensity_scale,
     _fix_eigenvalues,
     correct_fsl_tensor_basis,
+    fsl_tensor_basis,
     tensors_to_conductivity,
 )
 
@@ -148,6 +149,54 @@ def test_fsl_basis_correction_validates_shapes_axes_and_ras_reflection():
     affine[0, 0] = 0
     with pytest.raises(ValueError, match="zero-length"):
         correct_fsl_tensor_basis(tensor, affine)
+
+
+@pytest.mark.parametrize("angle", [45.0, 90.0])
+@pytest.mark.parametrize("handedness", [-1.0, 1.0])
+def test_physical_basis_preserves_isotropy_and_spectrum(angle, handedness):
+    radians = np.deg2rad(angle)
+    rotation = np.array(
+        [[np.cos(radians), -np.sin(radians), 0],
+         [np.sin(radians), np.cos(radians), 0], [0, 0, 1]]
+    )
+    affine = np.eye(4)
+    affine[:3, :3] = rotation @ np.diag([handedness, 2.0, 3.0])
+    tensors = np.stack([0.001 * np.eye(3), np.diag([0.002, 0.001, 0.0005])])
+    corrected = correct_fsl_tensor_basis(tensors, affine)
+    np.testing.assert_allclose(corrected[0], tensors[0], rtol=0.0, atol=1e-18)
+    np.testing.assert_allclose(
+        np.linalg.eigvalsh(corrected), np.linalg.eigvalsh(tensors),
+        rtol=0.0, atol=1e-18,
+    )
+    basis = fsl_tensor_basis(affine)
+    np.testing.assert_allclose(basis.T @ basis, np.eye(3), rtol=0.0, atol=1e-15)
+
+
+def test_literal_basis_retains_upstream_row_normalization_for_comparison():
+    affine = np.eye(4)
+    cosine = np.sqrt(0.5)
+    affine[:3, :3] = np.array([[cosine, -2 * cosine, 0],
+                             [cosine, 2 * cosine, 0], [0, 0, 3]])
+    linear = affine[:3, :3]
+    orientation = linear / np.linalg.norm(linear, axis=0)[:, None]
+    orientation = orientation @ np.diag([-1.0, 1.0, 1.0])
+    tensor = (0.001 * np.eye(3))[None]
+    literal = correct_fsl_tensor_basis(tensor, affine, basis_mode="simnibs46-literal")
+    np.testing.assert_array_equal(fsl_tensor_basis(affine, basis_mode="simnibs46-literal"), orientation)
+    np.testing.assert_allclose(literal[0], orientation @ tensor[0] @ orientation.T, atol=1e-18)
+    assert np.linalg.eigvalsh(literal[0])[-1] / np.linalg.eigvalsh(literal[0])[0] > 7.0
+
+
+def test_physical_basis_rejects_shear_and_unknown_modes():
+    affine = np.eye(4)
+    affine[0, 1] = 0.2
+    with pytest.raises(ValueError, match="sheared grids"):
+        correct_fsl_tensor_basis(np.eye(3)[None], affine)
+    with pytest.raises(ValueError, match="basis_mode"):
+        fsl_tensor_basis(np.eye(4), basis_mode="bad")
+    affine[0, 0] = np.nan
+    with pytest.raises(ValueError, match="finite 4x4"):
+        fsl_tensor_basis(affine)
 
 
 def test_eigenvalue_repairs_and_excentricity_branches():

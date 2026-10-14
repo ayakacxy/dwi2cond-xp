@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import subprocess
 
 import nibabel as nib
 import numpy as np
@@ -19,6 +21,106 @@ from dwi2cond_xp.preprocessing.fieldmap import (
     voxel_shift_from_field,
 )
 from dwi2cond_xp.preprocessing.flirt_registration import FlirtRegistrationResult
+from dwi2cond_xp.preprocessing.resampling import resample_image
+
+
+FSL_FUGUE = Path(os.environ.get("FSL_FUGUE", "/path/not/configured/fugue"))
+
+
+@pytest.mark.parametrize("handedness", [-1, 1])
+@pytest.mark.parametrize("direction", ["x", "x-", "y", "y-"])
+def test_gre_pipeline_propagates_image_handedness_to_both_warps(
+    monkeypatch: pytest.MonkeyPatch, handedness: int, direction: str
+) -> None:
+    axis, sign = phase_encoding_axis_sign(direction)
+    shape = (11, 9, 5)
+    source, shift = np.zeros(shape, dtype=np.float32), np.zeros(shape, dtype=np.float32)
+    section = [slice(None)] * 3
+    section[axis] = 4
+    source[tuple(section)] = 10.0
+    section[axis] = slice(3, 6)
+    shift[tuple(section)] = 1.0
+    dwell = .001
+    # FSL 的 -P 排除零值；非零背景确保去除中位数后保留局部一体素位移。
+    field = (shift + np.float32(1.0)) * np.float32(2.0 * np.pi / (shape[axis] * dwell))
+    affine = np.diag([handedness * 2.0, 2.5, 3.0, 1.0])
+    mask = np.ones(shape, dtype=np.uint8)
+    monkeypatch.setattr(
+        fieldmap_module, "register_flirt_affine",
+        lambda *_args, **_kwargs: FlirtRegistrationResult(np.eye(4), -1.0, 1, 1),
+    )
+    result = run_fieldmap(
+        source, field, mask, source, mask, affine, affine, dwell_seconds=dwell,
+        phase_encoding_direction=direction, workers=2, median_filter=False,
+    )
+    line = [shape[0] // 2, shape[1] // 2, shape[2] // 2]
+    line[axis] = slice(None)
+    storage_sign = sign * (-1 if axis == 0 and handedness > 0 else 1)
+    assert int(result.distorted_magnitude[tuple(line)].argmax()) == 4 + storage_sign
+    assert int(result.corrected_b0[tuple(line)].argmax()) == 4 - storage_sign
+    np.testing.assert_allclose(
+        result.displacement_world_mm,
+        result.voxel_shift[..., None] * affine[:3, axis] * storage_sign,
+        rtol=0.0, atol=0.0,
+    )
+
+
+@pytest.mark.skipif(not FSL_FUGUE.is_file(), reason="FSL FUGUE reference is required")
+@pytest.mark.parametrize("handedness", [-1, 1])
+@pytest.mark.parametrize("direction", ["x", "x-", "y", "y-"])
+def test_gre_warp_and_world_pull_match_real_fugue(
+    tmp_path: Path, handedness: int, direction: str
+) -> None:
+    shape = (11, 9, 5)
+    source = np.zeros(shape, dtype=np.float32)
+    shift = np.zeros(shape, dtype=np.float32)
+    axis, _ = phase_encoding_axis_sign(direction)
+    section = [slice(None)] * 3
+    section[axis] = 4
+    source[tuple(section)] = 10.0
+    section[axis] = slice(3, 6)
+    shift[tuple(section)] = 1.0
+    affine = np.diag([handedness * 2.0, 2.5, 3.0, 1.0])
+    for name, values in (("source", source), ("shift", shift), ("mask", np.ones(shape))):
+        nib.save(nib.Nifti1Image(values, affine), tmp_path / f"{name}.nii.gz")
+    environment = os.environ.copy()
+    environment.update(FSLDIR=str(FSL_FUGUE.parent.parent), FSLOUTPUTTYPE="NIFTI_GZ")
+    subprocess.run(
+        [
+            str(FSL_FUGUE), "-i", str(tmp_path / "source.nii.gz"),
+            f"--loadshift={tmp_path / 'shift.nii.gz'}", f"--mask={tmp_path / 'mask.nii.gz'}",
+            f"--unwarpdir={direction}", "--nokspace", "-w", str(tmp_path / "warped"),
+            "-u", str(tmp_path / "unwarped"),
+        ], check=True, capture_output=True, text=True, env=environment, cwd=tmp_path,
+    )
+    warped = forward_warp_magnitude(source, shift, direction, affine=affine, workers=2)
+    displacement = displacement_from_voxel_shift(shift, affine, direction)
+    unwarped = resample_image(
+        source, affine, shape, affine, np.eye(4), interpolation="linear",
+        reference_to_moving_displacement=displacement,
+    )
+    np.testing.assert_array_equal(warped, np.asarray(nib.load(tmp_path / "warped.nii.gz").dataobj))
+    np.testing.assert_array_equal(unwarped, np.asarray(nib.load(tmp_path / "unwarped.nii.gz").dataobj))
+
+
+def test_gre_rejects_inconsistent_header_sampling_before_reorientation(
+    tmp_path: Path,
+) -> None:
+    paths = {}
+    for name in ("magnitude", "field", "b0", "magnitude_mask", "b0_mask"):
+        image = nib.Nifti1Image(np.ones((5, 6, 7), dtype=np.float32), np.diag([-2., 2., 2., 1.]))
+        if name == "field":
+            image.header.set_zooms((3., 2., 2.))
+        paths[name] = tmp_path / f"{name}.nii.gz"
+        nib.save(image, paths[name])
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="header pixdim"):
+        run_fieldmap_nifti(
+            paths["magnitude"], paths["field"], paths["b0"], output,
+            dwell_milliseconds=.5, phase_encoding_direction="x",
+            magnitude_mask_file=paths["magnitude_mask"], b0_mask_file=paths["b0_mask"],
+        )
+    assert not output.exists()
 
 
 def test_direction_shift_and_world_displacement_contract() -> None:

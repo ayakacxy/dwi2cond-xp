@@ -4,6 +4,41 @@
 
 [Documentation](README.md) · [Project home](../../README.md)
 
+## v0.4.0 validation — 2026-10-14
+
+The local release gate passed with **955 unique tests and no skips**: the
+main batch passed 942 tests, a separately executed ordered-evaluator regression
+added one passing case, and the montage batch passed 12. The focused case was
+included in the completed unit coverage data before aggregation and remains in
+the test tree for normal CI collection. Configured real FSL and SimNIBS probes
+were enabled. The main batch reported 12 fixture-related SimNIBS `UserWarning`
+messages; this is not a warning-free result.
+
+`python scripts/run_coverage.py` completed successfully with **15,363/15,363
+executable statements covered (100.00%)**. Coverage used isolated cold Numba
+compilation caches with `NUMBA_JIT_COVERAGE=1`, combined with three real
+synthetic TOPUP, EDDY and FNIRT CLI end-to-end runs. The 100% statement threshold
+and source scope were retained; statement coverage does not establish complete
+branch coverage or correctness for arbitrary inputs.
+
+The 36 device-free CUDA tests exercise backend mathematics and error handling;
+they do not substitute for execution on a CUDA device. The separately completed
+Linux/RTX 2080 Ti CPU/GPU end-to-end comparison is documented in
+[Benchmarks](BENCHMARKS.md); it validates the recorded input and processing boundary.
+No other-platform GPU certification or new complete real-subject FEM run is
+inferred from these checks.
+
+The release checks also passed Ruff, version synchronization, Markdown links
+and source-manifest validation. The runtime dependency audit inspected 19
+packages and found no known vulnerabilities in the audit database on this date.
+Remote platform/security CI and public distribution checks are separate release
+steps; the local gate does not replace them.
+
+## Historical v0.3.0 validation
+
+The full record below retains the v0.3.0 results and their earlier experimental
+boundaries; those counts and numerical values are not new v0.4.0 measurements.
+
 The revised `v0.3.0` release was validated against algorithm baseline commit
 `ae5a6a73f9f475cb51355af085f7832771cf8d77`. A tagged documentation or
 release-metadata descendant does not change that scientific baseline. With
@@ -13,7 +48,7 @@ tests, completed `12 passed` in the montage batch, exercised all three real
 synthetic TOPUP/EDDY/FNIRT CLI paths, and covered `13,663/13,663` executable
 statements (`100.00%`).
 
-## Evidence levels
+### Evidence levels
 
 The project uses three evidence levels so a valid older experiment is not
 mistaken for a release rerun:
@@ -27,7 +62,7 @@ mistaken for a release rerun:
   machine boundary. It supports engineering history, not a current release-wide
   speed claim.
 
-## Method-to-evidence map
+### Method-to-evidence map
 
 | Method | Strongest evidence | Result supported | Important boundary |
 | --- | --- | --- | --- |
@@ -39,7 +74,7 @@ mistaken for a release rerun:
 | Fixed-montage FEM composition | Release construction tests and real SimNIBS 4.6 `SESSION._prepare()`; earlier four-mode solve | Explicit mesh, m2m, solver, cache identity, output, and strict-mask behavior are supported. | The final remediation did not rerun the complete HCP raw-DWI-to-FEM chain or the solver. |
 | Lead-field interface | Release unit and interface tests | HDF5 axes, reference-electrode convention, NumPy export, and manifest fields are supported. | No completed full-subject all-electrode run is claimed. |
 
-## Automated and release checks
+### Automated and release checks
 
 Tests cover gradient conventions, weighted fitting, invalid-input policies, the
 fixed legacy/GRE/TOPUP/EDDY branches, linear and nonlinear registration, tensor
@@ -55,7 +90,7 @@ published wheel, sdist, CycloneDX SBOM, and checksum file were downloaded again;
 their SHA-256 values, isolated wheel import/CLI, and GitHub build provenance were
 verified independently.
 
-## Current numerical references
+### Current numerical references
 
 The [v0.2.0 algorithm audit](V0.2.0_ALGORITHM_AUDIT_REPORT_2026-08-25.md)
 records the workflow and numerical defects that motivated the correctness
@@ -87,7 +122,7 @@ and no others; mask-interior corrected-DWI and downstream-tensor relative L2
 errors were `0.0035352` and `0.0060714`. These fixture results support the fixed
 branches exercised by the final check.
 
-## Earlier real-data evidence
+### Earlier real-data evidence
 
 Earlier validation used one private HCP subject. Of 881,299 masked voxels,
 881,194 were valid; 105 invalid voxels were zeroed and recorded. On the selected b0+b1000 DTI
@@ -113,7 +148,7 @@ relative L2 `6.28e-9`. This establishes that the four-mode workflow has complete
 on a real subject; it does not assert that the final tag reran the solver after
 the last FEM composition and cache-identity changes.
 
-## Scope of the evidence
+### Scope of the evidence
 
 No HCP data or subject derivative is public. Real-data evidence is dominated by
 one private subject, so population-level generalization is not claimed. The

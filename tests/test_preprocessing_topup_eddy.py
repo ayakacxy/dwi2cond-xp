@@ -17,9 +17,11 @@ def _nifti(path: Path, values: np.ndarray) -> None:
     nib.save(nib.Nifti1Image(np.asarray(values, dtype=np.float32), np.eye(4)), path)
 
 
+@pytest.mark.parametrize("component_mode", ["physical", "simnibs46-literal"])
 def test_topup_eddy_uses_reverse_4d_and_corrected_b0_mask(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    component_mode: str,
 ) -> None:
     dwi = tmp_path / "dwi.nii.gz"
     reverse = tmp_path / "reverse.nii.gz"
@@ -57,6 +59,8 @@ def test_topup_eddy_uses_reverse_4d_and_corrected_b0_mask(
 
     def fake_eddy(data, _bvals, _bvecs, mask, output, **kwargs):
         seen["eddy_data"] = Path(data)
+        seen["eddy_bvecs"] = Path(_bvecs)
+        seen["component_mode"] = kwargs["component_mode"]
         seen["eddy_mask"] = Path(mask)
         seen["eddy_field"] = Path(kwargs["susceptibility_field_file"])
         output = Path(output)
@@ -78,6 +82,7 @@ def test_topup_eddy_uses_reverse_4d_and_corrected_b0_mask(
         readout_seconds=0.05,
         phase_encoding_direction="y-",
         workers=8,
+        component_mode=component_mode,
         progress=lambda phase, done, total: progress.append((phase, done, total)),
     )
 
@@ -86,6 +91,9 @@ def test_topup_eddy_uses_reverse_4d_and_corrected_b0_mask(
     assert seen["bet_source"] == output / "topup_preparation/topup_corrected_b0.nii.gz"
     assert seen["eddy_mask"] == output / "topup_preparation/topup_corrected_b0_brain_mask.nii.gz"
     assert seen["eddy_field"] == output / "topup/field_hz.nii.gz"
+    assert seen["eddy_data"] == dwi
+    assert seen["eddy_bvecs"] == bvecs
+    assert seen["component_mode"] == component_mode
     assert report["reverse_phase_encoding_volumes"] == 2
     assert json.loads((output / "topup_eddy_qa.json").read_text())["status"] == "completed"
     assert ("forward_b0_mean", 0, 1) in progress
@@ -113,6 +121,24 @@ def test_topup_eddy_rejects_three_dimensional_reverse_input(tmp_path: Path) -> N
             readout_seconds=0.05,
             phase_encoding_direction="y",
         )
+
+
+def test_topup_eddy_rejects_original_inconsistent_header_before_preparation(
+    tmp_path: Path,
+) -> None:
+    for name in ("dwi", "reverse"):
+        image = nib.Nifti1Image(np.ones((5, 6, 7, 4), dtype=np.float32), np.diag([-2., 2., 2., 1.]))
+        if name == "reverse":
+            image.header.set_zooms((3., 2., 2., 1.))
+        nib.save(image, tmp_path / f"{name}.nii.gz")
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="header pixdim"):
+        module.run_topup_eddy_nifti(
+            tmp_path / "dwi.nii.gz", tmp_path / "bvals", tmp_path / "bvecs",
+            tmp_path / "reverse.nii.gz", output, readout_seconds=.05,
+            phase_encoding_direction="x",
+        )
+    assert not output.exists()
 
 
 def test_corrected_pair_must_have_exactly_two_volumes(tmp_path: Path) -> None:

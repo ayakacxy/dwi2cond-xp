@@ -10,12 +10,13 @@ from typing import Final
 
 import numpy as np
 from numba import get_num_threads, njit, prange, set_num_threads
-from scipy.sparse import bmat, csc_matrix, csr_matrix, hstack, tril
+from scipy.sparse import bmat, csc_matrix, csr_matrix, hstack, kron, tril
 
 from ._numba import set_available_numba_threads
 from .fnirt_topology import fsl_constrain_topology, fsl_good_fft_size
 from .topup import (
     _spline_jte_fsl_order,
+    _spline_row_support,
     bending_energy,
     bending_energy_hessian,
     cubic_spline_value,
@@ -26,6 +27,9 @@ from .topup import (
     spline_design_matrix,
 )
 from .transforms import fsl_voxel_to_scaled_mm
+
+
+_SplineHessianBuilder = Callable[..., tuple[csc_matrix, ...]]
 
 
 @dataclass(frozen=True)
@@ -174,7 +178,7 @@ def _sample_trilinear_value_fsl(
     return np.float32(np.float32(temp6 - temp5) * dz + temp5)
 
 
-@njit(cache=True)
+@njit(cache=True, parallel=True)
 def _warp_fnirt_fsl_order(
     moving: np.ndarray,
     moving_mask: np.ndarray,
@@ -184,7 +188,7 @@ def _warp_fnirt_fsl_order(
     displacement: np.ndarray,
     calculate_derivatives: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Pull moving data, derivatives, and masks in FSL's voxel loop order."""
+    """并行独立体素并按连续输出访问，保留每体素的 FSL 插值算术。"""
 
     nx, ny, nz = reference_mask.shape
     values = np.empty((nx, ny, nz), dtype=np.float32)
@@ -193,9 +197,9 @@ def _warp_fnirt_fsl_order(
     data_mask = np.empty((nx, ny, nz), dtype=np.bool_)
     warped_mask = np.empty((nx, ny, nz), dtype=np.bool_)
     total_mask = np.empty((nx, ny, nz), dtype=np.bool_)
-    for z in range(nz):
+    for x in prange(nx):
         for y in range(ny):
-            for x in range(nx):
+            for z in range(nz):
                 float_x = np.float32(x)
                 float_y = np.float32(y)
                 float_z = np.float32(z)
@@ -896,6 +900,57 @@ def _fnirt_intensity_gradient_images_fsl_order(
     return weighted_reference, global_gradient
 
 
+@njit(cache=True, parallel=True, fastmath=False)
+def _fnirt_displacement_jte_values(images, mask, basis_x, basis_y, basis_z):
+    """三个独立累加器共享支持与权重，保留各分量的 z/y/x 规约。"""
+
+    first_x, last_x = _spline_row_support(basis_x.T)
+    first_y, last_y = _spline_row_support(basis_y.T)
+    first_z, last_z = _spline_row_support(basis_z.T)
+    shape = (basis_x.shape[1], basis_y.shape[1], basis_z.shape[1])
+    result = np.zeros(shape + (3,), dtype=np.float64)
+    for coefficient in prange(shape[0] * shape[1] * shape[2]):
+        cx = coefficient % shape[0]
+        cy = (coefficient // shape[0]) % shape[1]
+        cz = coefficient // (shape[0] * shape[1])
+        value_x = 0.0
+        value_y = 0.0
+        value_z = 0.0
+        for z in range(first_z[cz], last_z[cz]):
+            weight_z = basis_z[z, cz]
+            if weight_z == 0.0:
+                continue
+            for y in range(first_y[cy], last_y[cy]):
+                weight_zy = weight_z * basis_y[y, cy]
+                if weight_zy == 0.0:
+                    continue
+                for x in range(first_x[cx], last_x[cx]):
+                    if mask[x, y, z]:
+                        weight = basis_x[x, cx] * weight_zy
+                        value_x += weight * float(images[x, y, z, 0])
+                        value_y += weight * float(images[x, y, z, 1])
+                        value_z += weight * float(images[x, y, z, 2])
+        result[cx, cy, cz, 0] = value_x
+        result[cx, cy, cz, 1] = value_y
+        result[cx, cy, cz, 2] = value_z
+    return result
+
+
+def _fnirt_displacement_jte(difference, derivatives, mask, basis_x, basis_y, basis_z):
+    """先按原 float32 乘法生成数据；非有限乘积沿用原投影传播规则。"""
+
+    images = np.multiply(difference[..., None], derivatives, dtype=np.float32)
+    if not np.all(np.isfinite(images)):
+        return np.stack(
+            [
+                _spline_jte_fsl_order(images[..., component], mask, basis_x, basis_y, basis_z)
+                for component in range(3)
+            ],
+            axis=3,
+        )
+    return _fnirt_displacement_jte_values(images, mask, basis_x, basis_y, basis_z)
+
+
 def evaluate_fnirt_gradient(
     level_images: FnirtLevelImages,
     reference_affine: np.ndarray,
@@ -973,16 +1028,13 @@ def evaluate_fnirt_gradient(
         level_images.reference_voxel_sizes_mm,
         displacement_knot_spacing,
     )
+    data_gradients = _fnirt_displacement_jte(
+        difference, cost.warped_moving.derivatives_per_mm,
+        mask, *displacement_basis,
+    )
     displacement_parts = []
     for component in range(3):
-        data_image = np.multiply(
-            difference,
-            cost.warped_moving.derivatives_per_mm[..., component],
-            dtype=np.float32,
-        )
-        data_gradient = _spline_jte_fsl_order(
-            data_image, mask, *displacement_basis
-        ).reshape(-1, order="F")
+        data_gradient = data_gradients[..., component].reshape(-1, order="F")
         regularization_gradient = displacement_hessian @ coefficients[
             ..., component
         ].reshape(-1, order="F")
@@ -1455,6 +1507,21 @@ def _symmetric_spline_lower_pattern(
     return _build_symmetric_spline_lower_pattern(coefficient_shape)
 
 
+@njit(cache=True, inline="always")
+def _spline_support_lower_bound(
+    indices: np.ndarray, start: int, stop: int, voxel: int
+) -> int:
+    """跳过有序支持域中小于另一支持域首体素的索引。"""
+
+    while start < stop:
+        middle = start + (stop - start) // 2
+        if indices[middle] < voxel:
+            start = middle + 1
+        else:
+            stop = middle
+    return start
+
+
 @njit(cache=True, parallel=True)
 def _symmetric_spline_jtj_values_fsl_order(
     basis_data: np.ndarray,
@@ -1477,6 +1544,17 @@ def _symmetric_spline_jtj_values_fsl_order(
                 row_position = basis_indptr[row]
                 row_stop = basis_indptr[row + 1]
                 column_position = column_start
+                if column_position < column_stop and row_position < row_stop:
+                    column_voxel = basis_indices[column_position]
+                    row_voxel = basis_indices[row_position]
+                    if column_voxel < row_voxel:
+                        column_position = _spline_support_lower_bound(
+                            basis_indices, column_position, column_stop, row_voxel
+                        )
+                    elif row_voxel < column_voxel:
+                        row_position = _spline_support_lower_bound(
+                            basis_indices, row_position, row_stop, column_voxel
+                        )
                 value0 = 0.0
                 value1 = 0.0
                 value2 = 0.0
@@ -1517,6 +1595,17 @@ def _symmetric_spline_jtj_values_fsl_order(
                 row_position = basis_indptr[row]
                 row_stop = basis_indptr[row + 1]
                 column_position = column_start
+                if column_position < column_stop and row_position < row_stop:
+                    column_voxel = basis_indices[column_position]
+                    row_voxel = basis_indices[row_position]
+                    if column_voxel < row_voxel:
+                        column_position = _spline_support_lower_bound(
+                            basis_indices, column_position, column_stop, row_voxel
+                        )
+                    elif row_voxel < column_voxel:
+                        row_position = _spline_support_lower_bound(
+                            basis_indices, row_position, row_stop, column_voxel
+                        )
                 value = 0.0
                 while column_position < column_stop and row_position < row_stop:
                     column_voxel = basis_indices[column_position]
@@ -1541,6 +1630,17 @@ def _symmetric_spline_jtj_values_fsl_order(
             row_position = basis_indptr[row]
             row_stop = basis_indptr[row + 1]
             column_position = column_start
+            if column_position < column_stop and row_position < row_stop:
+                column_voxel = basis_indices[column_position]
+                row_voxel = basis_indices[row_position]
+                if column_voxel < row_voxel:
+                    column_position = _spline_support_lower_bound(
+                        basis_indices, column_position, column_stop, row_voxel
+                    )
+                elif row_voxel < column_voxel:
+                    row_position = _spline_support_lower_bound(
+                        basis_indices, row_position, row_stop, column_voxel
+                    )
             for block in range(weights.shape[0]):
                 values[output_index, block] = 0.0
             while column_position < column_stop and row_position < row_stop:
@@ -1602,6 +1702,242 @@ def _symmetric_spline_jtj_blocks(
     return tuple(blocks)
 
 
+@lru_cache(maxsize=24)
+def _spline_axis_support(
+    field_size: int, knot_spacing: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """缓存固定一维基底及其连续非零支持域，不包含动态掩膜。"""
+
+    basis = np.ascontiguousarray(spline_design_matrix(field_size, knot_spacing).T)
+    bounds = np.zeros((basis.shape[0], 2), dtype=np.int64)
+    for coefficient in range(basis.shape[0]):
+        indices = np.flatnonzero(basis[coefficient] != 0.0)
+        if indices.size:
+            bounds[coefficient] = (indices[0], indices[-1] + 1)
+    return basis, bounds
+
+
+@lru_cache(maxsize=24)
+def _spline_support_output_pattern(
+    field_shape: tuple[int, int, int],
+    left_spacing: tuple[int, int, int],
+    right_spacing: tuple[int, int, int],
+    symmetric: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[int, int]]:
+    """缓存 x 最快的系数对结构；交叉块仅保留几何上相交的支持域。"""
+
+    if symmetric:
+        coefficient_shape = fsl_coefficient_shape(field_shape, left_spacing)
+        indptr, indices = _symmetric_spline_lower_pattern(coefficient_shape)
+        matrix_shape = (int(np.prod(coefficient_shape)),) * 2
+    else:
+        axes = []
+        for size, left, right in zip(field_shape, left_spacing, right_spacing, strict=True):
+            left_bounds = _spline_axis_support(size, left)[1]
+            right_bounds = _spline_axis_support(size, right)[1]
+            overlap = np.maximum(left_bounds[:, 0, None], right_bounds[None, :, 0]) < (
+                np.minimum(left_bounds[:, 1, None], right_bounds[None, :, 1])
+            )
+            axes.append(csc_matrix(overlap))
+        pattern = kron(axes[2], kron(axes[1], axes[0], format="csc"), format="csc")
+        indptr, indices, matrix_shape = pattern.indptr, pattern.indices, pattern.shape
+    columns = np.repeat(np.arange(indptr.size - 1, dtype=np.int32), np.diff(indptr))
+    return indptr, indices, columns, matrix_shape
+
+
+@njit(cache=True, parallel=True)
+def _direct_spline_jtj_values(
+    left_x: np.ndarray, left_y: np.ndarray, left_z: np.ndarray,
+    right_x: np.ndarray, right_y: np.ndarray, right_z: np.ndarray,
+    left_bounds_x: np.ndarray, left_bounds_y: np.ndarray, left_bounds_z: np.ndarray,
+    right_bounds_x: np.ndarray, right_bounds_y: np.ndarray, right_bounds_z: np.ndarray,
+    selected: np.ndarray, integral: np.ndarray, weights: np.ndarray,
+    rows: np.ndarray, columns: np.ndarray,
+    left_shape: tuple[int, int, int], right_shape: tuple[int, int, int],
+    field_shape: tuple[int, int, int],
+) -> np.ndarray:
+    """直接访问支持交集，保留原 z/y/x 顺序和每项乘加括号。"""
+
+    count = weights.shape[0]
+    values = np.empty((rows.size, count), dtype=np.float64)
+    nx, ny, _ = field_shape
+    lx, ly, _ = left_shape
+    rx, ry, _ = right_shape
+    for entry in prange(rows.size):
+        row, column = rows[entry], columns[entry]
+        ax, ay, az = row % lx, (row // lx) % ly, row // (lx * ly)
+        bx, by, bz = column % rx, (column // rx) % ry, column // (rx * ry)
+        x0 = max(left_bounds_x[ax, 0], right_bounds_x[bx, 0])
+        x1 = min(left_bounds_x[ax, 1], right_bounds_x[bx, 1])
+        y0 = max(left_bounds_y[ay, 0], right_bounds_y[by, 0])
+        y1 = min(left_bounds_y[ay, 1], right_bounds_y[by, 1])
+        z0 = max(left_bounds_z[az, 0], right_bounds_z[bz, 0])
+        z1 = min(left_bounds_z[az, 1], right_bounds_z[bz, 1])
+        v0, v1, v2, v3, v4, v5 = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        for block in range(count):
+            values[entry, block] = 0.0
+        if x0 >= x1 or y0 >= y1 or z0 >= z1:
+            continue
+        occupied = (
+            integral[x1, y1, z1] - integral[x0, y1, z1]
+            - integral[x1, y0, z1] - integral[x1, y1, z0]
+            + integral[x0, y0, z1] + integral[x0, y1, z0]
+            + integral[x1, y0, z0] - integral[x0, y0, z0]
+        )
+        if occupied == 0:
+            continue
+        for z in range(z0, z1):
+            lz, rz = left_z[az, z], right_z[bz, z]
+            for y in range(y0, y1):
+                lyv, ryv = left_y[ay, y], right_y[by, y]
+                offset = (z * ny + y) * nx
+                for x in range(x0, x1):
+                    voxel = offset + x
+                    if not selected[voxel]:
+                        continue
+                    # 原 CSR 基底为 bz*(by*bx)，不得重排括号或体素规约顺序。
+                    row_basis = lz * (lyv * left_x[ax, x])
+                    column_basis = rz * (ryv * right_x[bx, x])
+                    if count == 6:
+                        v0 += (column_basis * weights[0, voxel]) * row_basis
+                        v1 += (column_basis * weights[1, voxel]) * row_basis
+                        v2 += (column_basis * weights[2, voxel]) * row_basis
+                        v3 += (column_basis * weights[3, voxel]) * row_basis
+                        v4 += (column_basis * weights[4, voxel]) * row_basis
+                        v5 += (column_basis * weights[5, voxel]) * row_basis
+                    elif count == 3:
+                        v0 += (column_basis * weights[0, voxel]) * row_basis
+                        v1 += (column_basis * weights[1, voxel]) * row_basis
+                        v2 += (column_basis * weights[2, voxel]) * row_basis
+                    elif count == 1:
+                        v0 += (column_basis * weights[0, voxel]) * row_basis
+                    else:
+                        for block in range(count):
+                            values[entry, block] += (column_basis * weights[block, voxel]) * row_basis
+        if count == 6:
+            values[entry, 0], values[entry, 1], values[entry, 2] = v0, v1, v2
+            values[entry, 3], values[entry, 4], values[entry, 5] = v3, v4, v5
+        elif count == 3:
+            values[entry, 0], values[entry, 1], values[entry, 2] = v0, v1, v2
+        elif count == 1:
+            values[entry, 0] = v0
+    return values.T
+
+
+def _direct_spline_jtj_blocks(
+    field_shape: tuple[int, int, int],
+    left_spacing: tuple[int, int, int],
+    right_spacing: tuple[int, int, int],
+    selected: np.ndarray,
+    voxel_weights: tuple[np.ndarray, ...],
+    workers: int,
+    *,
+    symmetric: bool = False,
+) -> tuple[csc_matrix, ...]:
+    """由固定支持域直接组装同一 JᵀWJ，保持原浮点规约与线程预算。"""
+
+    if not voxel_weights:
+        return ()
+    if not isinstance(workers, (int, np.integer)) or workers < 1:
+        raise ValueError("workers must be a positive integer")
+    if symmetric and left_spacing != right_spacing:
+        raise ValueError("symmetric spline products require matching knot spacing")
+    selection = np.asarray(selected, dtype=bool)
+    voxel_count = int(np.prod(field_shape))
+    if selection.shape != (voxel_count,):
+        raise ValueError("selected mask must match the flattened field")
+    selected_count = int(np.count_nonzero(selection))
+    dtype = np.float32 if symmetric else np.float64
+    weights = np.zeros((len(voxel_weights), voxel_count), dtype=dtype)
+    for block, weight in enumerate(voxel_weights):
+        values = np.asarray(weight, dtype=dtype)
+        if values.shape != (selected_count,):
+            raise ValueError("selected voxel weights must match the basis rows")
+        weights[block, selection] = values
+    integral = np.zeros(tuple(size + 1 for size in field_shape), dtype=np.int64)
+    integral[1:, 1:, 1:] = selection.reshape(field_shape, order="F")
+    for axis in range(3):
+        np.cumsum(integral, axis=axis, out=integral)
+    left = tuple(_spline_axis_support(size, spacing) for size, spacing in zip(field_shape, left_spacing, strict=True))
+    right = tuple(_spline_axis_support(size, spacing) for size, spacing in zip(field_shape, right_spacing, strict=True))
+    indptr, indices, columns, matrix_shape = _spline_support_output_pattern(
+        field_shape, left_spacing, right_spacing, symmetric
+    )
+    previous_workers = get_num_threads()
+    try:
+        set_available_numba_threads(min(workers, previous_workers))
+        block_values = _direct_spline_jtj_values(
+            *(axis[0] for axis in left), *(axis[0] for axis in right),
+            *(axis[1] for axis in left), *(axis[1] for axis in right),
+            selection, integral, weights, indices, columns,
+            fsl_coefficient_shape(field_shape, left_spacing),
+            fsl_coefficient_shape(field_shape, right_spacing), field_shape,
+        )
+    finally:
+        set_num_threads(previous_workers)
+    blocks = []
+    for value in block_values:
+        matrix = csc_matrix((value.copy(), indices.copy(), indptr.copy()), shape=matrix_shape)
+        matrix.eliminate_zeros()
+        if symmetric:
+            matrix = (matrix + tril(matrix, k=-1).T).tocsc()
+        blocks.append(matrix)
+    return tuple(blocks)
+
+
+@lru_cache(maxsize=16)
+def _spline_projection_geometry(shape, spacing):
+    """只缓存一维非零支持域，不缓存随形变变化的掩膜和权重。"""
+    axes = tuple(axis.tocsc() for axis in _spline_basis_axes(shape, spacing))
+    return tuple(
+        array for axis in axes for array in (axis.data, axis.indices, axis.indptr)
+    )
+
+
+@njit(cache=True, nogil=True, parallel=True, fastmath=False)
+def _spline_projection_kernel(values, selected, nx, ny, xd, xi, xp, yd, yi, yp, zd, zi, zp):
+    """每个系数一次遍历体素，同时更新独立列，保持原累加次序。"""
+    cx = xp.size - 1
+    cy = yp.size - 1
+    cz = zp.size - 1
+    result = np.zeros((cx * cy * cz, values.shape[1]), dtype=np.float64)
+    for coefficient in prange(result.shape[0]):
+        x = coefficient % cx
+        y = (coefficient // cx) % cy
+        z = coefficient // (cx * cy)
+        for pz in range(zp[z], zp[z + 1]):
+            for py in range(yp[y], yp[y + 1]):
+                offset = (zi[pz] * ny + yi[py]) * nx
+                for px in range(xp[x], xp[x + 1]):
+                    voxel = offset + xi[px]
+                    if selected[voxel]:
+                        # 与原稀疏基底生成的 z*(y*x) 括号及 CSC 累加次序一致。
+                        basis = zd[pz] * (yd[py] * xd[px])
+                        for column in range(values.shape[1]):
+                            result[coefficient, column] += basis * float(values[voxel, column])
+    return result
+
+
+def _spline_projection_many(values, selected, shape, spacing, workers=8):
+    """合并多列投影，避免完整三维稀疏基底及重复基底扫描。"""
+    if selected.shape != (int(np.prod(shape)),):
+        raise ValueError("selected mask must match the flattened field")
+    if not values or any(np.shape(value) != shape for value in values):
+        raise ValueError("projection weights must match the field shape")
+    packed = np.column_stack([
+        np.asarray(value).reshape(-1, order="F") for value in values
+    ])
+    previous = get_num_threads()
+    set_available_numba_threads(min(workers, previous))
+    try:
+        return _spline_projection_kernel(
+            packed, selected, shape[0], shape[1],
+            *_spline_projection_geometry(tuple(shape), tuple(spacing)),
+        )
+    finally:
+        set_num_threads(previous)
+
+
 def evaluate_fnirt_hessian(
     level_images: FnirtLevelImages,
     reference_affine: np.ndarray,
@@ -1620,9 +1956,16 @@ def evaluate_fnirt_hessian(
     _displacement_regularization: csc_matrix | None = None,
     _bias_basis: csr_matrix | None = None,
     _bias_regularization: csc_matrix | None = None,
+    _hessian_builder: _SplineHessianBuilder | None = None,
 ) -> FnirtHessianEvaluation:
     """Evaluate FSL's sparse Gauss-Newton Hessian block construction."""
 
+    if _hessian_builder is not None and (
+        _displacement_basis is not None or _bias_basis is not None
+    ):
+        raise ValueError(
+            "CUDA Hessian does not support explicitly supplied spline bases"
+        )
     gradient = _gradient_evaluation
     if gradient is None:
         gradient = evaluate_fnirt_gradient(
@@ -1643,16 +1986,23 @@ def evaluate_fnirt_hessian(
     if not isinstance(workers, (int, np.integer)) or workers < 1:
         raise ValueError("workers must be a positive integer")
     selected = np.asarray(mask, dtype=bool).reshape(-1, order="F")
-    selected_displacement_basis = (
-        _selected_spline_basis_sparse(
-            level_images.reference.shape,
-            displacement_knot_spacing,
-            selected,
-            workers,
-        )
-        if _displacement_basis is None
-        else _displacement_basis[selected]
+    # 直接后端只需一维支持域；显式基底及单线程参考保留原路径。
+    direct_projection = (
+        (_hessian_builder is not None or workers > 1)
+        and _displacement_basis is None and _bias_basis is None
     )
+    selected_displacement_basis = None
+    if not direct_projection:
+        selected_displacement_basis = (
+            _selected_spline_basis_sparse(
+                level_images.reference.shape,
+                displacement_knot_spacing,
+                selected,
+                workers,
+            )
+            if _displacement_basis is None
+            else _displacement_basis[selected]
+        )
     partials = tuple(
         np.asarray(
             cost.warped_moving.derivatives_per_mm[..., component],
@@ -1686,6 +2036,43 @@ def evaluate_fnirt_hessian(
         for row, column in block_indices
     )
 
+    def build_same_basis_blocks(
+        basis: csr_matrix | None,
+        weights: tuple[np.ndarray, ...],
+        spacing: tuple[int, int, int],
+        supplied_basis: bool,
+    ) -> tuple[csc_matrix, ...]:
+        """按显式后端组装，默认 CPU 保留单线程及传入基底的原路径。"""
+
+        if _hessian_builder is not None:
+            return _hessian_builder(
+                level_images.reference.shape,
+                spacing,
+                spacing,
+                selected,
+                weights,
+                workers,
+                symmetric=True,
+            )
+        if workers == 1:
+            return _selected_sparse_jtj_blocks(basis, basis, weights, 1)
+        if supplied_basis:
+            return _symmetric_spline_jtj_blocks(
+                basis,
+                weights,
+                fsl_coefficient_shape(level_images.reference.shape, spacing),
+                workers,
+            )
+        return _direct_spline_jtj_blocks(
+            level_images.reference.shape,
+            spacing,
+            spacing,
+            selected,
+            weights,
+            workers,
+            symmetric=True,
+        )
+
     def assemble_displacement_hessian(
         blocks: tuple[csc_matrix, ...],
     ) -> csc_matrix:
@@ -1701,22 +2088,11 @@ def evaluate_fnirt_hessian(
         return bmat(displacement_blocks, format="csc")
 
     if not level.estimate_intensity:
-        built_blocks = (
-            _selected_sparse_jtj_blocks(
-                selected_displacement_basis,
-                selected_displacement_basis,
-                displacement_weights,
-                1,
-            )
-            if workers == 1
-            else _symmetric_spline_jtj_blocks(
-                selected_displacement_basis,
-                displacement_weights,
-                fsl_coefficient_shape(
-                    level_images.reference.shape, displacement_knot_spacing
-                ),
-                workers,
-            )
+        built_blocks = build_same_basis_blocks(
+            selected_displacement_basis,
+            displacement_weights,
+            displacement_knot_spacing,
+            _displacement_basis is not None,
         )
         displacement_hessian = assemble_displacement_hessian(built_blocks)
         empty = csc_matrix((displacement_hessian.shape[0], 0))
@@ -1736,16 +2112,18 @@ def evaluate_fnirt_hessian(
         np.asarray(intensity_mapping.bias_field, dtype=np.float32),
         np.asarray(intensity_mapping.global_coefficients, dtype=np.float64),
     )
-    selected_bias_basis = (
-        _selected_spline_basis_sparse(
-            level_images.reference.shape,
-            intensity_mapping.bias_knot_spacing,
-            selected,
-            workers,
+    selected_bias_basis = None
+    if not direct_projection:
+        selected_bias_basis = (
+            _selected_spline_basis_sparse(
+                level_images.reference.shape,
+                intensity_mapping.bias_knot_spacing,
+                selected,
+                workers,
+            )
+            if _bias_basis is None
+            else _bias_basis[selected]
         )
-        if _bias_basis is None
-        else _bias_basis[selected]
-    )
     bias_regularization = (
         bending_energy_hessian(
             level_images.reference.shape,
@@ -1777,6 +2155,7 @@ def evaluate_fnirt_hessian(
         dtype=np.float32,
     )
     local_global_columns = []
+    local_global_weights = []
     reference_power = np.ones_like(reference)
     for order in range(global_derivatives.shape[1]):
         weight = (
@@ -1784,56 +2163,63 @@ def evaluate_fnirt_hessian(
             if order == 0
             else np.multiply(weighted_bias, reference_power, dtype=np.float32)
         )
-        local_global_columns.append(
-            selected_bias_basis.T
-            @ weight.reshape(-1, order="F")[selected].astype(np.float64)
-        )
+        if direct_projection:
+            local_global_weights.append(weight)
+        else:
+            local_global_columns.append(
+                selected_bias_basis.T
+                @ weight.reshape(-1, order="F")[selected].astype(np.float64)
+            )
         if order < global_derivatives.shape[1] - 1:
             reference_power = np.multiply(reference_power, reference, dtype=np.float32)
-    local_global = csc_matrix(np.column_stack(local_global_columns))
+    local_global = csc_matrix(
+        _spline_projection_many(local_global_weights, selected, reference.shape,
+                                intensity_mapping.bias_knot_spacing, workers)
+        if direct_projection else np.column_stack(local_global_columns)
+    )
     cross_weights = tuple(
         np.multiply(partial, weighted_reference, dtype=np.float32).reshape(
             -1, order="F"
         )[selected]
         for partial in partials
     )
-    built_blocks = (
-        _selected_sparse_jtj_blocks(
-            selected_displacement_basis,
-            selected_displacement_basis,
-            displacement_weights,
-            1,
-        )
-        if workers == 1
-        else _symmetric_spline_jtj_blocks(
-            selected_displacement_basis,
-            displacement_weights,
-            fsl_coefficient_shape(
-                level_images.reference.shape, displacement_knot_spacing
-            ),
-            workers,
-        )
-    )
-    local_hessian = (
-        _selected_sparse_jtj_blocks(
-            selected_bias_basis,
-            selected_bias_basis,
-            (local_weights,),
-            1,
-        )[0]
-        if workers == 1
-        else _symmetric_spline_jtj_blocks(
-            selected_bias_basis,
-            (local_weights,),
-            intensity_mapping.bias_coefficients.shape,
-            workers,
-        )[0]
-    )
-    local_cross_blocks = _selected_sparse_jtj_blocks(
+    built_blocks = build_same_basis_blocks(
         selected_displacement_basis,
+        displacement_weights,
+        displacement_knot_spacing,
+        _displacement_basis is not None,
+    )
+    local_hessian = build_same_basis_blocks(
         selected_bias_basis,
-        cross_weights,
-        workers,
+        (local_weights,),
+        intensity_mapping.bias_knot_spacing,
+        _bias_basis is not None,
+    )[0]
+    local_cross_blocks = (
+        _hessian_builder(
+            level_images.reference.shape,
+            displacement_knot_spacing,
+            intensity_mapping.bias_knot_spacing,
+            selected,
+            cross_weights,
+            workers,
+        )
+        if _hessian_builder is not None
+        else _selected_sparse_jtj_blocks(
+            selected_displacement_basis,
+            selected_bias_basis,
+            cross_weights,
+            workers,
+        )
+        if workers == 1 or _displacement_basis is not None or _bias_basis is not None
+        else _direct_spline_jtj_blocks(
+            level_images.reference.shape,
+            displacement_knot_spacing,
+            intensity_mapping.bias_knot_spacing,
+            selected,
+            cross_weights,
+            workers,
+        )
     )
     displacement_hessian = assemble_displacement_hessian(built_blocks)
     local_hessian = (
@@ -1847,6 +2233,7 @@ def evaluate_fnirt_hessian(
         format="csc",
     )
     cross_rows = []
+    global_cross_weights = []
     for partial, local_cross_block in zip(partials, local_cross_blocks, strict=True):
         local_cross = -local_cross_block
         global_cross_columns = []
@@ -1859,16 +2246,26 @@ def evaluate_fnirt_hessian(
                 else np.multiply(bias_float, reference_power, dtype=np.float32)
             )
             weight = -np.multiply(partial, bias_power, dtype=np.float32)
-            global_cross_columns.append(
-                selected_displacement_basis.T
-                @ weight.reshape(-1, order="F")[selected].astype(np.float64)
-            )
+            if direct_projection:
+                global_cross_weights.append(weight)
+            else:
+                global_cross_columns.append(
+                    selected_displacement_basis.T
+                    @ weight.reshape(-1, order="F")[selected].astype(np.float64)
+                )
             if order < global_derivatives.shape[1] - 1:
                 reference_power = np.multiply(
                     reference_power, reference, dtype=np.float32
                 )
-        global_cross = csc_matrix(np.column_stack(global_cross_columns))
+        global_cross = None if direct_projection else csc_matrix(np.column_stack(global_cross_columns))
         cross_rows.append([local_cross, global_cross])
+    if direct_projection:
+        projected = _spline_projection_many(
+            global_cross_weights, selected, reference.shape, displacement_knot_spacing, workers,
+        )
+        columns = global_derivatives.shape[1]
+        for component in range(3):
+            cross_rows[component][1] = csc_matrix(projected[:, component * columns:(component + 1) * columns])
     cross_hessian = scale * bmat(cross_rows, format="csc")
     hessian = bmat(
         [
@@ -1900,6 +2297,7 @@ class _FnirtLevelObjective:
         displacement_knot_spacing: tuple[int, int, int],
         bias_regularization_weight: float,
         workers: int = 1,
+        _hessian_builder: _SplineHessianBuilder | None = None,
     ) -> None:
         self.level_images = level_images
         self.reference_affine = reference_affine
@@ -1910,6 +2308,7 @@ class _FnirtLevelObjective:
         self.displacement_knot_spacing = displacement_knot_spacing
         self.bias_regularization_weight = bias_regularization_weight
         self.workers = workers
+        self._hessian_builder = _hessian_builder
         self.displacement_shape = fsl_coefficient_shape(
             level_images.reference.shape, displacement_knot_spacing
         )
@@ -1950,17 +2349,15 @@ class _FnirtLevelObjective:
             coefficients[..., component] = values[
                 start : start + self.displacement_size
             ].reshape(self.displacement_shape, order="F")
-        displacement = np.stack(
-            [
-                expand_spline_coefficients(
-                    coefficients[..., component],
-                    self.level_images.reference.shape,
-                    self.displacement_knot_spacing,
-                )
-                for component in range(3)
-            ],
-            axis=3,
+        displacement_basis = tuple(
+            spline_design_matrix(size, spacing)
+            for size, spacing in zip(
+                self.level_images.reference.shape,
+                self.displacement_knot_spacing,
+                strict=True,
+            )
         )
+        displacement = _expand_fnirt_displacement_values(coefficients, *displacement_basis)
         if self.level.estimate_intensity:
             bias_start = 3 * self.displacement_size
             bias_coefficients = values[
@@ -2089,6 +2486,7 @@ class _FnirtLevelObjective:
             _gradient_evaluation=cached_gradient,
             _displacement_regularization=self._displacement_regularization,
             _bias_regularization=self._bias_regularization,
+            _hessian_builder=self._hessian_builder,
         )
         self._gradient_parameters = None
         self._gradient_evaluation = None
@@ -2108,6 +2506,7 @@ def optimize_fnirt_level(
     bias_regularization_weight: float = 10_000.0,
     workers: int = 1,
     progress: Callable[[str, int, int, float | None], None] | None = None,
+    _hessian_builder: _SplineHessianBuilder | None = None,
 ) -> FnirtLevelOptimization:
     """Run FSL's LM sequence for one frozen FNIRT resolution level."""
 
@@ -2125,6 +2524,7 @@ def optimize_fnirt_level(
         displacement_knot_spacing,
         bias_regularization_weight,
         workers,
+        _hessian_builder=_hessian_builder,
     )
     coefficients = (
         np.zeros(objective.displacement_shape + (3,), dtype=np.float64)
@@ -2154,6 +2554,7 @@ def optimize_fnirt_level(
         max_iterations=level.maximum_iterations,
         equation_tolerance=1.0e-3,
         equation_max_iterations=500,
+        _csr_hessian=True,
         progress=progress,
     )
     optimized_coefficients, _, optimized_mapping = objective.unpack(result.parameters)
@@ -2347,6 +2748,28 @@ def _constrain_fnirt_warpfield(
     return current, current_range
 
 
+def _make_cuda_hessian_builder() -> _SplineHessianBuilder:
+    """每次运行独立持有后端，首次 Hessian 才导入 CUDA 模块。"""
+
+    backend = None
+
+    def build_blocks(*args, **kwargs) -> tuple[csc_matrix, ...]:
+        """CPU 进程池创建之前不触发 CUDA 初始化。"""
+
+        nonlocal backend
+        if backend is None:
+            try:
+                from .fnirt_cuda import CudaHessianBackend
+            except ImportError as error:
+                raise RuntimeError(
+                    "CUDA Hessian dependencies are unavailable; no CPU fallback"
+                ) from error
+            backend = CudaHessianBackend()
+        return backend(*args, **kwargs)
+
+    return build_blocks
+
+
 def run_simnibs46_fnirt(
     reference: np.ndarray,
     moving: np.ndarray,
@@ -2358,6 +2781,48 @@ def run_simnibs46_fnirt(
     moving_mask: np.ndarray | None = None,
     workers: int = 1,
     progress: Callable[[int, str, int, int, float | None], None] | None = None,
+    hessian_device: str = "cpu",
+) -> FnirtRunResult:
+    """在指定线程上限内执行 FNIRT，并恢复调用者原来的 Numba 线程数。"""
+
+    if not isinstance(workers, (int, np.integer)) or workers < 1:
+        raise ValueError("workers must be a positive integer")
+    if hessian_device not in ("cpu", "cuda"):
+        raise ValueError("hessian_device must be cpu or cuda")
+    hessian_builder = (
+        _make_cuda_hessian_builder() if hessian_device == "cuda" else None
+    )
+    previous_workers = get_num_threads()
+    try:
+        set_available_numba_threads(workers)
+        return _run_simnibs46_fnirt(
+            reference,
+            moving,
+            reference_affine,
+            moving_affine,
+            affine_matrix,
+            reference_mask=reference_mask,
+            moving_mask=moving_mask,
+            workers=workers,
+            progress=progress,
+            _hessian_builder=hessian_builder,
+        )
+    finally:
+        set_num_threads(previous_workers)
+
+
+def _run_simnibs46_fnirt(
+    reference: np.ndarray,
+    moving: np.ndarray,
+    reference_affine: np.ndarray,
+    moving_affine: np.ndarray,
+    affine_matrix: np.ndarray,
+    *,
+    reference_mask: np.ndarray | None = None,
+    moving_mask: np.ndarray | None = None,
+    workers: int = 1,
+    progress: Callable[[int, str, int, int, float | None], None] | None = None,
+    _hessian_builder: _SplineHessianBuilder | None = None,
 ) -> FnirtRunResult:
     """Run the exact four-level FNIRT schedule used by SimNIBS 4.6."""
 
@@ -2381,7 +2846,13 @@ def run_simnibs46_fnirt(
         moving_flip = np.eye(4, dtype=np.float64)
         moving_flip[0, 0] = -1.0
         moving_flip[0, 3] = moving_values.shape[0] - 1
-        canonical = run_simnibs46_fnirt(
+        canonical_runner = (
+            run_simnibs46_fnirt if _hessian_builder is None else _run_simnibs46_fnirt
+        )
+        canonical_options = (
+            {} if _hessian_builder is None else {"_hessian_builder": _hessian_builder}
+        )
+        canonical = canonical_runner(
             (
                 np.flip(reference_values, axis=0).copy()
                 if reference_neurological
@@ -2423,6 +2894,7 @@ def run_simnibs46_fnirt(
             ),
             workers=workers,
             progress=progress,
+            **canonical_options,
         )
         if not reference_neurological:
             return canonical
@@ -2434,11 +2906,25 @@ def run_simnibs46_fnirt(
             ).copy(),
             bias_knot_spacing=canonical.intensity_mapping.bias_knot_spacing,
         )
-        public_expansion = expand_fnirt_coefficients(
-            canonical.coefficients,
+        # 两次展开使用同一 float64 系数；只翻转已算出的非线性部分。
+        public_nonlinear = np.flip(
+            canonical.expansion.nonlinear_displacement, axis=0
+        ).copy()
+        public_affine = _fnirt_affine_displacement(
             tuple(int(value) for value in reference_values.shape),
             reference_transform,
             affine,
+        )
+        public_expansion = FnirtWarpExpansion(
+            nonlinear_displacement=public_nonlinear,
+            affine_displacement=public_affine,
+            displacement=public_nonlinear + public_affine,
+            nonlinear_jacobian=np.flip(
+                canonical.expansion.nonlinear_jacobian, axis=0
+            ).copy(),
+            nonlinear_jacobian_determinant=np.flip(
+                canonical.expansion.nonlinear_jacobian_determinant, axis=0
+            ).copy(),
             knot_spacing=canonical.expansion.knot_spacing,
         )
         return FnirtRunResult(
@@ -2574,6 +3060,7 @@ def run_simnibs46_fnirt(
             initial_displacement_coefficients=coefficients,
             displacement_knot_spacing=displacement_spacing,
             workers=workers,
+            _hessian_builder=_hessian_builder,
             progress=(
                 None
                 if progress is None
@@ -2894,6 +3381,26 @@ def warp_fnirt_moving(
 
 
 @njit(cache=True)
+def _fnirt_axis_support_ranges(
+    basis: np.ndarray, derivative: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """保存函数/导数支持域边界，保留区间内原系数遍历顺序。"""
+
+    starts = np.empty(basis.shape[0], dtype=np.int64)
+    stops = np.empty(basis.shape[0], dtype=np.int64)
+    for voxel in range(basis.shape[0]):
+        start = basis.shape[1]
+        stop = 0
+        for coefficient in range(basis.shape[1]):
+            if basis[voxel, coefficient] != 0.0 or derivative[voxel, coefficient] != 0.0:
+                start = min(start, coefficient)
+                stop = coefficient + 1
+        starts[voxel] = start
+        stops[voxel] = stop
+    return starts, stops
+
+
+@njit(cache=True)
 def _expand_fnirt_coefficients_serial(
     coefficients: np.ndarray,
     basis_x: np.ndarray,
@@ -2903,26 +3410,29 @@ def _expand_fnirt_coefficients_serial(
     derivative_y: np.ndarray,
     derivative_z: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Fuse all independent FNIRT outputs with FSL's coefficient order."""
+    """仅遍历样条支持域，保留每体素的 FSL 系数规约顺序。"""
 
     nx, ny, nz = basis_x.shape[0], basis_y.shape[0], basis_z.shape[0]
+    starts_x, stops_x = _fnirt_axis_support_ranges(basis_x, derivative_x)
+    starts_y, stops_y = _fnirt_axis_support_ranges(basis_y, derivative_y)
+    starts_z, stops_z = _fnirt_axis_support_ranges(basis_z, derivative_z)
     field = np.empty((nx, ny, nz, 3), dtype=np.float64)
     gradient = np.empty((nx, ny, nz, 3, 3), dtype=np.float64)
     for voxel in range(nx * ny * nz):
-        voxel_x = voxel % nx
-        voxel_y = (voxel // nx) % ny
-        voxel_z = voxel // (nx * ny)
+        voxel_x = voxel // (ny * nz)
+        voxel_y = (voxel // nz) % ny
+        voxel_z = voxel % nz
         for component in range(3):
             value = 0.0
             dx = 0.0
             dy = 0.0
             dz = 0.0
-            for coefficient_z in range(coefficients.shape[2]):
+            for coefficient_z in range(starts_z[voxel_z], stops_z[voxel_z]):
                 weight_z = basis_z[voxel_z, coefficient_z]
                 dweight_z = derivative_z[voxel_z, coefficient_z]
                 if weight_z == 0.0 and dweight_z == 0.0:
                     continue
-                for coefficient_y in range(coefficients.shape[1]):
+                for coefficient_y in range(starts_y[voxel_y], stops_y[voxel_y]):
                     weight_y = basis_y[voxel_y, coefficient_y]
                     dweight_y = derivative_y[voxel_y, coefficient_y]
                     weight_zy = weight_z * weight_y
@@ -2930,7 +3440,7 @@ def _expand_fnirt_coefficients_serial(
                     dz_weight_y = dweight_z * weight_y
                     if weight_zy == 0.0 and dweight_zy == 0.0 and dz_weight_y == 0.0:
                         continue
-                    for coefficient_x in range(coefficients.shape[0]):
+                    for coefficient_x in range(starts_x[voxel_x], stops_x[voxel_x]):
                         coefficient = coefficients[
                             coefficient_x, coefficient_y, coefficient_z, component
                         ]
@@ -2948,6 +3458,33 @@ def _expand_fnirt_coefficients_serial(
     return field, gradient
 
 
+@njit(cache=True)
+def _fnirt_axis_packed_support(
+    basis: np.ndarray, derivative: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """按原系数顺序打包函数与导数的非零支持，不改变浮点值。"""
+
+    counts = np.zeros(basis.shape[0], dtype=np.int64)
+    width = 0
+    for voxel in range(basis.shape[0]):
+        for coefficient in range(basis.shape[1]):
+            if basis[voxel, coefficient] != 0.0 or derivative[voxel, coefficient] != 0.0:
+                counts[voxel] += 1
+        width = max(width, counts[voxel])
+    indices = np.zeros((basis.shape[0], width), dtype=np.int64)
+    values = np.zeros((basis.shape[0], width), dtype=np.float64)
+    derivatives = np.zeros((basis.shape[0], width), dtype=np.float64)
+    for voxel in range(basis.shape[0]):
+        position = 0
+        for coefficient in range(basis.shape[1]):
+            if basis[voxel, coefficient] != 0.0 or derivative[voxel, coefficient] != 0.0:
+                indices[voxel, position] = coefficient
+                values[voxel, position] = basis[voxel, coefficient]
+                derivatives[voxel, position] = derivative[voxel, coefficient]
+                position += 1
+    return indices, values, derivatives, counts
+
+
 @njit(cache=True, parallel=True)
 def _expand_fnirt_coefficients_parallel(
     coefficients: np.ndarray,
@@ -2958,41 +3495,45 @@ def _expand_fnirt_coefficients_parallel(
     derivative_y: np.ndarray,
     derivative_z: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Parallelize independent voxels without changing any voxel reduction."""
+    """使用打包支持域并行独立体素，保留列主序系数规约与行主序输出。"""
 
     nx, ny, nz = basis_x.shape[0], basis_y.shape[0], basis_z.shape[0]
+    xi, xb, xd, xc = _fnirt_axis_packed_support(basis_x, derivative_x)
+    yi, yb, yd, yc = _fnirt_axis_packed_support(basis_y, derivative_y)
+    zi, zb, zd, zc = _fnirt_axis_packed_support(basis_z, derivative_z)
     field = np.empty((nx, ny, nz, 3), dtype=np.float64)
     gradient = np.empty((nx, ny, nz, 3, 3), dtype=np.float64)
     for voxel in prange(nx * ny * nz):
-        voxel_x = voxel % nx
-        voxel_y = (voxel // nx) % ny
-        voxel_z = voxel // (nx * ny)
+        voxel_x = voxel // (ny * nz)
+        voxel_y = (voxel // nz) % ny
+        voxel_z = voxel % nz
         for component in range(3):
             value = 0.0
             dx = 0.0
             dy = 0.0
             dz = 0.0
-            for coefficient_z in range(coefficients.shape[2]):
-                weight_z = basis_z[voxel_z, coefficient_z]
-                dweight_z = derivative_z[voxel_z, coefficient_z]
-                if weight_z == 0.0 and dweight_z == 0.0:
-                    continue
-                for coefficient_y in range(coefficients.shape[1]):
-                    weight_y = basis_y[voxel_y, coefficient_y]
-                    dweight_y = derivative_y[voxel_y, coefficient_y]
+            for position_z in range(zc[voxel_z]):
+                coefficient_z = zi[voxel_z, position_z]
+                weight_z = zb[voxel_z, position_z]
+                dweight_z = zd[voxel_z, position_z]
+                for position_y in range(yc[voxel_y]):
+                    coefficient_y = yi[voxel_y, position_y]
+                    weight_y = yb[voxel_y, position_y]
+                    dweight_y = yd[voxel_y, position_y]
                     weight_zy = weight_z * weight_y
                     dweight_zy = weight_z * dweight_y
                     dz_weight_y = dweight_z * weight_y
                     if weight_zy == 0.0 and dweight_zy == 0.0 and dz_weight_y == 0.0:
                         continue
-                    for coefficient_x in range(coefficients.shape[0]):
+                    for position_x in range(xc[voxel_x]):
+                        coefficient_x = xi[voxel_x, position_x]
                         coefficient = coefficients[
                             coefficient_x, coefficient_y, coefficient_z, component
                         ]
-                        weight_x = basis_x[voxel_x, coefficient_x]
+                        weight_x = xb[voxel_x, position_x]
                         value += coefficient * (weight_zy * weight_x)
                         dx += coefficient * (
-                            weight_zy * derivative_x[voxel_x, coefficient_x]
+                            weight_zy * xd[voxel_x, position_x]
                         )
                         dy += coefficient * (dweight_zy * weight_x)
                         dz += coefficient * (dz_weight_y * weight_x)
@@ -3052,36 +3593,33 @@ def _fnirt_affine_displacement(
         mapping = (
             np.linalg.inv(affine_matrix) - np.eye(4, dtype=np.float64)
         ) @ sampling
-    x, y, z = np.ogrid[: reference_shape[0], : reference_shape[1], : reference_shape[2]]
-    output = np.empty(reference_shape + (3,), dtype=np.float64)
-    for component in range(3):
-        output[..., component] = (
-            mapping[component, 0] * x
-            + mapping[component, 1] * y
-            + mapping[component, 2] * z
-            + mapping[component, 3]
-        )
+    return _fnirt_affine_displacement_values(reference_shape, mapping)
+
+
+@njit(cache=True, parallel=True, fastmath=False)
+def _fnirt_affine_displacement_values(shape, mapping):
+    """融合逐体素仿射展开，保留三项乘加括号，省去广播临时数组。"""
+
+    nx, ny, nz = shape
+    output = np.empty(shape + (3,), dtype=np.float64)
+    for x in prange(nx):
+        for y in range(ny):
+            for z in range(nz):
+                for component in range(3):
+                    output[x, y, z, component] = (
+                        mapping[component, 0] * x
+                        + mapping[component, 1] * y
+                        + mapping[component, 2] * z
+                        + mapping[component, 3]
+                    )
     return output
 
 
-def expand_fnirt_coefficients(
-    coefficients: np.ndarray,
-    reference_shape: tuple[int, int, int],
-    reference_affine: np.ndarray,
-    affine_matrix: np.ndarray,
-    *,
-    knot_spacing: tuple[int, int, int] | None = None,
-    warp_resolution_mm: float = 10.0,
-    final_subsampling: int = 2,
-) -> FnirtWarpExpansion:
-    """Expand an FSL cubic coefficient warp without changing its arithmetic.
-
-    The returned dense displacement includes the inverse affine contribution
-    used by ``FnirtFileReader``.  The analytic Jacobian and determinant contain
-    only the nonlinear spline contribution, matching FNIRT ``--jout`` and
-    ``SaveJacobian``.  Tensor PPD must instead differentiate ``displacement``
-    because VECREG operates on the complete pull field.
-    """
+def _fnirt_expansion_inputs(
+    coefficients, reference_shape, reference_affine, affine_matrix,
+    knot_spacing, warp_resolution_mm, final_subsampling,
+):
+    """两种展开共用原始形状、几何与系数检查，保留所有拒绝条件。"""
 
     target_shape = tuple(int(value) for value in reference_shape)
     if len(target_shape) != 3 or any(value < 2 for value in target_shape):
@@ -3106,6 +3644,83 @@ def expand_fnirt_coefficients(
     expected = fsl_coefficient_shape(target_shape, spacing) + (3,)
     if values.shape != expected or not np.all(np.isfinite(values)):
         raise ValueError(f"coefficients must be finite with shape {expected}")
+
+    return values, target_shape, reference, affine, voxel_sizes, spacing
+
+
+@njit(cache=True, parallel=True, fastmath=False)
+def _expand_fnirt_displacement_values(coefficients, basis_x, basis_y, basis_z):
+    """只展开位移值，保留每分量 z/y/x 系数累加及乘法括号。"""
+
+    nx, ny, nz = basis_x.shape[0], basis_y.shape[0], basis_z.shape[0]
+    xi, xb, _, xc = _fnirt_axis_packed_support(basis_x, np.zeros_like(basis_x))
+    yi, yb, _, yc = _fnirt_axis_packed_support(basis_y, np.zeros_like(basis_y))
+    zi, zb, _, zc = _fnirt_axis_packed_support(basis_z, np.zeros_like(basis_z))
+    field = np.empty((nx, ny, nz, 3), dtype=np.float64)
+    for voxel in prange(nx * ny * nz):
+        x = voxel // (ny * nz)
+        y = (voxel // nz) % ny
+        z = voxel % nz
+        value_x = 0.0
+        value_y = 0.0
+        value_z = 0.0
+        for pz in range(zc[z]):
+            cz = zi[z, pz]
+            for py in range(yc[y]):
+                cy = yi[y, py]
+                weight_zy = zb[z, pz] * yb[y, py]
+                for px in range(xc[x]):
+                    cx = xi[x, px]
+                    kernel = weight_zy * xb[x, px]
+                    value_x += coefficients[cx, cy, cz, 0] * kernel
+                    value_y += coefficients[cx, cy, cz, 1] * kernel
+                    value_z += coefficients[cx, cy, cz, 2] * kernel
+        field[x, y, z, 0] = value_x
+        field[x, y, z, 1] = value_y
+        field[x, y, z, 2] = value_z
+    return field
+
+
+def _expand_fnirt_displacement(
+    coefficients, reference_shape, reference_affine, affine_matrix, *,
+    knot_spacing=None, warp_resolution_mm=10.0, final_subsampling=2,
+):
+    """physical PPD 仅需完整位移，不计算后续不会消费的解析 Jacobian。"""
+
+    values, shape, reference, affine, _, spacing = _fnirt_expansion_inputs(
+        coefficients, reference_shape, reference_affine, affine_matrix,
+        knot_spacing, warp_resolution_mm, final_subsampling,
+    )
+    basis = tuple(spline_design_matrix(shape[axis], spacing[axis]) for axis in range(3))
+    nonlinear = _expand_fnirt_displacement_values(values, *basis)
+    if np.linalg.det(reference[:3, :3]) > 0:
+        nonlinear = np.flip(nonlinear, axis=0).copy()
+    return nonlinear + _fnirt_affine_displacement(shape, reference, affine)
+
+
+def expand_fnirt_coefficients(
+    coefficients: np.ndarray,
+    reference_shape: tuple[int, int, int],
+    reference_affine: np.ndarray,
+    affine_matrix: np.ndarray,
+    *,
+    knot_spacing: tuple[int, int, int] | None = None,
+    warp_resolution_mm: float = 10.0,
+    final_subsampling: int = 2,
+) -> FnirtWarpExpansion:
+    """Expand an FSL cubic coefficient warp without changing its arithmetic.
+
+    The returned dense displacement includes the inverse affine contribution
+    used by ``FnirtFileReader``.  The analytic Jacobian and determinant contain
+    only the nonlinear spline contribution, matching FNIRT ``--jout`` and
+    ``SaveJacobian``.  Tensor PPD must instead differentiate ``displacement``
+    because VECREG operates on the complete pull field.
+    """
+
+    values, target_shape, reference, affine, voxel_sizes, spacing = _fnirt_expansion_inputs(
+        coefficients, reference_shape, reference_affine, affine_matrix,
+        knot_spacing, warp_resolution_mm, final_subsampling,
+    )
 
     basis = tuple(
         spline_design_matrix(target_shape[axis], spacing[axis]) for axis in range(3)

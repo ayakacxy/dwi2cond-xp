@@ -1942,3 +1942,52 @@ def test_shear_ppd_matches_fsl_vecreg(tmp_path):
         / np.linalg.norm(reference[common].ravel())
         < 5e-8
     )
+
+
+@pytest.mark.parametrize("spacing", [(2, 2, 2), (4, 3, 5)])
+@pytest.mark.parametrize("support", ["full", "sparse", "empty"])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_fnirt_batched_projection_preserves_csc_order(spacing, support, dtype):
+    """多列投影保留稀疏转置乘法次序，覆盖空域与非等距样条支持。"""
+    from dwi2cond_xp.preprocessing.fnirt import (
+        _selected_spline_basis_sparse, _spline_projection_many,
+    )
+    random = np.random.default_rng(317)
+    shape = (13, 14, 12)
+    selected = random.random(np.prod(shape)) < (0.2 if support == "sparse" else 1.0)
+    if support == "empty":
+        selected[:] = False
+    weights = [random.normal(size=shape).astype(dtype) for _ in range(3)]
+    basis = _selected_spline_basis_sparse(shape, spacing, selected, 8)
+    expected = np.column_stack([
+        basis.T @ weight.reshape(-1, order="F")[selected].astype(np.float64)
+        for weight in weights
+    ])
+    actual = _spline_projection_many(weights, selected, shape, spacing, 8)
+    np.testing.assert_array_equal(actual, expected)
+
+
+@pytest.mark.parametrize("shape,handedness", [((9, 8, 7), -1), ((49, 48, 47), 1)])
+def test_displacement_only_expansion_matches_full_geometry(shape, handedness):
+    # 覆盖串行及并行参考展开、倾斜非等距网格和非单位仿射。
+    spacing = (2, 3, 4)
+    rng = np.random.default_rng(20261014)
+    coefficients = rng.normal(size=fsl_coefficient_shape(shape, spacing) + (3,)).astype(np.float32)
+    reference = np.array([[handedness * 0.7, 0.2, 0, 12], [0, 1.3, 0.1, -9], [0, 0, 2.1, 4], [0, 0, 0, 1.]])
+    affine = np.array([[1.01, 0.02, 0, 2], [-0.01, 0.98, 0, -3], [0, 0.01, 1.02, 1], [0, 0, 0, 1.]])
+    full = expand_fnirt_coefficients(coefficients, shape, reference, affine, knot_spacing=spacing)
+    displacement = fnirt_module._expand_fnirt_displacement(coefficients, shape, reference, affine, knot_spacing=spacing)
+    np.testing.assert_array_equal(displacement, full.displacement)
+
+
+def test_affine_displacement_fusion_matches_broadcast_order():
+    # 非整数系数及非等距尺度核验逐项乘加，避免两条展开共同使用新内核掩盖错误。
+    shape = (11, 8, 7)
+    rng = np.random.default_rng(42)
+    mapping = rng.normal(size=(4, 4))
+    x, y, z = np.ogrid[:shape[0], :shape[1], :shape[2]]
+    expected = np.empty(shape + (3,), dtype=np.float64)
+    for component in range(3):
+        expected[..., component] = mapping[component, 0] * x + mapping[component, 1] * y + mapping[component, 2] * z + mapping[component, 3]
+    actual = fnirt_module._fnirt_affine_displacement_values(shape, mapping)
+    np.testing.assert_array_equal(actual, expected)

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
-import time
 from typing import Protocol
 
 import numpy as np
-from numba import njit, prange
-from scipy.sparse import csc_matrix, issparse
+from numba import get_num_threads, njit, prange, set_num_threads
+from scipy.sparse import csc_matrix, csr_matrix, issparse
 
 
 class MatrixOperator(Protocol):
@@ -275,19 +274,26 @@ def fsl_diagonal_pcg(
         csr.sort_indices()
         progress_iteration = np.zeros(1, dtype=np.int64)
         progress_residual = np.ones(1, dtype=np.float64)
+        active_numba_threads = get_num_threads()
 
         def solve_csr() -> tuple[np.ndarray, int, float, bool]:
-            return _fsl_diagonal_pcg_csr(
-                np.asarray(csr.data, dtype=np.float64),
-                np.asarray(csr.indices),
-                np.asarray(csr.indptr),
-                rhs,
-                diagonal,
-                tolerance,
-                max_iterations,
-                progress_iteration,
-                progress_residual,
-            )
+            # 新线程默认使用运行时最大线程数，显式继承调用者的线程上限。
+            previous_threads = get_num_threads()
+            try:
+                set_num_threads(active_numba_threads)
+                return _fsl_diagonal_pcg_csr(
+                    np.asarray(csr.data, dtype=np.float64),
+                    np.asarray(csr.indices),
+                    np.asarray(csr.indptr),
+                    rhs,
+                    diagonal,
+                    tolerance,
+                    max_iterations,
+                    progress_iteration,
+                    progress_residual,
+                )
+            finally:
+                set_num_threads(previous_threads)
 
         if progress is None:
             solution, iterations, relative_residual, converged = solve_csr()
@@ -304,7 +310,8 @@ def fsl_diagonal_pcg(
                             float(progress_residual[0]),
                         )
                         last_iteration = iteration
-                    time.sleep(0.1)
+                    # 计算结束即唤醒，保留进度采样间隔而不人为延长每次求解。
+                    wait((future,), timeout=0.1)
                 solution, iterations, relative_residual, converged = future.result()
             progress(iterations, max_iterations, relative_residual)
         return PcgResult(solution, iterations, relative_residual, converged)
@@ -348,12 +355,12 @@ def fsl_diagonal_pcg(
 
 
 def _copy_hessian(
-    matrix: MatrixOperator | np.ndarray, size: int
-) -> csc_matrix | np.ndarray:
+    matrix: MatrixOperator | np.ndarray, size: int, *, csr: bool = False
+) -> csc_matrix | csr_matrix | np.ndarray:
     if matrix.shape != (size, size):
         raise ValueError("Hessian must match the parameter-vector size")
     if issparse(matrix):
-        copied = csc_matrix(matrix, dtype=np.float64, copy=True)
+        copied = (csr_matrix if csr else csc_matrix)(matrix, dtype=np.float64, copy=True)
         if not np.all(np.isfinite(copied.data)):
             raise ValueError("Hessian contains non-finite values")
         return copied
@@ -364,7 +371,7 @@ def _copy_hessian(
 
 
 def _scale_hessian_diagonal(
-    matrix: csc_matrix | np.ndarray,
+    matrix: csc_matrix | csr_matrix | np.ndarray,
     factor: float,
 ) -> None:
     if issparse(matrix):
@@ -388,6 +395,7 @@ def fsl_levenberg_marquardt(
     damping_limit: float = 1.0e20,
     equation_tolerance: float = 1.0e-3,
     equation_max_iterations: int = 500,
+    _csr_hessian: bool = False,
     progress: Callable[[str, int, int, float | None], None] | None = None,
 ) -> TopupOptimizationResult:
     """Run FSL's Levenberg-Marquardt accept/reject and damping sequence."""
@@ -404,7 +412,7 @@ def fsl_levenberg_marquardt(
     successful_iterations = 0
     previous_success = True
     current_gradient: np.ndarray | None = None
-    current_hessian: csc_matrix | np.ndarray | None = None
+    current_hessian: csc_matrix | csr_matrix | np.ndarray | None = None
     trace: list[TopupOptimizationTrace] = []
     status = "maximum_iterations"
 
@@ -416,7 +424,7 @@ def fsl_levenberg_marquardt(
             current_gradient = _finite_gradient(gradient, parameters)
             if progress is not None:
                 progress("hessian", successful_iterations, max_iterations, None)
-            current_hessian = _copy_hessian(hessian(parameters), parameters.size)
+            current_hessian = _copy_hessian(hessian(parameters), parameters.size, csr=_csr_hessian)
             gradient_evaluations += 1
             hessian_evaluations += 1
         assert current_gradient is not None and current_hessian is not None

@@ -161,6 +161,42 @@ def test_pipeline_reexecutes_when_cached_artifact_content_is_replaced(
     np.testing.assert_array_equal(np.asarray(nib.load(output).dataobj), 1.0)
 
 
+def test_pipeline_rechecks_producer_content_before_consumer(tmp_path: Path) -> None:
+    import os
+
+    producer_file = tmp_path / "producer.txt"
+    consumer_file = tmp_path / "consumer.txt"
+    runner = PipelineRunner(tmp_path / "manifests")
+
+    def produce() -> None:
+        producer_file.write_text("AAAA", encoding="utf-8")
+
+    runner.run_stage(
+        StageDefinition(
+            "producer", produce, inputs=(),
+            outputs=(ArtifactContract(producer_file, "text"),),
+        )
+    )
+    previous = producer_file.stat()
+    # 保持 inode、大小和 mtime，仍须通过 ctime 检出同一次流程中的内容改写。
+    producer_file.write_text("BBBB", encoding="utf-8")
+    os.utime(producer_file, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+
+    def consume() -> None:
+        consumer_file.write_text(producer_file.read_text(), encoding="utf-8")
+
+    result = runner.run_stage(
+        StageDefinition(
+            "consumer", consume, inputs=(producer_file,),
+            outputs=(ArtifactContract(consumer_file, "text"),),
+            dependencies=("producer",),
+        )
+    )
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["inputs"][0]["sha256"] == fingerprint_file(producer_file)["sha256"]
+    assert consumer_file.read_text() == "BBBB"
+
+
 def test_pipeline_reexecutes_when_dynamic_fem_artifact_changes(tmp_path: Path) -> None:
     source = tmp_path / "input.txt"
     source.write_text("source\n", encoding="utf-8")

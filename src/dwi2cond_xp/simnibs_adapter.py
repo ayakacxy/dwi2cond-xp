@@ -27,6 +27,7 @@ def tensor_to_mesh_conductivity(
     correct_intensity: bool = True,
     vn_singular_policy: str = "error",
     eigensystem_mode: str = "stable",
+    basis_mode: str = "physical",
     qa_file: str | Path | None = None,
 ) -> Path:
     """Interpolate tensors to tetrahedra and write nine-component conductivity.
@@ -55,7 +56,9 @@ def tensor_to_mesh_conductivity(
     )
     matrices = tensor6_to_matrix(np.asarray(sampled.value, dtype=np.float64))
     if correct_fsl:
-        matrices = correct_fsl_tensor_basis(matrices, tensor_img.affine)
+        matrices = correct_fsl_tensor_basis(
+            matrices, tensor_img.affine, basis_mode=basis_mode
+        )
 
     tetrahedra = mesh.elm.get_tetrahedra()
     tetrahedra_array = np.asarray(tetrahedra)
@@ -114,6 +117,7 @@ def tensor_to_mesh_conductivity(
             "correct_intensity": correct_intensity,
             "vn_singular_policy": vn_singular_policy,
             "eigensystem_mode": eigensystem_mode,
+            "basis_mode": basis_mode,
         }
     )
     qa_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

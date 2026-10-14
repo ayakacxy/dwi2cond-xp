@@ -149,7 +149,7 @@ def test_nomoco_route_uses_eight_workers_and_visible_stages(
     assert "nomoco_qa.json" in capsys.readouterr().out
 
 
-def test_legacy_route_uses_compat46_and_visible_stages(monkeypatch, capsys) -> None:
+def test_legacy_route_rotates_gradients_by_default_and_shows_stages(monkeypatch, capsys) -> None:
     calls: dict[str, object] = {}
 
     def fake_legacy(*args, progress, **kwargs):
@@ -163,7 +163,8 @@ def test_legacy_route_uses_compat46_and_visible_stages(monkeypatch, capsys) -> N
     monkeypatch.setattr(cli, "tqdm", _Progress)
     assert cli.main(["preprocess-legacy", "dwi", "bval", "bvec", "out"]) == 0
     assert calls["call"][1]["workers"] == 8
-    assert calls["call"][1]["bvec_mode"] == "compat46"
+    assert calls["call"][1]["bvec_mode"] == "corrected"
+    assert calls["call"][1]["component_mode"] == "physical"
     assert _Progress.instances[-2].n == 2
     assert _Progress.instances[-1].n == 4
     assert all(instance.closed for instance in _Progress.instances[-2:])
@@ -409,6 +410,8 @@ def test_nonlinear_t1_registration_route_uses_fixed_contract(
                 "T1_brainmask.nii.gz",
                 "--workers",
                 "8",
+                "--ppd-device",
+                "cuda",
             ]
         )
         == 0
@@ -425,6 +428,9 @@ def test_nonlinear_t1_registration_route_uses_fixed_contract(
                 "brain_mask_file": "T1_brainmask.nii.gz",
                 "workers": 8,
                 "compatibility_mode": "strict-fsl",
+                "jacobian_mode": "physical",
+                "hessian_device": "cpu",
+                "ppd_device": "cuda",
             },
     )
     created = _Progress.instances[first_progress:]

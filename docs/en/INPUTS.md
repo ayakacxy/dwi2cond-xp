@@ -4,6 +4,10 @@
 
 [Documentation](README.md) · [Project home](../../README.md)
 
+The defaults below describe the `v0.4.0` implementation.
+See [v0.4.0 migration](RELEASE_NOTES_v0.4.0.md) for changes from the earlier
+coordinate conventions. The released `v0.3.0` validation remains a separate historical record.
+
 ## Raw DWI without correction
 
 `preprocess-nomoco` implements the SimNIBS 4.6 `nomoco` path. It reorients the
@@ -16,7 +20,9 @@ does not estimate motion, eddy-current, or susceptibility fields.
 The DWI, b-values, and b-vectors must describe the same ordered volumes. The
 strict single-tensor model accepts every volume only after validating one
 nonzero shell; multishell data is never selected or fitted silently. Optional `grad_dev` must match the original DWI grid
-and is storage-reoriented with the DWI before fitting.
+and is storage-reoriented with the DWI before fitting. With the default
+`--component-mode physical`, b-vectors and column-major HCP/FSL `grad_dev`
+components are transformed into the reoriented image's FSL basis as well.
 
 An uncompressed `.nii` is used directly only after blockwise verification that
 it is float32, in the required FSL storage orientation, finite, and nonnegative.
@@ -39,11 +45,13 @@ per original volume. Temporary resampling used to construct the two reference
 means is not reused as final output. Failure aborts the legacy mode and never
 falls back to `nomoco`.
 
-`--bvec-mode compat46` is the default and byte-copies the original b-vector
-file, matching the SimNIBS 4.6 legacy script. `--bvec-mode corrected` is a
-separate scientific mode that rotates nonzero-shell vectors with the finite-
-strain rotation of each final affine and restores unit length. These modes are
-never selected implicitly.
+`--bvec-mode corrected` is the default. It rotates nonzero-shell vectors in
+the FSL scaled-mm basis with the finite-strain rotation of each final affine
+and restores unit length. Storage-axis changes are handled before this motion
+rotation. Explicit `--bvec-mode compat46` omits motion rotation; with physical
+components it still transforms vectors for storage-axis changes. The original
+file is byte-copied only with `--component-mode simnibs46-literal` or an
+identity storage transform.
 
 An optional prepared `--fieldmap-displacement` must be an `(X,Y,Z,3)` finite displacement
 on the DWI grid, expressed in moving-world millimetres. It is composed with the
@@ -60,6 +68,9 @@ and b0 masks must match their respective grids. The voxel-shift output is in
 voxels; `displacement_world_mm.nii.gz` is the signed NIfTI-world pull field for
 `preprocess-legacy --fieldmap-displacement`. Raw wrapped Siemens phase is not
 accepted because PRELUDE unwrapping is outside this fixed branch.
+
+Phase-encoding `x/y/z` flags name the FSL internal axes after storage
+reorientation; original NIfTI/BIDS `i/j/k` axes are not remapped automatically.
 
 `prepare-topup <forward_b0> <reverse_b0> <output_directory>` implements the
 fixed SimNIBS 4.6 `b02b0_nosubsamp.cnf` path. Both inputs must be finite 3-D
@@ -123,8 +134,11 @@ Tensor NIfTIs have shape `(X,Y,Z,6)` with final-axis ordering
 carried forward from fitting or supplied by the external producer.
 
 `run-prefit-pipeline` accepts an official-style pre-fitted tensor, performs the
-storage-only reorientation and `fslmaths -tensor_decomp` semantics, then joins
+storage reorientation and `fslmaths -tensor_decomp` semantics, then joins
 the same T1 registration, output publication, and QA workflow without requiring raw DWI.
+The default `--component-mode physical` also transforms tensor components to
+preserve their physical direction; `simnibs46-literal` preserves the upstream
+storage-only behavior.
 
 ## Compatibility modes
 
@@ -134,6 +148,13 @@ where a fold/singular active-support transform has no valid tensor result.
 `robust` is a separate opt-in policy that excludes invalid fit voxels and
 zero-fills unsafe nonlinear locations. The selected mode is recorded in stage
 parameters and is never changed through silent fallback.
+
+These validity policies are independent of the coordinate and decomposition
+options. Commands exposing these options default to `--bvec-mode corrected`, `--component-mode physical`,
+`--jacobian-mode physical`, `--basis-mode physical`, and
+`--eigensystem-mode stable`. To compare the old upstream behavior explicitly,
+select `compat46` for b-vectors and `simnibs46-literal` for the other four modes.
+The selected modes are recorded in QA and stage parameters.
 
 ## T1 alignment
 
@@ -162,6 +183,18 @@ to the same participant;
 same-subject acquisitions can still differ by motion, distortion, resolution,
 orientation, and scanner coordinates.
 
+Affine registration and dense nonlinear tensor inputs use header `pixdim` for
+FSL sampling and the active affine for world coordinates. They support valid
+files whose sform scaling differs from `pixdim`. Raw preprocessing and FNIRT
+estimation/coefficient expansion currently require these scales to agree and
+reject a mismatch explicitly; resample such inputs onto an explicitly defined
+grid before using those paths.
+
+Nonlinear tensor commands default to `--jacobian-mode physical`: displacement
+gradients are divided by the target voxel sizes, and PPD and fold QA use the
+same physical Jacobian. `simnibs46-literal` retains the old per-voxel PPD
+derivative for comparison, including its resolution dependence.
+
 ## CHARM mask and output
 
 The compatible brain mask follows the SimNIBS `dwi2cond` labeling interval
@@ -187,8 +220,14 @@ orthogonal symmetric-tensor basis. The explicit `simnibs46-literal` mode uses
 the same `eig`, real-part conversion, descending sort, and reconstruction basis
 as SimNIBS 4.6, including repeated-eigenvalue non-orthogonality. The QA JSON
 records the selected mode, maximum orthogonality error, and affected basis
-count. FEM workflow runs use the installed SimNIBS SESSION and do not
-substitute this standalone converter.
+count. Formal FEM and lead-field workflows also default to the stable
+eigensystem. They use the installed SimNIBS SESSION with a project-local
+conductivity hook on that instance; no installed module is edited.
+
+`--basis-mode physical` normalizes the affine's spatial columns separately
+when converting tensor directions, supporting oblique, unequal-sized voxels
+without adding scale anisotropy. A sheared affine is rejected in this mode;
+`simnibs46-literal` retains the upstream normalization for explicit comparison.
 
 Shape, affine, finite-value, valid-mask, and provenance failures are reported
 explicitly. An anisotropic workflow never falls back silently to scalar FEM.

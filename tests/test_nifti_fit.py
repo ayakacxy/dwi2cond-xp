@@ -120,6 +120,33 @@ def test_dtifit_and_fslmaths_decomposition_keep_distinct_negative_tensor_semanti
     assert not np.any(fslmaths["V1"][0])
 
 
+def test_negative_tensor_fit_keeps_dtifit_maps_and_zero_header_calibration(
+    tmp_path: Path,
+) -> None:
+    """单次分解不能把 dtifit 负谱派生图误改成 fslmaths 的清零输出。"""
+
+    paths, bvals, bvecs = _write_fixture(tmp_path)
+    image = nib.load(paths["data"])
+    tensor = np.array([-0.2e-3, 0.0, 0.0, -0.5e-3, 0.0, -0.7e-3])
+    design = form_design_matrix(bvals, bvecs)
+    signal = 1000.0 * np.exp(-(design[:, :6] @ tensor))
+    data = np.broadcast_to(signal, image.shape).astype(np.float32).copy()
+    nib.save(nib.Nifti1Image(data, image.affine, image.header), paths["data"])
+    output = tmp_path / "negative.nii.gz"
+    fit_dti_nifti(
+        paths["data"], paths["bvals"], paths["bvecs"], paths["mask"],
+        output, workers=2, z_chunk=1,
+    )
+    valid = np.asarray(nib.load(tmp_path / "negative_valid_mask.nii.gz").dataobj) > 0
+    l1 = np.asarray(nib.load(tmp_path / "negative_L1.nii.gz").dataobj)
+    fa = np.asarray(nib.load(tmp_path / "negative_FA.nii.gz").dataobj)
+    v1 = np.asarray(nib.load(tmp_path / "negative_V1.nii.gz").dataobj)
+    assert float(nib.load(output).header["cal_max"]) == 0.0
+    assert np.all(l1[valid] < 0)
+    assert np.all(fa[valid] > 0)
+    np.testing.assert_allclose(np.linalg.norm(v1[valid], axis=1), 1.0)
+
+
 def test_serial_fit_writes_custom_outputs_and_progress(tmp_path: Path) -> None:
     paths, _, _ = _write_fixture(tmp_path)
     progress: list[tuple[int, int, int]] = []
@@ -457,3 +484,16 @@ def test_dtifit_outputs_use_fsl_units_intents_and_calibration(tmp_path: Path) ->
     assert (float(fa_header["cal_min"]), float(fa_header["cal_max"])) == (0.0, 1.0)
     assert (float(mo_header["cal_min"]), float(mo_header["cal_max"])) == (-1.0, 1.0)
     assert int(v1_header["intent_code"]) == 2003
+
+
+@pytest.mark.parametrize("selected", ([1, 2, 3], [3, 0, 2]))
+def test_masked_volume_selection_preserves_order(selected):
+    # 连续视图与非连续索引均保持原掩膜顺序、卷顺序和非有限值。
+    from dwi2cond_xp.nifti_fit import _masked_selected_signals
+    data = np.arange(2 * 3 * 2 * 4, dtype=np.float32).reshape(2, 3, 2, 4)
+    data[1, 2, 1, 2] = np.nan
+    mask = np.zeros(data.shape[:3], dtype=bool)
+    mask[0, 1, 1] = True
+    mask[1, 2, 1] = True
+    indices = np.asarray(selected)
+    np.testing.assert_array_equal(_masked_selected_signals(data, mask, indices), data[mask][:, indices])

@@ -95,11 +95,17 @@ $\boldsymbol\Sigma_i=\sigma_t\mathbf I$。
 安全修正，并在 QA 中记录修复单元数。该扩展不会被描述成 SimNIBS 4.6 秩亏分支的逐句
 等价实现。
 
-独立转换命令默认使用 `--eigensystem-mode stable`，即对称 `eigh` 求解器；
+转换命令、正式 FEM 与先导场默认使用 `--eigensystem-mode stable`，即对称 `eigh` 求解器；
 重复特征值张量仍保持正交、满秩基底。显式指定
 `--eigensystem-mode simnibs46-literal` 时，才逐句复现 SimNIBS 4.6 的通用 `eig`
 排序及重复特征值下可能产生非正交基底的行为；QA JSON 会记录模式和基底正交性诊断。FEM
-流程仍把电导率构造交给已安装的 SimNIBS SESSION，不会自动改用独立转换命令。
+流程仍调用已安装的 SimNIBS SESSION，通过所选实例上的项目内电导率适配接入，
+不修改安装模块。
+
+默认 `--basis-mode physical` 分别归一化 affine 的三个空间列，移除体素尺度后再
+转换张量方向，因此倾斜、非等距体素保持张量特征值和各向同性。此模式拒绝含剪切的
+affine；显式 `--basis-mode simnibs46-literal` 保留上游归一化方式供对照。
+这些基底修复已包含在 `v0.4.0` 实现中；上述映射公式及历史版本验证记录保持不变。
 
 参考文献：
 

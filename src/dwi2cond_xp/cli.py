@@ -165,7 +165,7 @@ def _build_parser() -> argparse.ArgumentParser:
     legacy.add_argument("output_directory")
     legacy.add_argument("--grad-dev")
     legacy.add_argument(
-        "--bvec-mode", choices=("compat46", "corrected"), default="compat46"
+        "--bvec-mode", choices=("compat46", "corrected"), default="corrected"
     )
     legacy.add_argument("--fieldmap-displacement")
     legacy.add_argument("--fieldmap-corrected-mask")
@@ -565,6 +565,35 @@ def _build_parser() -> argparse.ArgumentParser:
         default="components",
         help="Default: 3x4 Ex/Ey/Ez components; magnitude: four-mode magnitude",
     )
+    pipeline.add_argument("--bvec-mode", choices=("corrected", "compat46"), default="corrected")
+    for command_parser in (nomoco, legacy, eddy, pipeline, prefit_pipeline):
+        command_parser.add_argument(
+            "--component-mode", choices=("physical", "simnibs46-literal"),
+            default="physical", help="Transform vector/tensor components with storage axes",
+        )
+    for command_parser in (nonlinear, pipeline, prefit_pipeline):
+        command_parser.add_argument(
+            "--fnirt-device", choices=("cpu", "cuda"), default="cpu",
+            help="Device for FNIRT FP64 Hessian assembly (CUDA is optional)",
+        )
+        command_parser.add_argument(
+            "--ppd-device", choices=("cpu", "cuda"), default="cpu",
+            help="Device for PPD tensor reorientation (CUDA is optional)",
+        )
+        command_parser.add_argument(
+            "--jacobian-mode", choices=("physical", "simnibs46-literal"),
+            default="physical", help="Use physical-mm derivatives for PPD tensor reorientation",
+        )
+    for command_parser in (conductivity, simulate, leadfield, pipeline, prefit_pipeline):
+        command_parser.add_argument(
+            "--basis-mode", choices=("physical", "simnibs46-literal"),
+            default="physical", help="Use an orthogonal FSL-to-world tensor basis",
+        )
+    for command_parser in (simulate, leadfield, pipeline, prefit_pipeline):
+        command_parser.add_argument(
+            "--eigensystem-mode", choices=("stable", "simnibs46-literal"),
+            default="stable", help="Use an orthogonal symmetric-tensor eigensystem",
+        )
     return parser
 
 
@@ -622,6 +651,7 @@ def main(argv: list[str] | None = None) -> int:
                 voxel_batch=args.voxel_batch,
                 workers=args.workers,
                 compatibility_mode=args.compatibility_mode,
+                component_mode=args.component_mode,
                 bet_backend=args.bet_backend,
                 progress=report_nomoco,
             )
@@ -661,6 +691,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output_directory,
                 grad_dev_file=args.grad_dev,
                 bvec_mode=args.bvec_mode,
+                component_mode=args.component_mode,
                 fieldmap_displacement_file=args.fieldmap_displacement,
                 fieldmap_corrected_mask_file=args.fieldmap_corrected_mask,
                 fieldmap_magnitude_file=args.fieldmap_magnitude,
@@ -774,6 +805,7 @@ def main(argv: list[str] | None = None) -> int:
                 readout_seconds=args.readout_seconds,
                 phase_encoding_direction=args.phase_encoding_direction,
                 susceptibility_field_file=args.susceptibility_field,
+                component_mode=args.component_mode,
                 random_seed=args.random_seed,
                 workers=args.workers,
                 replace_outliers=not args.no_repol,
@@ -972,7 +1004,10 @@ def main(argv: list[str] | None = None) -> int:
                 brain_mask_file=args.brain_mask,
                 workers=args.workers,
                 compatibility_mode=args.compatibility_mode,
+                jacobian_mode=args.jacobian_mode,
                 progress=report_fnirt,
+                hessian_device=args.fnirt_device,
+                ppd_device=args.ppd_device,
             )
         finally:
             if detail_bar[0] is not None:
@@ -1242,6 +1277,8 @@ def main(argv: list[str] | None = None) -> int:
                     prefit_tensor=Path(args.tensor) if is_prefit else None,
                     preprocessing_mode=("prefit" if is_prefit else args.preprocessing_mode),
                     t1_mode=args.t1_mode,
+                    fnirt_device=args.fnirt_device,
+                    ppd_device=args.ppd_device,
                     grad_dev=(
                         None
                         if is_prefit or args.grad_dev is None
@@ -1289,6 +1326,11 @@ def main(argv: list[str] | None = None) -> int:
                     fit_compatibility_mode=(
                         "strict-fsl" if is_prefit else args.fit_compatibility_mode
                     ),
+                    bvec_mode="corrected" if is_prefit else args.bvec_mode,
+                    component_mode=args.component_mode,
+                    jacobian_mode=args.jacobian_mode,
+                    basis_mode=args.basis_mode,
+                    eigensystem_mode=args.eigensystem_mode,
                     publish_to_m2m=not args.no_publish_to_m2m,
                     fem_smoke=args.fem_smoke,
                     solver=args.solver,
@@ -1321,6 +1363,7 @@ def main(argv: list[str] | None = None) -> int:
             correct_intensity=not args.no_correct_intensity,
             vn_singular_policy=args.vn_singular_policy,
             eigensystem_mode=args.eigensystem_mode,
+            basis_mode=args.basis_mode,
             qa_file=args.qa_json,
         )
         print(f"Done: {args.output_mesh}", flush=True)
@@ -1350,6 +1393,8 @@ def main(argv: list[str] | None = None) -> int:
             volume_tissues=tuple(args.volume_tissues),
             cpus=args.cpus,
             dry_run=args.dry_run,
+            basis_mode=args.basis_mode,
+            eigensystem_mode=args.eigensystem_mode,
         )
         print(
             f"{manifest['status']}: {manifest['output_directory']}",
@@ -1390,6 +1435,8 @@ def main(argv: list[str] | None = None) -> int:
                 roi_labels=tuple(args.roi_labels),
                 avoid_labels=tuple(args.avoid_labels),
                 dry_run=args.dry_run,
+                basis_mode=args.basis_mode,
+                eigensystem_mode=args.eigensystem_mode,
                 progress=report_leadfield,
             )
         finally:

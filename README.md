@@ -8,14 +8,14 @@ Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 [![CI](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ayakacxy/dwi2cond-xp/badge)](https://scorecard.dev/viewer/?uri=github.com/ayakacxy/dwi2cond-xp)
-[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#-validation-at-a-glance)
+[![v0.4.0 coverage: 100%](https://img.shields.io/badge/v0.4.0_coverage-100%25-brightgreen.svg)](#-validation-at-a-glance)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
 [![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/en/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md) · [Documentation](docs/en/README.md) · [Validation](docs/en/VALIDATION.md) · [Roadmap](docs/en/ROADMAP.md) · [Release notes](docs/en/CHANGELOG.md)
 
-🧠 **DTI fitting** · ⚡ **FSL-free runtime** · 🧭 **Tensor reorientation** · ⚡ **Anisotropic FEM** · 🧪 **100% statement coverage**
+🧠 **DTI fitting** · ⚡ **FSL-free runtime** · 🧭 **Tensor reorientation** · ⚡ **Anisotropic FEM** · 🖥️ **CPU / optional CUDA**
 
 </div>
 
@@ -48,7 +48,48 @@ consolidate documentation and release metadata. `v0.3.0` was replaced again on
 the replacement algorithm baseline and the scope of its validation are recorded
 in the changelog.
 
+`v0.4.0` corrects gradient rotation, vector/tensor components during storage
+reordering, physical PPD derivatives, and tensor bases on oblique grids. It also
+reduces repeated computation and large-array overhead and adds optional FP64
+CUDA acceleration. CPU is the default and works without a GPU or CuPy.
+Release date: 2026-10-14.
+See the [v0.4.0 release notes](docs/en/RELEASE_NOTES_v0.4.0.md) for changes and
+migration from earlier coordinate conventions.
+
 ## ⚡ Validation at a glance
+
+The `v0.4.0` implementation completed the following same-input end-to-end
+comparison with the published `v0.3.0` wheel and official FSL workflow:
+
+| Implementation | Complete wall time | Peak host RSS | Peak GPU allocation |
+| --- | ---: | ---: | ---: |
+| v0.4.0 CPU | **205.45 s** | **6.50 GiB** | none |
+| v0.4.0 GPU | **163.34 s** | **6.72 GiB** | **8.83 GiB** |
+| Published v0.3.0 CPU | 564.41 s | 25.47 GiB | none |
+| SimNIBS 4.6 / FSL 6.0.4 subscripts | 1290.07 s | 3.79 GiB | none |
+
+CPU/GPU were **2.75× / 3.46× faster than v0.3.0** in this measurement. It used
+one HCP single-shell input with gradient-deviation correction, `nomoco` plus
+nonlinear registration, eight CPU cores and an RTX 2080 Ti on Linux,
+warm file/JIT caches, all project QA and m2m tensor publication, with FEM off.
+The default legacy preprocessing path was not timed in this comparison.
+The FSL output set and core use differ. These are observed timings, not memory
+minimums or speed guarantees; see [Benchmarks](docs/en/BENCHMARKS.md) for the
+complete boundaries and numerical comparisons.
+
+The local v0.4.0 release checks completed on 2026-10-14:
+
+| Check | Result | Conditions |
+| --- | ---: | --- |
+| v0.4.0 correctness checks | **955 passed · 0 skipped** | 942 main + 1 focused regression + 12 montage tests on Linux, with configured real FSL/SimNIBS probes enabled |
+| Full-package coverage gate | **100.00% statement coverage** | 15,363/15,363 statements; isolated cold Numba caches with JIT coverage and real synthetic TOPUP/EDDY/FNIRT CLI runs |
+
+Statement coverage does not establish complete branch coverage or correctness
+for every input. The CUDA math checks and prior real-GPU end-to-end evidence
+are distinguished in [Validation](docs/en/VALIDATION.md).
+
+The following historical checks describe the released `v0.3.0` tag; its test
+count and coverage are not new `v0.4.0` measurements.
 
 | Check | Result | Conditions |
 | --- | ---: | --- |
@@ -63,7 +104,7 @@ subject artifact is distributed. Methods and validation details are in
 
 ## 🧭 Scope
 
-The `v0.3.0` correctness-remediated preprocessing and conductivity path is:
+The preprocessing and conductivity path is:
 
 ```text
 raw or preprocessed single-shell DWI, or a six-component diffusion tensor
@@ -89,7 +130,7 @@ CHARM/FEM integration, and singular VN tensors. These checks do not establish
 bitwise equality for every FSL optimizer, and no new full-subject comparison
 against the official workflow was run. The numerical results and limitations
 are documented in the
-[latest remediation report](docs/en/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md).
+[v0.3.0 remediation report](docs/en/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md).
 
 The pure-Python DTI and tensor-mapping core uses NumPy, SciPy, NiBabel, h5py,
 and tqdm. The validated nonlinear runtime is pinned to NumPy 2.3.0 and Numba
@@ -204,14 +245,19 @@ SimNIBS safety passes and records the repaired-element count in QA. This
 extension is explicit and is not presented as the literal SimNIBS 4.6
 rank-deficient branch.
 
-The standalone converter uses `--eigensystem-mode stable` by default. This
+The converter, formal FEM, and lead-field workflows use
+`--eigensystem-mode stable` by default. This
 selects the symmetric `eigh` solver and keeps repeated-eigenvalue tensors on an
 orthogonal, full-rank basis. `--eigensystem-mode simnibs46-literal` is an
 explicit compatibility mode that reproduces SimNIBS 4.6's general `eig`
 ordering, including its non-orthogonal repeated-eigenvalue edge output; the QA
 JSON records the selected mode and basis-orthogonality diagnostics. Formal FEM
-workflow runs still delegate conductivity construction to the installed
-SimNIBS SESSION rather than this standalone converter.
+workflow runs use the installed SimNIBS SESSION with a project-local
+conductivity hook on the selected instance; installed modules are unchanged.
+The default `--basis-mode physical` normalizes spatial affine columns
+separately, supporting oblique unequal-sized voxels while rejecting shear.
+Explicit `--basis-mode simnibs46-literal` retains the upstream normalization
+for comparison.
 
 References:
 
@@ -244,10 +290,11 @@ is intentionally frozen, install the wheel without dependency resolution:
 ```bash
 conda activate simnibs
 python -c "import simnibs; assert simnibs.__version__ == '4.6.0'"
-python -m pip install --no-deps dwi2cond_xp-0.3.0-py3-none-any.whl
+python -m pip install --no-deps dwi2cond_xp-0.4.0-py3-none-any.whl
 dwi2cond-xp --help
 ```
 
+Download the v0.4.0 wheel from the [GitHub Release](https://github.com/ayakacxy/dwi2cond-xp/releases/tag/v0.4.0).
 For development from this checkout, replace the wheel command with
 `python -m pip install --no-deps -e .`. The release wheel has been installed as
 a temporary overlay on the existing reference environment and imported together
@@ -299,9 +346,17 @@ gradient-nonlinearity coefficients use the FSL/HCP nine-component `grad_dev`
 convention.
 
 `preprocess-legacy` implements the SimNIBS 4.6 two-pass 6/12-DOF correction
-order and one final sinc resampling per volume. Its default `compat46` mode
-preserves the original b-vector file exactly, matching the upstream script;
-the explicit `corrected` mode rotates b-vectors with the final transforms.
+order and one final sinc resampling per volume. Its default `corrected` mode
+rotates b-vectors in the FSL basis with the final transforms; explicit
+`compat46` omits motion rotation. It still applies physical storage-basis
+changes; original-file copying requires literal components or unchanged axes.
+
+Storage-axis reordering defaults to `--component-mode physical`, transforming
+b-vectors, tensors, and `grad_dev` components with the image axes. Nonlinear
+PPD defaults to `--jacobian-mode physical`, using millimetre derivatives for
+both tensor rotation and fold QA. Explicit `simnibs46-literal` options retain
+the upstream behavior for comparison. Header sampling and grid restrictions
+are described in [Input files and coordinates](docs/en/INPUTS.md).
 
 A tensor input must be a 4-D NIfTI whose final dimension is ordered as
 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`. Use automatic `register-t1` or the complete pipeline.
@@ -376,13 +431,13 @@ Run the legacy correction path while preserving SimNIBS 4.6 b-vector behavior:
 ```bash
 dwi2cond-xp preprocess-legacy \
   raw_dwi.nii.gz bvals bvecs legacy_outputs \
-  --workers 8 --bvec-mode compat46
+  --workers 8 --bvec-mode corrected
 ```
 
 This writes the corrected DWI and mean, every final volume transform, nodif and
 brain mask, tensor/FA/SSE and validity outputs, and `legacy_qa.json`. Use
-`--bvec-mode corrected` only as an explicit scientific correction to the 4.6
-script behavior.
+`--bvec-mode compat46 --component-mode simnibs46-literal` for explicit
+comparison with the 4.6 script's original b-vector handling.
 
 Prepare a fixed GRE/FUGUE correction from an already scaled rad/s fieldmap and
 compose its signed world-mm displacement into the legacy command:
@@ -555,21 +610,16 @@ Methods, measured steps, and limitations are in
 
 ## 🛣️ Roadmap
 
-Version `0.3.0` is the current correctness release produced from the v0.2.0
-audit and later independent v0.3.0 audits. The project is now in maintenance
-mode: no `v0.4.0` performance cycle or 10x target is active. Existing timings
-remain available as versioned historical measurements, not as a final-tag
-end-to-end baseline.
-
-Maintenance may add reproducibility, compatibility, documentation, or narrowly
-scoped correctness fixes. Any future performance work requires an explicit new
-proposal, a reliable same-input/same-output baseline, and the existing numerical
-and error-handling checks. See [Project status](docs/en/ROADMAP.md),
-[Changelog](docs/en/CHANGELOG.md), and [Historical benchmarks](docs/en/BENCHMARKS.md).
+The v0.4.0 algorithm repairs, component optimizations and CPU/GPU end-to-end
+comparison are included in this stable release. Further memory
+optimization is paused in favor of the verified speed and numerical behavior.
+See [Project status](docs/en/ROADMAP.md), [v0.4.0 release notes](docs/en/RELEASE_NOTES_v0.4.0.md),
+and [Benchmarks](docs/en/BENCHMARKS.md).
 
 ## 🗂️ Documentation and community
 
 - [Documentation index](docs/en/README.md)
+- [v0.4.0 release notes and migration](docs/en/RELEASE_NOTES_v0.4.0.md)
 - [Input files and coordinates](docs/en/INPUTS.md)
 - [Methods](docs/en/METHODS.md)
 - [Validation](docs/en/VALIDATION.md)

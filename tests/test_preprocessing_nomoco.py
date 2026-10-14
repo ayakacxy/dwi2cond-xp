@@ -181,6 +181,72 @@ def test_nomoco_validates_worker_count(tmp_path: Path) -> None:
         nomoco_module.run_nomoco_nifti("dwi", "bvals", "bvecs", tmp_path, workers=0)
 
 
+def test_nomoco_reuses_preparation_without_changing_fit_or_raw_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """复用准备结果仍保留原始负值、独立 clamp 与完整 WLS 输出。"""
+
+    dwi, bvals, bvecs, grad_dev = _write_fixture(tmp_path)
+    original = dwi.read_bytes()
+
+    def aligned(data, _bvals, output, *, qa_file, **kwargs):
+        image = nib.load(data)
+        values = np.asarray(image.dataobj, dtype=np.float32).mean(axis=3)
+        nib.save(nib.Nifti1Image(values, image.affine, image.header), output)
+        Path(qa_file).write_text('{"status":"completed"}\n', encoding="utf-8")
+
+    def bet(data, output, **kwargs):
+        image = nib.load(data)
+        mask = (np.asarray(image.dataobj) > 0).astype(np.uint8)
+        nib.save(nib.Nifti1Image(mask, image.affine, image.header), output)
+        return SimpleNamespace(mask=mask, passes=0)
+
+    monkeypatch.setattr(nomoco_module, "write_aligned_b0_mean", aligned)
+    monkeypatch.setattr(nomoco_module, "write_bet_brain_mask", bet)
+    baseline = tmp_path / "baseline"
+    report = nomoco_module.run_nomoco_nifti(
+        dwi, bvals, bvecs, baseline, grad_dev_file=grad_dev, workers=1,
+    )
+    preparation = {
+        "status": "completed", "workers": 1, "b0_threshold": 0.0,
+        "component_mode": "physical", "bet_backend": "optimized",
+        "bet_fractional_threshold": 0.2,
+        "data": str(dwi.resolve()), "bvals": str(bvals.resolve()),
+        "bvecs": str(bvecs.resolve()), "grad_dev": str(grad_dev.resolve()),
+        "bet": report["bet"],
+    }
+    metadata = baseline / "preparation_qa.json"
+    metadata.write_text(json.dumps(preparation), encoding="utf-8")
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Prepared b0 and BET must not be recomputed")
+
+    monkeypatch.setattr(nomoco_module, "write_aligned_b0_mean", unexpected)
+    monkeypatch.setattr(nomoco_module, "write_bet_brain_mask", unexpected)
+    candidate = tmp_path / "reused"
+    reused = nomoco_module.run_nomoco_nifti(
+        dwi, bvals, bvecs, candidate, grad_dev_file=grad_dev, workers=1,
+        _prepared_directory=baseline,
+    )
+    for source in baseline.iterdir():
+        if source.name.endswith((".nii", ".nii.gz")):
+            assert (candidate / source.name).read_bytes() == source.read_bytes()
+    assert reused["bet"] == report["bet"]
+    assert reused["fit"] == report["fit"]
+    assert np.min(np.asarray(nib.load(candidate / "DWIraw.nii").dataobj)) == -2.0
+    assert np.min(np.asarray(nib.load(candidate / "DWIforfit.nii").dataobj)) == 0.0
+    assert dwi.read_bytes() == original
+    assert (baseline / "DWIraw.nii").stat().st_ino != (candidate / "DWIraw.nii").stat().st_ino
+
+    preparation["workers"] = 2
+    metadata.write_text(json.dumps(preparation), encoding="utf-8")
+    with pytest.raises(ValueError, match="does not match"):
+        nomoco_module.run_nomoco_nifti(
+            dwi, bvals, bvecs, tmp_path / "invalid", grad_dev_file=grad_dev,
+            workers=1, _prepared_directory=baseline,
+        )
+
+
 def test_fitting_input_validation_and_fallbacks(tmp_path: Path) -> None:
     three_dimensional = tmp_path / "three.nii"
     nib.save(nib.Nifti1Image(np.zeros((2, 2, 2), dtype=np.float32), np.eye(4)), three_dimensional)

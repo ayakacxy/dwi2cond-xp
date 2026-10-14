@@ -1,25 +1,124 @@
-# Historical benchmarks
+# Benchmarks
 
 [English](en/BENCHMARKS.md) | [简体中文](zh/BENCHMARKS.md)
 
 [Documentation](en/README.md) · [Project home](../README.md)
 
-This page preserves stage-level measurements collected while the
-`v0.1.0`--`v0.3.0` implementation was being developed. Most timings predate
-the final `v0.3.0` correctness remediation and release rebuild. They were not
+The historical stage-level sections below preserve measurements collected
+while the `v0.1.0`--`v0.3.0` implementation was being developed. Most timings
+predate the final `v0.3.0` correctness remediation and release rebuild. They were not
 rerun from the final `v0.3.0` tag or release wheel, so they describe the timed
-implementation snapshots, fixtures, and hosts below rather than current-tag
-performance.
+implementation snapshots, fixtures, and hosts in those sections rather than
+current-tag performance.
 
-No benchmark was rerun for this documentation update. Two later `v0.4.0`
-planning samples were collected while server load was unstable and are
-excluded from all tables and comparisons on this page.
+No benchmark was rerun when those historical sections were documented. Two
+later `v0.4.0` planning samples were collected while server load was unstable
+and are excluded from the historical tables and comparisons. The dated end-to-end
+comparison below reports a separate set of completed runs.
 
-Unless stated otherwise, the reference was the SimNIBS 4.6 workflow with FSL
-6.0.4 on the same host and input. Ratios compare only the paired rows in one
-table. The fixtures, process boundaries, worker counts, warm-cache state, and
+Unless stated otherwise in the historical sections, the reference was the
+SimNIBS 4.6 workflow with FSL 6.0.4 on the same host and input. Ratios compare
+only the paired rows in one table. The fixtures, process boundaries, worker
+counts, warm-cache state, and
 output sets differ between sections, so timings must not be added across
 stages or treated as an end-to-end pipeline result.
+
+## 2026-10-14: v0.4.0 end-to-end comparison
+
+v0.4.0 includes the algorithm fixes and performance changes
+described in the [release notes](en/RELEASE_NOTES_v0.4.0.md).
+The measured scientific source is retained in v0.4.0; release metadata and
+tests were updated afterwards. These completed runs
+used one private HCP input on the same Linux server.
+
+The input was `145x174x145x108` float32 DWI at 1.25 mm, with 18 exact b=0
+volumes, 90 b≈1000 volumes, identical gradients and gradient-nonlinearity data,
+and the same CHARM T1/segmentation seed at `260x311x260`, 0.7 mm.
+Each path ran nomoco plus nonlinear registration, native QA and m2m tensor
+publication, with FEM off. The Python paths also ran all project aggregate QA.
+The host used a Xeon Gold 6230 and RTX 2080 Ti, with an eight-physical-core
+affinity budget, at most eight Numba/workers, and BLAS/OMP/MKL limited to one.
+
+Each Python row is one normal warm-cache sample in a new process with fresh
+outputs and zero JIT cache saves; all computation stages completed without
+artifact cache hits. FSL completed one native run without JIT. OS input caches
+were not cleared. Probe/first-compilation samples are excluded. Wall time
+includes startup, imports, computation, I/O, QA and publication; seed copying
+and subsequent comparison are outside it. CPU execution completed with imports
+of the optional GPU modules blocked; GPU execution used FP64 Hessian assembly
+and the PPD GPU backend. PPD sampling retained float32 checkpoints; Jacobian
+and matrix operations used float64.
+
+| Implementation | Complete wall time | Peak process-tree RSS | Peak GPU allocation |
+| --- | ---: | ---: | ---: |
+| v0.4.0 CPU | 205.451992 s | 6.497955 GiB | none |
+| v0.4.0 GPU | 163.341718 s | 6.723415 GiB | 8.833985 GiB |
+| Published v0.3.0 CPU | 564.406214 s | 25.468868 GiB | none |
+| SimNIBS 4.6 / FSL 6.0.4 subscripts | 1290.072619 s | 3.794250 GiB | none |
+
+Observed wall-time ratios were 2.747/3.455 for published v0.3.0 versus the
+v0.4.0 CPU/GPU, with time reduced by 63.599%/71.060% and host RSS reduced
+by 74.487%/73.601%. Ratios were 6.279/7.898 for FSL versus v0.4.0 CPU/GPU,
+and 1.258 for v0.4.0 CPU versus GPU. FSL used less host memory: v0.4.0 CPU/GPU
+RSS peaks were about 71%/77% higher than FSL's. RSS was sampled across the
+owned process tree every 0.2 s and can count shared pages more than once.
+GPU allocation was sampled every 0.5 s and includes context/allocator caches;
+it is separate from host RSS. These peaks are not minimum memory requirements.
+
+The published baseline used the archived v0.3.0 wheel, SHA256
+`bbcc959280de4b1405a4d17697ef9f097b89f67222b8804c36cee0b9198e9493`,
+with all 41 package Python files matching the wheel and local tag commit
+`b71d320a5095efb95f3547ac8648f5fa5de7bd19`. Shared input hashes agreed.
+v0.4.0 uses corrected/physical/stable geometry, whereas the published
+baseline and FSL retain their earlier coordinate/PPD behavior. Algorithm fixes
+are part of the cross-version change; these ratios do not establish pure
+hardware acceleration or numerical equivalence between the workflows.
+
+The FSL driver sourced the original official preprocessing/registration
+subscripts and supplied native `--gradnonlin` to both WLS fits. It skipped
+`nii2msh` visual mesh export, retained intermediates, and included native
+FA/V1, formal-fit and raw-fit FA/SSE QA and tensor publication. It did not add project
+aggregate QA, validity/PPD diagnostics, transaction manifests, or extra dense
+FNIRT field/Jacobian outputs. Native FSL often used one core within the same
+eight-core budget. These output and scheduling differences qualify the ratios.
+
+In raw space, v0.4.0/v0.3.0 mask Dice was 1, common-mask FA/SSE values were
+exact, and tensor relative L2 was `6.46e-17`. v0.4.0/FSL mask Dice was
+`0.9961145`; common-mask tensor/FA/SSE relative L2 was
+`6.2193e-7 / 5.2792e-7 / 5.0044e-6`, using the reference as denominator.
+v0.4.0 CPU/GPU had 61 of 64 artifacts byte-identical, with identical dense
+fields, coefficients, masks and LM records. Brain tensor relative L2 was
+`1.8693e-9`; healthy V1 axial-angle P99 was `1.2074e-6` degrees (both FA>0.1,
+`(lambda_max-lambda_second)/max(abs(lambda))>1e-5`; vector signs ignored).
+Final output grids agreed and inspected products were finite. Unconstrained
+WLS still permits negative spectra and FA>1; this is not
+an all-positive-semidefinite tensor claim or final FSL equivalence claim.
+
+### Complete-run stage times
+
+These stage times come from the same completed runs in the table above. They
+include each stage's output checks; nested FNIRT/PPD timers must not be added
+again. The remaining outer boundary is complete wall time minus the six stages
+and includes startup, imports and work outside the recorded stages.
+
+| Stage | Published v0.3.0 CPU | v0.4.0 CPU | v0.4.0 GPU |
+| --- | ---: | ---: | ---: |
+| Raw DTI QA preparation and fit | 52.880 s | 20.021 s | 19.645 s |
+| Nomoco and final fit | 69.704 s | 12.456 s | 12.354 s |
+| T1 affine registration and QA | 49.620 s | 27.029 s | 26.320 s |
+| FNIRT, PPD and nonlinear outputs | 361.763 s | 121.131 s | 80.543 s |
+| Aggregate QA | 17.437 s | 11.414 s | 10.928 s |
+| m2m tensor publication | 0.835 s | 0.889 s | 0.876 s |
+| Remaining outer boundary | 12.167 s | 12.513 s | 12.674 s |
+| Complete wall time | **564.406 s** | **205.452 s** | **163.342 s** |
+
+Native FSL's coarse integer-second markers give approximately 333 s for raw
+preprocessing and 957 s for T1 affine/FNIRT/PPD/native QA together. That run
+has no separately measured stage times matching the finer Python rows.
+
+Evidence is retained in the local `benchmark-v040-comparison-20261014` archive.
+This is one private input, one host and one sample per configuration; it does
+not establish cold-start, other-acquisition, other-platform or FEM performance.
 
 ## Raw-DWI preprocessing
 

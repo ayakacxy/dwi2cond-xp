@@ -1,4 +1,4 @@
-"""Extract one tagged release section from the project changelog."""
+"""从更新记录提取指定版本，可选生成中英双语发布正文。"""
 
 from __future__ import annotations
 
@@ -10,8 +10,13 @@ from pathlib import Path
 VERSION_HEADING = re.compile(r"^## \[(?P<version>[^]]+)](?:\s+-\s+.+)?$")
 
 
-def extract_release_notes(changelog: str, tag: str) -> str:
-    """Return the changelog body for a tag such as ``v0.2.0``."""
+def extract_release_notes(
+    changelog: str,
+    tag: str,
+    *,
+    chinese_changelog: str | None = None,
+) -> str:
+    """提取指定标签；未提供中文记录时保留原单语言格式。"""
 
     version = tag.removeprefix("v")
     lines = changelog.splitlines()
@@ -32,19 +37,30 @@ def extract_release_notes(changelog: str, tag: str) -> str:
     body = "\n".join(lines[start:end]).strip()
     if not body:
         raise ValueError(f"Changelog section for tag {tag} is empty")
-    return f"## dwi2cond-xp {tag}\n\n{body}\n"
+    heading = f"## dwi2cond-xp {tag}"
+    if chinese_changelog is None:
+        return f"{heading}\n\n{body}\n"
+    chinese_notes = extract_release_notes(chinese_changelog, tag)
+    chinese_body = chinese_notes.split("\n\n", 1)[1].strip()
+    return f"{heading}\n\n## English\n\n{body}\n\n## 简体中文\n\n{chinese_body}\n"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--changelog", type=Path, default=Path("docs/CHANGELOG.md"))
+    parser.add_argument("--chinese-changelog", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
         notes = extract_release_notes(
             args.changelog.read_text(encoding="utf-8"),
             args.tag,
+            chinese_changelog=(
+                args.chinese_changelog.read_text(encoding="utf-8")
+                if args.chinese_changelog is not None
+                else None
+            ),
         )
     except ValueError as error:
         raise SystemExit(str(error)) from error

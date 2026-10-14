@@ -15,6 +15,7 @@ from numba import njit
 from scipy.ndimage import affine_transform, map_coordinates
 
 from .image_ops import select_b0_indices
+from .orientation import validate_fsl_raw_sampling
 from .resampling import resample_image
 from .transforms import affine_matrix, decompose_affine
 
@@ -223,15 +224,82 @@ def _intensity_center_scaled_mm(
     if abs(total) < 1e-5:
         return np.zeros(3, dtype=np.float64)
     spacing = _spacing_vector(spacing_mm)
-    grid = np.indices(values.shape, dtype=np.float64)
-    return np.array(
-        [
-            float(np.sum(grid[axis] * weights) / total) * spacing[axis]
-            for axis in range(3)
-        ]
-    )
+    # 广播单轴坐标，复用乘积空间并保留原坐标阵列的 C 序规约。
+    products = np.empty(values.shape, dtype=np.float64, order="C")
+    center = np.empty(3, dtype=np.float64)
+    for axis in range(3):
+        coordinates = np.arange(values.shape[axis], dtype=np.float64).reshape(
+            tuple(values.shape[axis] if index == axis else 1 for index in range(3))
+        )
+        np.multiply(coordinates, weights, out=products)
+        center[axis] = float(np.sum(products) / total) * spacing[axis]
+    return center
 
 
+@njit(cache=True, nogil=True, fastmath=False)
+def _resample_b0_affine_kernel(source, mapping):
+    """融合原始 b0 的坐标生成和三线性采样，近外推边界时交回参考实现。"""
+    out = np.empty(source.shape, np.float32)
+    border = False
+    nx, ny, nz = source.shape
+    for x in range(nx):
+        for y in range(ny):
+            for z in range(nz):
+                a = mapping[0, 0]*x + mapping[0, 1]*y + mapping[0, 2]*z + mapping[0, 3]
+                b = mapping[1, 0]*x + mapping[1, 1]*y + mapping[1, 2]*z + mapping[1, 3]
+                c = mapping[2, 0]*x + mapping[2, 1]*y + mapping[2, 2]*z + mapping[2, 3]
+                if min(abs(a+1), abs(a-nx), abs(b+1), abs(b-ny), abs(c+1), abs(c-nz)) < 1e-7:
+                    border = True
+                if a < -1 or a >= nx or b < -1 or b >= ny or c < -1 or c >= nz:
+                    out[x, y, z] = 0
+                    continue
+                a = min(max(a, 0.), nx-1.)
+                b = min(max(b, 0.), ny-1.)
+                c = min(max(c, 0.), nz-1.)
+                i, j, k = int(a), int(b), int(c)
+                u, v, w = a-i, b-j, c-k
+                val = 0.
+                for dx in range(2):
+                    for dy in range(2):
+                        for dz in range(2):
+                            weight = (u if dx else 1-u)*(v if dy else 1-v)*(w if dz else 1-w)
+                            val += float(source[
+                                min(i+dx, nx-1), min(j+dy, ny-1), min(k+dz, nz-1),
+                            ]) * weight
+                out[x, y, z] = val
+    return out, border
+
+
+def _intensity_center_projected(values, spacing_mm):
+    """沿轴投影后计算强度重心，避免三个全体积乘积数组；规约使用 float64。"""
+    weights = values.astype(np.float64) - float(np.min(values))
+    total = float(np.sum(weights))
+    if abs(total) < 1e-5:
+        return np.zeros(3, dtype=np.float64)
+    spacing = _spacing_vector(spacing_mm)
+    return np.array([
+        np.dot(
+            np.arange(values.shape[axis], dtype=np.float64),
+            weights.sum(axis=tuple(other for other in range(3) if other != axis)),
+        ) / total * spacing[axis]
+        for axis in range(3)
+    ])
+
+
+def _resample_b0_affine(moving, affine, shape, reference_affine, world_transform, **kwargs):
+    """只供原始 b0 最终同网格采样使用；保持 extraslice 的硬边界规则。"""
+    inverse_source = np.linalg.inv(affine)
+    inverse_world = np.linalg.inv(world_transform)
+    mapping = inverse_source @ inverse_world @ reference_affine
+    # 用绝对值传播估计重结合的舍入误差，覆盖大平移抵消和非等距网格。
+    magnitude = np.abs(inverse_source) @ np.abs(inverse_world) @ np.abs(reference_affine)
+    bound = 64 * np.finfo(np.float64).eps * np.max(magnitude[:3] @ np.r_[np.asarray(shape)-1, 1])
+    if bound < 1e-7:
+        sampled, near_border = _resample_b0_affine_kernel(moving, mapping)
+        if not near_border:
+            return sampled
+    # 大误差界或接近 -1/size 时，沿用原矩阵次序决定包含或排除。
+    return resample_image(moving, affine, shape, reference_affine, world_transform, **kwargs)
 @njit(cache=True, nogil=True)
 def _sample_smoothed_linear_kernel(
     moving: np.ndarray,
@@ -874,12 +942,14 @@ def write_aligned_b0_mean(
     workers: int = 1,
     progress: ProgressCallback | None = None,
     qa_file: str | Path | None = None,
+    fast_preparation: bool = False,
 ) -> Path:
     """Register b0 volumes to the middle b0 and write their float32 mean."""
 
     image = nib.load(str(data_file), mmap=True)
     if len(image.shape) != 4:
         raise ValueError("DWI data must be a four-dimensional NIfTI")
+    validate_fsl_raw_sampling(image)
     bvals = np.asarray(np.loadtxt(bvals_file), dtype=np.float64).reshape(-1)
     if bvals.size != image.shape[3]:
         raise ValueError("The DWI fourth axis does not match bvals")
@@ -903,6 +973,12 @@ def write_aligned_b0_mean(
     reference_cache: dict[float, np.ndarray] = {}
     moving_cache: list[np.ndarray] | None = None
     moving_spacing = np.asarray(voxel_sizes, dtype=np.float64)
+    center_function = _intensity_center_projected if fast_preparation else _intensity_center_scaled_mm
+    original_centers = [
+        center_function(volume, float(voxel_sizes[0]))
+        for volume in volumes
+    ]
+    stage_centers = None
     fix_2d = False
     for stage_index, spacing in enumerate(stages_mm):
         spacing_key = float(spacing)
@@ -935,10 +1011,16 @@ def write_aligned_b0_mean(
         )
         parameter_axes = (2, 3, 4) if fix_2d else None
         smooth_mm = 0.1 if fix_2d else 1.0
-        stage_centers = [
-            _intensity_center_scaled_mm(volume, moving_spacing)
-            for volume in moving_stages
-        ]
+        if stage_centers is None:
+            # 移动图像与其采样间距在三层优化中保持相同；只算一次重心。
+            stage_centers = (
+                original_centers
+                if not fix_2d and np.all(moving_spacing == voxel_sizes[0])
+                else [
+                    center_function(volume, moving_spacing)
+                    for volume in moving_stages
+                ]
+            )
         stage_output = [matrix.copy() for matrix in matrices]
         order = list(range(reference_position + 1, len(volumes))) + list(
             range(reference_position - 1, -1, -1)
@@ -1007,7 +1089,7 @@ def write_aligned_b0_mean(
         aligned = (
             reference
             if position == reference_position
-            else resample_image(
+            else (_resample_b0_affine if fast_preparation else resample_image)(
                 moving,
                 image.affine,
                 reference.shape,
@@ -1017,7 +1099,7 @@ def write_aligned_b0_mean(
                 linear_extrapolation="extraslice",
             )
         )
-        center = _intensity_center_scaled_mm(moving, float(voxel_sizes[0]))
+        center = original_centers[position]
         return aligned, world_transform, center
 
     if workers == 1:

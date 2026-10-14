@@ -517,6 +517,126 @@ def test_topup_nifti_writes_public_artifacts(tmp_path, monkeypatch) -> None:
     assert report["fsl_topup_prefix"] == str(output / "topup")
 
 
+@pytest.mark.parametrize("handedness", [-1, 1])
+def test_topup_wrapper_restores_images_but_retains_internal_coefficients(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, handedness: int
+) -> None:
+    shape = (6, 5, 4)
+    forward = np.arange(np.prod(shape), dtype=np.float32).reshape(shape) + 1.0
+    reverse = forward * 2.0
+    affine = np.diag([handedness * 2.0, 2.2, 2.5, 1.0])
+    forward_file, reverse_file = tmp_path / "forward.nii.gz", tmp_path / "reverse.nii.gz"
+    nib.save(nib.Nifti1Image(forward, affine), forward_file)
+    nib.save(nib.Nifti1Image(reverse, affine), reverse_file)
+    coefficients = np.arange(6 * 6 * 5, dtype=np.float64).reshape(6, 6, 5)
+    movement = np.arange(12, dtype=np.float64).reshape(2, 6)
+    captured: dict[str, np.ndarray] = {}
+
+    def fake_core(scans, rows, _voxel_sizes, **_kwargs):
+        captured["scans"], captured["rows"] = scans.copy(), rows.copy()
+        return TopupRunResult(
+            coefficients, scans[..., 0].copy(), movement, scans * 3.0,
+            (scans[..., 0] > 50).astype(np.uint8), (SimpleNamespace(cost=1.0),),
+        )
+
+    monkeypatch.setattr(topup, "run_simnibs46_topup", fake_core)
+    output = tmp_path / "local"
+    report = run_topup_nifti(
+        forward_file, reverse_file, output, readout_seconds=0.05,
+        phase_encoding_direction="x", workers=2,
+    )
+    expected = np.stack((forward, reverse), axis=3)
+    np.testing.assert_array_equal(captured["scans"], expected[::-1] if handedness > 0 else expected)
+    np.testing.assert_array_equal(captured["rows"][:, 0], [1.0, -1.0])
+    np.testing.assert_array_equal(nib.load(output / "field_hz.nii.gz").get_fdata(), forward)
+    np.testing.assert_array_equal(nib.load(output / "corrected_pair.nii.gz").get_fdata(), expected * 3.0)
+    np.testing.assert_array_equal(nib.load(output / "joint_mask.nii.gz").get_fdata(), forward > 50)
+    np.testing.assert_array_equal(nib.load(output / "topup_fieldcoef.nii.gz").get_fdata(), coefficients)
+    np.testing.assert_array_equal(np.loadtxt(output / "topup_movpar.txt"), movement)
+    np.testing.assert_array_equal(
+        nib.load(output / "field_hz.nii.gz").affine, nib.load(forward_file).affine
+    )
+    assert report["internal_x_reflection"] is (handedness > 0)
+
+
+def test_topup_rejects_inconsistent_header_sampling_before_reorientation(
+    tmp_path: Path,
+) -> None:
+    for name in ("forward", "reverse"):
+        image = nib.Nifti1Image(np.ones((5, 6, 7), dtype=np.float32), np.diag([-2., 2., 2., 1.]))
+        if name == "forward":
+            image.header.set_zooms((3., 2., 2.))
+        nib.save(image, tmp_path / f"{name}.nii.gz")
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="header pixdim"):
+        run_topup_nifti(
+            tmp_path / "forward.nii.gz", tmp_path / "reverse.nii.gz", output,
+            readout_seconds=.05, phase_encoding_direction="x",
+        )
+    assert not output.exists()
+
+
+@pytest.mark.skipif(
+    not FSL_TOPUP.is_file() or not FSL_TOPUP_CONFIG.is_file() or not FSL_APPLYTOPUP.is_file(),
+    reason="FSL TOPUP and applytopup references are required",
+)
+@pytest.mark.parametrize("handedness", [-1, 1])
+@pytest.mark.parametrize("axis", [0, 1])
+def test_topup_field_and_exported_bundle_match_real_fsl_axes(
+    tmp_path: Path, handedness: int, axis: int
+) -> None:
+    shape = (16, 14, 12)
+    grid = np.indices(shape, dtype=np.float64)
+    base = (
+        900 * np.exp(-(((grid[0] - 5.3) / 3.1) ** 2 + ((grid[1] - 6.2) / 3.5) ** 2
+                       + ((grid[2] - 5.1) / 2.8) ** 2))
+        + 450 * np.exp(-(((grid[0] - 11) / 2) ** 2 + ((grid[1] - 9) / 2.5) ** 2
+                         + ((grid[2] - 7) / 2) ** 2))
+    ).astype(np.float32)
+    forward, reverse = np.roll(base, 1, axis=axis), np.roll(base, -1, axis=axis)
+    affine = np.diag([handedness * 2.0, 2.2, 2.5, 1.0])
+    for name, values in (("forward", forward), ("reverse", reverse),
+                         ("merged", np.stack((forward, reverse), axis=3))):
+        nib.save(nib.Nifti1Image(values, affine), tmp_path / f"{name}.nii.gz")
+    rows = np.zeros((2, 4))
+    rows[:, axis], rows[:, 3] = [1, -1], 0.05
+    np.savetxt(tmp_path / "acqp.txt", rows)
+    environment = os.environ.copy()
+    environment.update(FSLDIR=str(FSL_TOPUP.parent.parent), FSLOUTPUTTYPE="NIFTI_GZ")
+    subprocess.run(
+        [str(FSL_TOPUP), f"--imain={tmp_path / 'merged.nii.gz'}",
+         f"--datain={tmp_path / 'acqp.txt'}", f"--config={FSL_TOPUP_CONFIG}",
+         f"--out={tmp_path / 'fsl'}", f"--iout={tmp_path / 'reference_images'}",
+         f"--fout={tmp_path / 'reference_field'}"],
+        check=True, capture_output=True, text=True, env=environment, cwd=tmp_path,
+    )
+    output = tmp_path / "local"
+    run_topup_nifti(
+        tmp_path / "forward.nii.gz", tmp_path / "reverse.nii.gz", output,
+        readout_seconds=0.05, phase_encoding_direction="xy"[axis], workers=2,
+    )
+    field = np.asarray(nib.load(output / "field_hz.nii.gz").dataobj)
+    corrected = np.asarray(nib.load(output / "corrected_pair.nii.gz").dataobj)
+    reference_field = np.asarray(nib.load(tmp_path / "reference_field.nii.gz").dataobj)
+    reference_images = np.asarray(nib.load(tmp_path / "reference_images.nii.gz").dataobj)
+    mask = np.asarray(nib.load(output / "joint_mask.nii.gz").dataobj).astype(bool)
+    selected = mask & (base > 200)
+    field_error = np.linalg.norm((field - reference_field)[selected]) / np.linalg.norm(reference_field[selected])
+    image_error = np.linalg.norm((corrected - reference_images)[mask]) / np.linalg.norm(reference_images[mask])
+    subprocess.run(
+        [str(FSL_APPLYTOPUP), f"--imain={tmp_path / 'forward.nii.gz'},{tmp_path / 'reverse.nii.gz'}",
+         f"--datain={tmp_path / 'acqp.txt'}", "--inindex=1,2", f"--topup={output / 'topup'}",
+         f"--out={tmp_path / 'bundle_applied'}", "--method=jac"],
+        check=True, capture_output=True, text=True, env=environment, cwd=tmp_path,
+    )
+    applied = np.asarray(nib.load(tmp_path / "bundle_applied.nii.gz").dataobj)
+    reference_mean = reference_images.mean(axis=-1)
+    bundle_error = np.linalg.norm((applied - reference_mean)[mask]) / np.linalg.norm(reference_mean[mask])
+    assert field_error < 0.01
+    assert image_error < 0.005
+    assert bundle_error < 0.03
+
+
 def test_periodic_cubic_sampler_matches_fsl604_oracle() -> None:
     image = np.empty((8, 3, 2), dtype=np.float32)
     for z in range(2):

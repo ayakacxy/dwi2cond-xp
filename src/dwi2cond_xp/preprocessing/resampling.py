@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import numpy as np
 from numba import njit, prange
-from scipy.ndimage import map_coordinates
+from scipy.ndimage import affine_transform, map_coordinates
 
 from .transforms import invert_transform
 
@@ -285,6 +285,25 @@ def resample_image(
     output_shape = target_shape if channels == 1 else target_shape + (channels,)
     output = np.empty(output_shape, dtype=np.float32)
     order = _INTERPOLATION_ORDER[interpolation]
+    if (
+        displacement is None and order == 1
+        and linear_extrapolation == "partial"
+    ):
+        # 纯仿射线性采样可直接由 SciPy 生成坐标，省去每块完整网格和三次矩阵搬运。
+        mapping = inverse_source @ inverse_world @ target_affine
+        for channel in range(channels):
+            source = values if values.ndim == 3 else values[..., channel]
+            sampled = affine_transform(
+                source, mapping[:3, :3], offset=mapping[:3, 3],
+                output_shape=target_shape, order=1,
+                mode="grid-constant",
+                cval=float(cval), prefilter=False,
+            )
+            if values.ndim == 3:
+                output[...] = sampled
+            else:
+                output[..., channel] = sampled
+        return output
     for z0 in range(0, target_shape[2], z_chunk):
         z1 = min(z0 + z_chunk, target_shape[2])
         grid = np.indices((target_shape[0], target_shape[1], z1 - z0), dtype=np.float64)

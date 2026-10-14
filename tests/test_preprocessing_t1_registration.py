@@ -76,9 +76,19 @@ def test_t1_registration_writes_complete_grid_and_qa(
 ):
     paths, labels = _fixture(tmp_path)
     calls = []
+    pyramid_builds = []
+    sentinel = object()
+
+    def build_pyramid(*args, **kwargs):
+        pyramid_builds.append(1)
+        return sentinel
+
+    monkeypatch.setattr(t1_module, "build_flirt_pyramid", build_pyramid)
 
     def fake_estimate(*args, degrees_of_freedom, **kwargs):
         calls.append(degrees_of_freedom)
+        if "_pyramid_builder" in kwargs:
+            assert kwargs["_pyramid_builder"]() is sentinel
         return FlirtRegistrationResult(np.eye(4), 0.125, 42, 7)
 
     monkeypatch.setattr(t1_module, "_estimate", fake_estimate)
@@ -98,7 +108,9 @@ def test_t1_registration_writes_complete_grid_and_qa(
         workers=8,
         progress=lambda phase, done, total: progress.append((phase, done, total)),
     )
-    assert calls == ([6, 6] if degrees_of_freedom == 6 else [12, 6, 6])
+    assert calls == ([6] if degrees_of_freedom == 6 else [12, 6])
+    assert len(pyramid_builds) == (0 if degrees_of_freedom == 6 else 1)
+    assert report["correlation_ratio_reduction"] == "fine-fp64-adaptive-blocks-v1"
     assert report["fallback"] == "none"
     assert report["mode"] == ("rigid" if degrees_of_freedom == 6 else "affine")
     assert report["valid_voxels"] > 0
@@ -128,6 +140,47 @@ def test_t1_registration_writes_complete_grid_and_qa(
     assert np.all(np.isfinite(tensor))
     assert json.loads((output / "t1_registration_qa.json").read_text())["workers"] == 8
     assert report["raw_qa_6dof"]["status"] == "available"
+    assert report["raw_qa_6dof"]["registration_reused"]
+    for suffix in ("FA", "SSE"):
+        np.testing.assert_array_equal(
+            np.asarray(nib.load(output / f"DTI_{suffix}_6dof_QA.nii.gz").dataobj),
+            np.asarray(nib.load(output / f"DTIraw_{suffix}_6dof_QA.nii.gz").dataobj),
+        )
+
+
+@pytest.mark.parametrize("difference", ["FA", "SSE", "geometry"])
+def test_t1_raw_qa_reuse_requires_equal_signals_and_sampling(tmp_path, monkeypatch, difference):
+    """任一原始信号或采样尺寸不同，均保留独立 6DOF 配准。"""
+
+    paths, _ = _fixture(tmp_path)
+    raw_fa = tmp_path / "raw_fa.nii.gz"
+    raw_sse = tmp_path / "raw_sse.nii.gz"
+    for label, source, destination in (
+        ("FA", paths["fa"], raw_fa), ("SSE", paths["sse"], raw_sse),
+    ):
+        image = nib.load(source)
+        values = np.asarray(image.dataobj, dtype=np.float32).copy()
+        if difference == label:
+            values[3, 4, 2] += np.float32(0.1)
+        copied = nib.Nifti1Image(values, image.affine, image.header)
+        if difference == "geometry" and label == "FA":
+            copied.header.set_zooms((1.1, 1.0, 1.0))
+        nib.save(copied, destination)
+    calls = []
+
+    def estimate(*args, degrees_of_freedom, **kwargs):
+        calls.append(degrees_of_freedom)
+        return FlirtRegistrationResult(np.eye(4), 0.125, 42, 7)
+
+    monkeypatch.setattr(t1_module, "_estimate", estimate)
+    report = run_t1_registration_nifti(
+        paths["tensor"], paths["fa"], paths["t1"], paths["labels"],
+        paths["corrected"], tmp_path / "different-output", sse_file=paths["sse"],
+        raw_fa_file=raw_fa, raw_sse_file=raw_sse,
+        degrees_of_freedom=6, workers=1, register_tensor_output=False,
+    )
+    assert calls == [6, 6]
+    assert not report["raw_qa_6dof"]["registration_reused"]
 
 
 def test_t1_registration_has_no_alignment_fallback(tmp_path, monkeypatch):
@@ -259,6 +312,7 @@ def test_t1_estimator_builds_fsl_coordinate_contract(tmp_path, monkeypatch):
     assert result.matrix.shape == (4, 4)
     assert captured["kwargs"]["degrees_of_freedom"] == 12
     assert captured["kwargs"]["workers"] == 8
+    assert captured["kwargs"]["_blocked_correlation_ratio"] is True
     assert captured["kwargs"]["qsform_matrix"].shape == (4, 4)
 
 

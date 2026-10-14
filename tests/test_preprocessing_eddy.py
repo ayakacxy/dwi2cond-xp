@@ -405,6 +405,120 @@ def test_eddy_nifti_writes_structured_fixed_subset_outputs(
     assert qa["workers"] == 8
 
 
+@pytest.mark.parametrize("handedness", [-1, 1])
+def test_eddy_wrapper_reflects_scans_mask_and_field_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, handedness: int
+) -> None:
+    shape = (4, 5, 6, 4)
+    scans = np.arange(np.prod(shape), dtype=np.float32).reshape(shape) + 1.0
+    mask = (scans[..., 0] > 100).astype(np.uint8)
+    field = scans[..., 0] / 10.0
+    affine = np.diag([handedness * 2.0, 2.0, 2.5, 1.0])
+    for name, values in (("dwi", scans), ("mask", mask), ("field", field)):
+        nib.save(nib.Nifti1Image(values, affine), tmp_path / f"{name}.nii.gz")
+    bvals = np.asarray([0, 1000, 1000, 1000], dtype=np.float64)
+    bvecs = np.column_stack((np.zeros(3), np.eye(3)))
+    np.savetxt(tmp_path / "bvals", bvals[None])
+    np.savetxt(tmp_path / "bvecs", bvecs)
+    movement = np.arange(24, dtype=np.float64).reshape(4, 6)
+    ec = np.arange(40, dtype=np.float64).reshape(4, 10)
+    captured: dict[str, object] = {}
+
+    def fake_core(scans_core, _bvals, vectors, mask_core, _voxels, axis, sign, _readout, **kwargs):
+        captured.update(scans=scans_core.copy(), mask=mask_core.copy(), bvecs=vectors.copy(),
+                        field=kwargs["susceptibility_field_hz"].copy(), axis=axis, sign=sign)
+        return SimpleNamespace(
+            corrected_scans=scans_core * 2.0, joint_mask=mask_core,
+            outlier_free_scans=scans_core * 3.0, movement_parameters=movement,
+            quadratic_ec_parameters=ec, rotated_bvecs=vectors,
+            outlier_map=np.zeros((4, 6), dtype=bool), scale_factor=1.0,
+            shell_pe_translation_mm=0.0, shell_alignment_parameters=np.zeros(6),
+            dwi_registration=SimpleNamespace(iterations=()),
+        )
+
+    monkeypatch.setattr(eddy, "run_simnibs46_eddy", fake_core)
+    output = tmp_path / "eddy"
+    report = run_eddy_nifti(
+        tmp_path / "dwi.nii.gz", tmp_path / "bvals", tmp_path / "bvecs",
+        tmp_path / "mask.nii.gz", output, readout_seconds=0.05,
+        phase_encoding_direction="y", susceptibility_field_file=tmp_path / "field.nii.gz",
+    )
+    reflected = handedness > 0
+    for name, values in (("scans", scans), ("mask", mask), ("field", field)):
+        np.testing.assert_array_equal(captured[name], values[::-1] if reflected else values)
+    np.testing.assert_array_equal(captured["bvecs"], bvecs)
+    assert (captured["axis"], captured["sign"]) == (1, 1)
+    for name, values in (("corrected_dwi", scans * 2.0), ("outlier_free_data", scans * 3.0),
+                         ("eddy_output_mask", mask)):
+        saved = nib.load(output / f"{name}.nii.gz")
+        np.testing.assert_array_equal(saved.get_fdata(), values)
+        np.testing.assert_array_equal(saved.affine, affine)
+    np.testing.assert_array_equal(np.loadtxt(output / "eddy_parameters.txt"), np.column_stack((movement, ec)))
+    np.testing.assert_array_equal(np.loadtxt(output / "rotated_bvecs"), bvecs)
+    assert report["internal_x_reflection"] is reflected
+
+
+@pytest.mark.parametrize("component_mode", ["physical", "simnibs46-literal"])
+def test_eddy_raw_bvec_reorientation_uses_original_input_basis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, component_mode: str
+) -> None:
+    # 输入存储轴为 A/L/S；FSL 原始 bvec 的 x/y 分量必须同步转换到标准存储轴。
+    affine = np.asarray([[0, -2, 0, 0], [2, 0, 0, 0], [0, 0, 2.5, 0], [0, 0, 0, 1]], dtype=float)
+    scans = np.ones((4, 5, 6, 4), dtype=np.float32)
+    nib.save(nib.Nifti1Image(scans, affine), tmp_path / "dwi.nii.gz")
+    nib.save(nib.Nifti1Image(np.ones(scans.shape[:3], dtype=np.uint8), affine), tmp_path / "mask.nii.gz")
+    vectors = np.column_stack((np.zeros(3), np.eye(3)))
+    np.savetxt(tmp_path / "bvecs", vectors)
+    np.savetxt(tmp_path / "bvals", [[0, 1000, 1000, 1000]])
+    captured: dict[str, np.ndarray] = {}
+
+    def fake_core(scans_core, _bvals, core_bvecs, core_mask, *_args, **_kwargs):
+        captured["bvecs"] = core_bvecs.copy()
+        return SimpleNamespace(
+            corrected_scans=scans_core, joint_mask=core_mask, outlier_free_scans=None,
+            movement_parameters=np.zeros((4, 6)), quadratic_ec_parameters=np.zeros((4, 10)),
+            rotated_bvecs=core_bvecs, outlier_map=np.zeros((4, 6), dtype=bool),
+            scale_factor=1.0, shell_pe_translation_mm=0.0, shell_alignment_parameters=np.zeros(6),
+            dwi_registration=SimpleNamespace(iterations=()),
+        )
+
+    monkeypatch.setattr(eddy, "run_simnibs46_eddy", fake_core)
+    output = tmp_path / "eddy"
+    report = run_eddy_nifti(
+        tmp_path / "dwi.nii.gz", tmp_path / "bvals", tmp_path / "bvecs",
+        tmp_path / "mask.nii.gz", output, readout_seconds=0.05,
+        phase_encoding_direction="y", component_mode=component_mode,
+    )
+    expected = (
+        np.asarray([[0, 0, 1, 0], [0, -1, 0, 0], [0, 0, 0, 1]], dtype=float)
+        if component_mode == "physical" else vectors
+    )
+    np.testing.assert_array_equal(captured["bvecs"], expected)
+    np.testing.assert_array_equal(np.loadtxt(output / "rotated_bvecs"), expected)
+    assert report["component_mode"] == component_mode
+    assert report["internal_x_reflection"] is True
+
+
+@pytest.mark.parametrize("inconsistent", ["dwi", "field"])
+def test_eddy_rejects_inconsistent_header_sampling_before_reorientation(
+    tmp_path: Path, inconsistent: str
+) -> None:
+    for name in ("dwi", "mask", "field"):
+        shape = (5, 6, 7, 4) if name == "dwi" else (5, 6, 7)
+        image = nib.Nifti1Image(np.ones(shape, dtype=np.float32), np.diag([-2., 2., 2., 1.]))
+        if name == inconsistent:
+            image.header.set_zooms((3., 2., 2., 1.) if name == "dwi" else (3., 2., 2.))
+        nib.save(image, tmp_path / f"{name}.nii.gz")
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="header pixdim"):
+        run_eddy_nifti(
+            tmp_path / "dwi.nii.gz", tmp_path / "bvals", tmp_path / "bvecs",
+            tmp_path / "mask.nii.gz", output, readout_seconds=.05,
+            phase_encoding_direction="x", susceptibility_field_file=tmp_path / "field.nii.gz",
+        )
+    assert not output.exists()
+
+
 @pytest.mark.parametrize(
     ("keyword", "value", "message"),
     (

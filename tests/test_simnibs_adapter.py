@@ -75,7 +75,7 @@ def test_tensor_to_mesh_writes_conductivity_and_qa(monkeypatch, tmp_path: Path) 
     mesh = _install_fake_simnibs(monkeypatch, tmp_path)
     image = SimpleNamespace(shape=(2, 2, 2, 6), dataobj=np.zeros((2, 2, 2, 6)), affine=np.eye(4))
     monkeypatch.setattr(simnibs_adapter.nib, "load", lambda path: image)
-    monkeypatch.setattr(simnibs_adapter, "correct_fsl_tensor_basis", lambda matrix, affine: matrix)
+    monkeypatch.setattr(simnibs_adapter, "correct_fsl_tensor_basis", lambda matrix, affine, **kwargs: matrix)
 
     def fake_conversion(matrices, tags, scalar, **kwargs):
         assert matrices.shape == (2, 3, 3)
@@ -118,7 +118,7 @@ def test_tensor_to_mesh_counts_true_tetrahedra_in_boolean_mask(
         shape=(2, 2, 2, 6), dataobj=np.zeros((2, 2, 2, 6)), affine=np.eye(4)
     )
     monkeypatch.setattr(simnibs_adapter.nib, "load", lambda path: image)
-    monkeypatch.setattr(simnibs_adapter, "correct_fsl_tensor_basis", lambda matrix, affine: matrix)
+    monkeypatch.setattr(simnibs_adapter, "correct_fsl_tensor_basis", lambda matrix, affine, **kwargs: matrix)
     monkeypatch.setattr(
         simnibs_adapter,
         "tensors_to_conductivity",

@@ -193,12 +193,21 @@ def test_sparse_pcg_progress_polls_a_running_kernel(monkeypatch) -> None:
         assert release.wait(timeout=2.0)
         return np.zeros_like(right_hand_side), 1, 0.5, False
 
-    def release_worker(_seconds: float) -> None:
+    waits = 0
+
+    def release_worker(futures, *, timeout: float) -> None:
+        nonlocal waits
+        assert timeout == 0.1
         assert started.wait(timeout=2.0)
-        release.set()
+        waits += 1
+        # 至少保留一轮运行中的进度采样，随后立即唤醒等待者。
+        if waits > 1:
+            release.set()
+            from concurrent.futures import wait
+            wait(futures, timeout=2.0)
 
     monkeypatch.setattr(optimizer_module, "_fsl_diagonal_pcg_csr", fake_kernel)
-    monkeypatch.setattr(optimizer_module.time, "sleep", release_worker)
+    monkeypatch.setattr(optimizer_module, "wait", release_worker)
     result = fsl_diagonal_pcg(
         csc_matrix(np.eye(2)),
         np.ones(2),
@@ -206,10 +215,12 @@ def test_sparse_pcg_progress_polls_a_running_kernel(monkeypatch) -> None:
     )
 
     assert result.iterations == 1
-    assert events == [(1, 500, 0.5), (1, 500, 0.5)]
+    assert events[-1] == (1, 500, 0.5)
+    assert (1, 500, 0.5) in events[:-1]
 
 
-def test_levenberg_marquardt_matches_fsl_acceptance_trajectory() -> None:
+@pytest.mark.parametrize("csr_hessian", [False, True])
+def test_levenberg_marquardt_matches_fsl_acceptance_trajectory(csr_hessian) -> None:
     target = np.asarray([2.0, -1.0])
     weights = np.asarray([3.0, 5.0])
 
@@ -224,7 +235,7 @@ def test_levenberg_marquardt_matches_fsl_acceptance_trajectory() -> None:
         return csc_matrix(np.diag(weights))
 
     result = fsl_levenberg_marquardt(
-        np.zeros(2), cost, gradient, hessian, max_iterations=5
+        np.zeros(2), cost, gradient, hessian, max_iterations=5, _csr_hessian=csr_hessian
     )
 
     assert result.status == "maximum_iterations"

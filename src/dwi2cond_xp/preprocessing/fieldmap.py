@@ -17,7 +17,7 @@ from ._numba import set_available_numba_threads
 from .brain_mask import bet_brain_mask
 from .flirt_registration import FlirtRegistrationResult, register_flirt_affine
 from .image_ops import masked_percentile, median_filter_box
-from .orientation import write_fsl_reoriented
+from .orientation import validate_fsl_raw_sampling, write_fsl_reoriented
 from .resampling import resample_image
 from .transforms import (
     fsl_matrix_to_world,
@@ -105,7 +105,7 @@ def displacement_from_voxel_shift(
     affine: np.ndarray,
     phase_encoding_direction: str,
 ) -> np.ndarray:
-    """Express the signed convertwarp voxel shift as a NIfTI world-mm pull displacement."""
+    """把 FSL 内部的有符号体素位移转换到 NIfTI 世界毫米坐标。"""
 
     shift = np.asarray(voxel_shift, dtype=np.float32)
     matrix = np.asarray(affine, dtype=np.float64)
@@ -115,7 +115,23 @@ def displacement_from_voxel_shift(
     if matrix.shape != (4, 4) or not np.all(np.isfinite(matrix)):
         raise ValueError("affine must be a finite 4x4 matrix")
     direction = matrix[:3, axis] * float(sign)
+    if axis == 0 and _radiological_flip_required(matrix):
+        direction *= -1.0
     return np.multiply(shift[..., None], direction, dtype=np.float64)
+
+
+def _radiological_flip_required(affine: np.ndarray | None) -> bool:
+    """判断 NIfTI 存储数组是否需要反射 x 轴才能进入 FSL 内部坐标。"""
+
+    if affine is None:
+        return False
+    matrix = np.asarray(affine, dtype=np.float64)
+    if matrix.shape != (4, 4) or not np.all(np.isfinite(matrix)):
+        raise ValueError("affine must be a finite 4x4 matrix")
+    determinant = float(np.linalg.det(matrix[:3, :3]))
+    if abs(determinant) < 1e-12:
+        raise ValueError("affine must have nonsingular spatial axes")
+    return determinant > 0.0
 
 
 def fill_head_mask(mask: np.ndarray) -> np.ndarray:
@@ -227,13 +243,20 @@ def regularize_voxel_shift(
     voxel_shift: np.ndarray,
     mask: np.ndarray,
     phase_encoding_direction: str,
+    *,
+    affine: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Reproduce FUGUE's default hole fill and rigid extension along the PE axis."""
+    """在 FSL 内部坐标中填补场图空洞并延拓；未指定 affine 时输入须已是内部排列。"""
 
     shift = np.asarray(voxel_shift, dtype=np.float32)
     original = (np.asarray(mask) > 0).astype(np.uint8)
     if shift.ndim != 3 or original.shape != shift.shape:
         raise ValueError("voxel_shift and mask must share a three-dimensional grid")
+    if _radiological_flip_required(affine):
+        regularized, filled = regularize_voxel_shift(
+            shift[::-1], original[::-1], phase_encoding_direction
+        )
+        return regularized[::-1].copy(), filled[::-1].copy()
     axis, sign = phase_encoding_axis_sign(phase_encoding_direction)
     filled = fill_head_mask(original)
     regularized = extrapolate_field_holes(shift, original, filled)
@@ -331,8 +354,9 @@ def forward_warp_magnitude(
     phase_encoding_direction: str,
     *,
     workers: int = 8,
+    affine: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Reproduce the image-space forward warp from ``fugue -w --nokspace``."""
+    """执行 FUGUE 前向变形并恢复存储轴；未指定 affine 时输入须已是内部排列。"""
 
     source = np.asarray(magnitude, dtype=np.float32)
     shift = np.asarray(voxel_shift, dtype=np.float32)
@@ -341,6 +365,11 @@ def forward_warp_magnitude(
         raise ValueError("magnitude and voxel_shift must be matching 3D arrays")
     if workers < 1:
         raise ValueError("workers must be positive")
+    if _radiological_flip_required(affine):
+        warped = forward_warp_magnitude(
+            source[::-1], shift[::-1], phase_encoding_direction, workers=workers
+        )
+        return warped[::-1].copy()
     source_y = np.moveaxis(source, axis, 1)
     shift_y = np.moveaxis(shift, axis, 1)
     if sign < 0:
@@ -388,13 +417,14 @@ def run_fieldmap(
         field, dwell_seconds, phase_encoding_direction
     )
     shift_magnitude, _ = regularize_voxel_shift(
-        shift_magnitude, mask, phase_encoding_direction
+        shift_magnitude, mask, phase_encoding_direction, affine=magnitude_affine
     )
     distorted = forward_warp_magnitude(
         magnitude_brain,
         shift_magnitude,
         phase_encoding_direction,
         workers=workers,
+        affine=magnitude_affine,
     )
     if progress:
         progress("fieldmap_prepare", 1, 4)
@@ -449,7 +479,7 @@ def run_fieldmap(
     mask_dwi = (mask_dwi_float >= np.float32(0.5)).astype(np.uint8)
     shift = voxel_shift_from_field(field_dwi, dwell_seconds, phase_encoding_direction)
     shift, filled_mask_dwi = regularize_voxel_shift(
-        shift, mask_dwi, phase_encoding_direction
+        shift, mask_dwi, phase_encoding_direction, affine=b0_affine
     )
     shift = np.multiply(shift, filled_mask_dwi, dtype=np.float32)
     displacement = displacement_from_voxel_shift(
@@ -546,6 +576,12 @@ def run_fieldmap_nifti(
     started = perf_counter()
     if not np.isfinite(dwell_milliseconds) or dwell_milliseconds <= 0:
         raise ValueError("dwell_milliseconds must be positive and finite")
+    for path in (
+        magnitude_file, field_radians_per_second_file, b0_brain_file,
+        magnitude_mask_file, b0_mask_file,
+    ):
+        if path is not None:
+            validate_fsl_raw_sampling(nib.load(str(path)))
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
     prepared_magnitude = write_fsl_reoriented(

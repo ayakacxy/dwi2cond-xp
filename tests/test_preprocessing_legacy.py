@@ -405,9 +405,16 @@ def test_resample_series_rotate_bvecs_and_save(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("bvec_mode", ["compat46", "corrected"])
-def test_run_legacy_pipeline_contract(tmp_path, monkeypatch, bvec_mode) -> None:
+@pytest.mark.parametrize("handedness", [-1, 1])
+def test_run_legacy_pipeline_contract(tmp_path, monkeypatch, bvec_mode, handedness) -> None:
     dwi, bvals, bvecs = _write_inputs(tmp_path)
+    original_image = nib.load(dwi)
+    affine = np.diag([handedness * 2.0, 2.0, 2.0, 1.0])
+    nib.save(nib.Nifti1Image(np.asarray(original_image.dataobj).copy(), affine), dwi)
     output = tmp_path / f"out-{bvec_mode}"
+    angle = np.deg2rad(30.0)
+    motion = np.eye(4)
+    motion[:2, :2] = [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]
 
     def aligned(_data, _bvals, target, **_kwargs):
         image = nib.load(dwi)
@@ -427,7 +434,7 @@ def test_run_legacy_pipeline_contract(tmp_path, monkeypatch, bvec_mode) -> None:
         legacy,
         "_register_mcflirt_series",
         lambda volumes, *_args, **_kwargs: (
-            [np.eye(4) for _ in volumes],
+            [motion.copy() for _ in volumes],
             [1 for _ in volumes],
             [0.0 for _ in volumes],
         ),
@@ -491,20 +498,19 @@ def test_run_legacy_pipeline_contract(tmp_path, monkeypatch, bvec_mode) -> None:
             "fieldmap_dwell_milliseconds": 0.5,
             "fieldmap_phase_encoding_direction": "y-",
         }
-    if bvec_mode == "corrected":
-        monkeypatch.setattr(legacy, "_rotate_bvecs", lambda _a, vectors, _m: vectors)
     displacement = None
     corrected_mask = None
     grad_dev = None
     if bvec_mode == "corrected":
         displacement = tmp_path / "field.nii.gz"
-        nib.save(nib.Nifti1Image(np.zeros((7, 7, 7, 3)), np.diag([-2, 2, 2, 1])), displacement)
+        nib.save(nib.Nifti1Image(np.zeros((7, 7, 7, 3)), affine), displacement)
         corrected_mask = tmp_path / "corrected_mask.nii.gz"
         nib.save(
-            nib.Nifti1Image(np.ones((7, 7, 7)), np.diag([-2, 2, 2, 1])),
+            nib.Nifti1Image(np.ones((7, 7, 7)), affine),
             corrected_mask,
         )
-        grad_dev = dwi
+        grad_dev = tmp_path / "grad_dev.nii.gz"
+        nib.save(nib.Nifti1Image(np.zeros((7, 7, 7, 9)), affine), grad_dev)
     report = legacy.run_legacy_nifti(
         dwi,
         bvals,
@@ -524,6 +530,12 @@ def test_run_legacy_pipeline_contract(tmp_path, monkeypatch, bvec_mode) -> None:
     if bvec_mode == "compat46":
         assert (output / "DWIbvecs").read_bytes() == bvecs.read_bytes()
         assert report["interpolation"]["fieldmap_input"] == "raw-radians-per-second"
+    else:
+        # 30°矩阵由 FSL producer 生成；旧 world-basis consumer 会把 y 分量反号。
+        original = np.loadtxt(bvecs)
+        expected = motion[:3, :3] @ original
+        np.testing.assert_allclose(np.loadtxt(output / "DWIbvecs"), expected, atol=1e-9)
+        assert report["bvec_contract"] == "fsl_basis_finite_strain_rotated"
 
 
 def test_run_legacy_input_and_field_validation(tmp_path, monkeypatch) -> None:

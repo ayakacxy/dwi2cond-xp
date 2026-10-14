@@ -76,6 +76,9 @@ def test_candidate_parallelism_preserves_values_and_order() -> None:
 
 
 def test_weighted_correlation_ratio_preserves_fsl_order_in_parallel() -> None:
+    from numba import get_num_threads
+
+    previous_threads = get_num_threads()
     evaluator = _correlation_evaluator()
     cases = [
         ((0.0, 0.0, 0.0), 1.0297900438308716),
@@ -95,6 +98,7 @@ def test_weighted_correlation_ratio_preserves_fsl_order_in_parallel() -> None:
     direct = np.asarray([evaluator(transform) for transform in transforms])
     assert np.array_equal(evaluator.evaluate_many(np.asarray(transforms), workers=8), direct)
     assert np.array_equal(evaluator.evaluate_many(np.asarray(transforms[:1])), direct[:1])
+    assert get_num_threads() == previous_threads
 
 
 def test_correlation_workset_and_unit_weight_paths() -> None:
@@ -468,3 +472,43 @@ def test_correlation_evaluator_validation() -> None:
     nonfinite[0, 0, 0] = np.nan
     with pytest.raises(ValueError, match="finite"):
         evaluator.evaluate_many(nonfinite)
+
+
+@pytest.mark.parametrize("kind", ["weighted", "sparse", "constant", "empty", "near_constant"])
+def test_blocked_correlation_ratio_respects_reference_and_thread_budget(kind):
+    """核对参考代价、批量一致性和线程预算，覆盖退化支持域。"""
+    from numba import get_num_threads
+    from dwi2cond_xp.preprocessing.flirt_blocked import FlirtBlockedCorrelationRatio
+    reference, moving, weight, moving_weight = _fixture()
+    if kind == "sparse":
+        weight.fill(0)
+        weight[3:6, 3:6, 3:6] = np.float32(0.1)
+        moving_weight.fill(1)
+    elif kind in ("constant", "near_constant"):
+        reference.fill(1)
+        moving.fill(1)
+        if kind == "near_constant":
+            moving[4:7, 4:7, 4:7] += np.float32(1e-5)
+    elif kind == "empty":
+        weight.fill(0)
+    cpu = FlirtWeightedCorrelationRatio(reference, moving, weight, moving_weight, np.eye(4), np.eye(4), bins=16)
+    fast = FlirtBlockedCorrelationRatio(reference, moving, weight, moving_weight, np.eye(4), np.eye(4), bins=16)
+    transforms = np.repeat(np.eye(4)[None], 3, axis=0)
+    transforms[1, :3, 3] = [0.2, -0.3, 0.4]
+    transforms[2, 0, 3] = 100
+    before = get_num_threads()
+    result = fast.evaluate_many(transforms, workers=1)
+    assert get_num_threads() == before
+    assert np.all(np.isfinite(result))
+    single = np.array([fast(matrix) for matrix in transforms])
+    np.testing.assert_allclose(single, result, rtol=0, atol=1e-7)
+    if kind in ("weighted", "sparse"):
+        np.testing.assert_allclose(result, cpu.evaluate_many(transforms), rtol=0, atol=1e-4)
+    if kind in ("constant", "empty"):
+        np.testing.assert_array_equal(result, np.ones(3))
+    assert result[-1] == 1
+    with pytest.raises(ValueError, match="finite"):
+        fast(np.full((4, 4), np.nan))
+    with pytest.raises(ValueError, match="positive"):
+        fast.evaluate_many(transforms, workers=0)
+    assert get_num_threads() == before

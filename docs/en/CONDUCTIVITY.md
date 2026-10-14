@@ -109,14 +109,23 @@ SimNIBS safety passes and records the repaired-element count in QA. This
 extension is explicit and is not presented as the literal SimNIBS 4.6
 rank-deficient branch.
 
-The standalone converter uses `--eigensystem-mode stable` by default. This
+The converter, formal FEM, and lead-field workflows use
+`--eigensystem-mode stable` by default. This
 selects the symmetric `eigh` solver and keeps repeated-eigenvalue tensors on an
 orthogonal, full-rank basis. `--eigensystem-mode simnibs46-literal` is an
 explicit compatibility mode that reproduces SimNIBS 4.6's general `eig`
 ordering, including its non-orthogonal repeated-eigenvalue edge output; the QA
 JSON records the selected mode and basis-orthogonality diagnostics. FEM
-workflow runs still delegate conductivity construction to the installed
-SimNIBS SESSION rather than this standalone converter.
+workflow runs use the installed SimNIBS SESSION with a project-local
+conductivity hook on the selected instance. Installed modules are unchanged.
+
+The default `--basis-mode physical` removes voxel sizes by normalizing the
+affine's spatial columns separately before transforming tensor directions.
+Oblique unequal-sized voxels therefore retain the tensor's eigenvalues and
+isotropy. Sheared affines are rejected in this mode. Explicit
+`--basis-mode simnibs46-literal` preserves the upstream normalization for
+comparison. These basis fixes are included in the `v0.4.0`
+implementation; the mapping equations above and historical release evidence are unchanged.
 
 References:
 

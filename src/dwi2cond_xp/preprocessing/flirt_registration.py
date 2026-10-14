@@ -8,6 +8,7 @@ import math
 
 import numpy as np
 
+from .flirt_blocked import FlirtBlockedCorrelationRatio
 from .flirt_cost import (
     FlirtWeightedCorrelationRatio,
     FlirtWeightedMutualInformation,
@@ -58,12 +59,16 @@ def _level_evaluator(
     level: FlirtPyramidLevel,
     smooth_size: float,
     cost_function: str = "correlation_ratio",
+    *,
+    blocked: bool = False,
 ) -> FlirtWeightedCorrelationRatio | FlirtWeightedMutualInformation:
     evaluator_class = (
         FlirtWeightedCorrelationRatio
         if cost_function == "correlation_ratio"
         else FlirtWeightedMutualInformation
     )
+    if blocked and cost_function == "correlation_ratio":
+        evaluator_class = FlirtBlockedCorrelationRatio
     return evaluator_class(
         level.reference,
         level.moving,
@@ -607,6 +612,8 @@ def register_flirt_affine(
     search_cost_function: str | None = None,
     nosearch: bool = False,
     use_weights: bool = True,
+    _pyramid_builder: Callable | None = None,
+    _blocked_correlation_ratio: bool = False,
     progress: Callable[[str, int, int], None] | None = None,
 ) -> FlirtRegistrationResult:
     """Run FSL's default 3D FLIRT schedule with the specified upstream cost."""
@@ -640,7 +647,8 @@ def register_flirt_affine(
     internal_moving_sampling = coordinate_scale @ np.asarray(
         moving_sampling, dtype=np.float64
     )
-    levels = build_flirt_pyramid(
+    pyramid_builder = build_flirt_pyramid if _pyramid_builder is None else _pyramid_builder
+    levels = pyramid_builder(
         reference,
         moving,
         reference_weight,
@@ -723,7 +731,10 @@ def register_flirt_affine(
     evaluations += count
     expanded.sort(key=lambda item: item.cost)
 
-    evaluator2 = _level_evaluator(levels[2], 2.0, cost_function)
+    if _blocked_correlation_ratio and cost_function == "correlation_ratio":
+        evaluator2 = _level_evaluator(levels[2], 2.0, cost_function, blocked=True)
+    else:
+        evaluator2 = _level_evaluator(levels[2], 2.0, cost_function)
     center2 = flirt_intensity_cog(levels[2].moving, levels[2].moving_sampling)
     measured, count = _measure(evaluator2, internal_initial, expanded, workers)
     evaluations += count
@@ -767,7 +778,10 @@ def register_flirt_affine(
         )
         evaluations += count
 
-    evaluator1 = _level_evaluator(levels[1], 1.0, cost_function)
+    if _blocked_correlation_ratio and cost_function == "correlation_ratio":
+        evaluator1 = _level_evaluator(levels[1], 1.0, cost_function, blocked=True)
+    else:
+        evaluator1 = _level_evaluator(levels[1], 1.0, cost_function)
     center1 = flirt_intensity_cog(levels[1].moving, levels[1].moving_sampling)
     relative_qsform = internal_qsform @ np.linalg.inv(internal_initial)
     final_starts = [current[0].matrix, relative_qsform]

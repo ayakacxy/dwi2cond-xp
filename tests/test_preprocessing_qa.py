@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import gzip
 from dataclasses import replace
 from pathlib import Path
 
@@ -18,6 +19,49 @@ from dwi2cond_xp.preprocessing.qa import (
 from dwi2cond_xp.preprocessing import qa
 from dwi2cond_xp.preprocessing import pipeline
 from dwi2cond_xp.cli import main
+
+
+@pytest.mark.parametrize("dtype,scaled", [("<f4", False), (">f4", False), ("<i2", True)])
+def test_streamed_dwi_means_match_proxy_and_validate_tail(tmp_path, monkeypatch, dtype, scaled):
+    """流式均值保留字节序、缩放回退、原累加顺序与 gzip 尾部检查。"""
+    values = np.arange(3 * 4 * 2 * 5).reshape(3, 4, 2, 5).astype(dtype)
+    header = nib.Nifti1Header(endianness=">" if dtype.startswith(">") else "<")
+    header.set_data_dtype(dtype)
+    image = nib.Nifti1Image(values, np.eye(4), header)
+    if scaled:
+        image.header.set_slope_inter(0.25, -2.0)
+    path = tmp_path / "dwi.nii.gz"
+    nib.save(image, path)
+    proxy_image = nib.load(path)
+    loaded = np.asarray(proxy_image.dataobj)
+    b0, diffusion = np.array([0, 3]), np.array([1, 2, 4])
+    _, actual_b0, actual_diffusion, _ = qa._mean_artifacts(
+        path, b0, diffusion, tmp_path, "means",
+    )
+    for indices, actual in ((b0, actual_b0), (diffusion, actual_diffusion)):
+        expected = np.zeros(values.shape[:3], dtype=np.float64)
+        for index in indices:
+            expected += loaded[..., index]
+        expected /= indices.size
+        np.testing.assert_array_equal(actual, expected)
+    if not scaled:
+        # 固定已验证的头，专门检查解码阶段而非 NiBabel 文件类型嗅探。
+        monkeypatch.setattr(qa.nib, "load", lambda *args, **kwargs: proxy_image)
+        damaged = bytearray(path.read_bytes())
+        damaged[-8] ^= 1
+        path.write_bytes(damaged)
+        with pytest.raises((gzip.BadGzipFile, OSError)):
+            qa._mean_artifacts(path, b0, diffusion, tmp_path, "bad")
+
+
+def test_streamed_dwi_rejects_nonfinite_last_volume(tmp_path):
+    """未被首卷检查覆盖的非有限值也必须拒绝。"""
+    values = np.ones((2, 2, 2, 3), dtype=np.float32)
+    values[-1, -1, -1, -1] = np.inf
+    path = tmp_path / "invalid-dwi.nii.gz"
+    _save(path, values)
+    with pytest.raises(ValueError, match="NaN or Inf"):
+        qa._mean_artifacts(path, np.array([0]), np.array([1, 2]), tmp_path, "invalid")
 
 
 def _save(path: Path, values: np.ndarray) -> None:
@@ -193,6 +237,25 @@ def test_build_pipeline_qa_marks_mode_specific_inputs_as_unavailable(
     assert report["sse"]["status"] == "not_provided"
     assert report["raw_fit"]["status"] == "not_provided"
     assert report["fem_smoke"]["scalar"]["status"] == "not_provided"
+
+
+@pytest.mark.parametrize(
+    "input_field",
+    ("t1", "registered_fa", "raw_registered_fa", "raw_registered_sse"),
+)
+def test_pipeline_qa_preserves_unpaired_optional_input_contract(
+    tmp_path: Path, input_field: str,
+) -> None:
+    """单项 overlay 不读取文件，缺配对的 raw FA/SSE 保留原错误。"""
+
+    core = _core_inputs(tmp_path)
+    inputs = replace(core, **{input_field: tmp_path / "missing.nii.gz"})
+    if input_field.startswith("raw_"):
+        with pytest.raises(ValueError, match="must be provided together"):
+            build_pipeline_qa(inputs, tmp_path / "qa", workers=2)
+    else:
+        report = build_pipeline_qa(inputs, tmp_path / "qa", workers=2)
+        assert report["registration_overlay"]["status"] == "not_provided"
 
 
 def test_pipeline_qa_default_b0_selection_is_exact_zero(tmp_path: Path) -> None:

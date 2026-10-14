@@ -8,6 +8,10 @@ from typing import Any, Callable, Sequence
 import h5py
 import numpy as np
 
+from .conductivity import fsl_tensor_basis
+from .simnibs_tensor_consumer import (
+    bind_simnibs_tensor_consumer, describe_simnibs_tensor_consumer,
+)
 from .simulation import (
     SIMNIBS_REQUIRED_VERSION,
     _json_safe,
@@ -44,6 +48,8 @@ def build_tdcs_leadfield(
     dimensions: tuple[float, float] = (10.0, 10.0),
     thickness: float = 4.0,
     solver: str = "pardiso",
+    basis_mode: str = "physical",
+    eigensystem_mode: str = "stable",
 ):
     """Construct an all-electrode TDCSLEADFIELD without solving."""
     try:
@@ -77,8 +83,15 @@ def build_tdcs_leadfield(
     leadfield.eeg_cap = str(eeg_cap or input_contract["eeg_cap"])
     leadfield.field = field
     leadfield.anisotropy_type = input_contract["mode"]
+    fsl_tensor_basis(np.eye(4), basis_mode=basis_mode)
+    if eigensystem_mode not in {"stable", "simnibs46-literal"}:
+        raise ValueError("eigensystem_mode must be stable or simnibs46-literal")
     if input_contract["tensor"] is not None:
         leadfield.fname_tensor = input_contract["tensor"]["path"]
+        leadfield._dwi2cond_xp_tensor_basis = bind_simnibs_tensor_consumer(
+            leadfield, input_contract["tensor"]["path"], basis_mode=basis_mode,
+            eigensystem_mode=eigensystem_mode, leadfield=True,
+        )
 
     if interpolation == "none":
         leadfield.interpolation = None
@@ -262,6 +275,8 @@ def run_tdcs_leadfield(
     avoid_labels: Sequence[int] = (),
     dry_run: bool = False,
     progress: ProgressCallback | None = None,
+    basis_mode: str = "physical",
+    eigensystem_mode: str = "stable",
 ) -> dict[str, Any]:
     """Validate and optionally execute one all-electrode conductivity mode."""
     if cpus <= 0:
@@ -278,6 +293,15 @@ def run_tdcs_leadfield(
             f"{sorted(missing_mask_tissues)}"
         )
     contract = validate_simulation_inputs(subpath, mode=mode, tensor_file=tensor_file)
+    fsl_tensor_basis(np.eye(4), basis_mode=basis_mode)
+    if eigensystem_mode not in {"stable", "simnibs46-literal"}:
+        raise ValueError("eigensystem_mode must be stable or simnibs46-literal")
+    basis_report = None
+    if contract["tensor"] is not None:
+        basis_report = describe_simnibs_tensor_consumer(
+            contract["tensor"]["path"], basis_mode=basis_mode,
+            eigensystem_mode=eigensystem_mode,
+        )
     if eeg_cap is not None:
         eeg_path = Path(eeg_cap).resolve()
         if not eeg_path.is_file():
@@ -291,6 +315,9 @@ def run_tdcs_leadfield(
         "schema_version": 1,
         "status": "planned" if dry_run else "running",
         "required_simnibs_version": SIMNIBS_REQUIRED_VERSION,
+        "basis_mode": basis_mode,
+        "eigensystem_mode": eigensystem_mode,
+        "tensor_consumption": basis_report,
         "input": contract,
         "leadfield": {
             "field": field,
@@ -335,7 +362,13 @@ def run_tdcs_leadfield(
             dimensions=dimensions,
             thickness=thickness,
             solver=solver,
+            basis_mode=basis_mode,
+            eigensystem_mode=eigensystem_mode,
         )
+        manifest["tensor_consumption"] = getattr(
+            leadfield, "_dwi2cond_xp_tensor_basis", basis_report
+        )
+        _write_manifest(manifest_path, manifest)
         from simnibs import run_simnibs
 
         run_simnibs(leadfield, cpus=cpus)

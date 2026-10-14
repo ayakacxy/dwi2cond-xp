@@ -5,6 +5,9 @@ from __future__ import annotations
 import numpy as np
 
 
+_SMALL_TENSOR_REFERENCE_THRESHOLD = 1e-8
+
+
 def _validate_gradients(bvals: np.ndarray, bvecs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     bvals = np.asarray(bvals, dtype=np.float64).reshape(-1)
     bvecs = np.asarray(bvecs, dtype=np.float64)
@@ -87,33 +90,81 @@ def _normal_equations(
     weights: np.ndarray,
     log_signal: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Construct batched WLS normal equations."""
+    """用批量矩阵乘法构造 float64 WLS 正规方程。"""
     if design.ndim == 2:
-        normal = np.einsum("ni,vn,nj->vij", design, weights, design, optimize=True)
-        rhs = -np.einsum(
-            "ni,vn,vn->vi", design, weights, log_signal, optimize=True
-        )
+        transposed = design.T
     elif design.ndim == 3:
-        normal = np.einsum("vni,vn,vnj->vij", design, weights, design, optimize=True)
-        rhs = -np.einsum(
-            "vni,vn,vn->vi", design, weights, log_signal, optimize=True
-        )
+        transposed = design.swapaxes(-1, -2)
     else:
         raise ValueError("The design matrix must be Nx7 or VxNx7")
-    return normal, rhs
+    normal = np.matmul(transposed, design * weights[..., None])
+    return normal, _weighted_rhs(design, weights, log_signal)
 
 
-def _solve_wls(
+def _weighted_rhs(
     design: np.ndarray,
     weights: np.ndarray,
     log_signal: np.ndarray,
 ) -> np.ndarray:
-    normal, rhs = _normal_equations(design, weights, log_signal)
+    """复用相同设计与权重时，只计算当前对数信号的右端项。"""
+
+    transposed = design.T if design.ndim == 2 else design.swapaxes(-1, -2)
+    return -np.matmul(transposed, (weights * log_signal)[..., None])[..., 0]
+
+
+def _solve_normal(normal: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+    """求解当前正规方程，保留奇异矩阵的显式拒绝。"""
+
     try:
-        # NumPy 2 treats a 2-D rhs as a matrix; add a column to fix batched-vector semantics.
+        # 显式增加列轴，保持 NumPy 2 的批量向量右端项语义。
         return np.linalg.solve(normal, rhs[..., None])[..., 0]
     except np.linalg.LinAlgError as exc:
         raise ValueError("The DTI design matrix is singular; no fitting fallback is allowed") from exc
+
+
+def _signal_floor_log(
+    signals: np.ndarray,
+    positive: np.ndarray,
+    initial: np.ndarray,
+    compatibility_mode: str,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """按既有 FSL/robust 规则计算 S0、对数下限与信号均值。"""
+
+    if compatibility_mode == "strict-fsl":
+        # FSL 的绝对最大值跳过 NaN，而信号和传播 NaN，两者保持原语义。
+        finite = np.isfinite(signals)
+        max_signal = np.max(np.where(finite, np.abs(signals), 0.0), axis=1)
+        mean_signal = np.sum(signals, axis=1) / float(signals.shape[1])
+    else:
+        max_signal = np.max(np.abs(signals), axis=1)
+        mean_signal = np.mean(signals, axis=1)
+    max_log = 23.0 if compatibility_mode == "strict-fsl" else np.log(
+        np.finfo(np.float64).max
+    )
+    s0 = max_signal.copy()
+    valid_s0 = initial[:, 6] > -max_log
+    s0[valid_s0] = np.exp(-initial[valid_s0, 6])
+    s0 = np.where(s0 < mean_signal, max_signal, s0)
+    floor = 0.01 * s0[:, None]
+    use_signal = positive & ((signals / s0[:, None]) > 0.01)
+    robust_signal = np.where(use_signal, signals, floor)
+    return np.log(robust_signal), mean_signal, max_log
+
+
+def _reference_normal_equations(
+    design: np.ndarray,
+    weights: np.ndarray,
+    log_signal: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """仅为近零拟合行保留原 einsum 规约，避免 FA 放大尾数扰动。"""
+
+    if design.ndim == 2:
+        normal = np.einsum("ni,vn,nj->vij", design, weights, design, optimize=True)
+        rhs = -np.einsum("ni,vn,vn->vi", design, weights, log_signal, optimize=True)
+    else:
+        normal = np.einsum("vni,vn,vnj->vij", design, weights, design, optimize=True)
+        rhs = -np.einsum("vni,vn,vn->vi", design, weights, log_signal, optimize=True)
+    return normal, rhs
 
 
 def fit_tensor_wls(
@@ -159,30 +210,31 @@ def fit_tensor_wls(
     weights = np.where(positive, signals * signals, 1.0)
     initial_log = np.zeros_like(signals)
     np.log(signals, out=initial_log, where=positive)
-    initial = _solve_wls(design, weights, initial_log)
+    # 两遍拟合的设计和权重完全相同，只复用矩阵装配，保留两次独立求解。
+    normal, initial_rhs = _normal_equations(design, weights, initial_log)
+    initial = _solve_normal(normal, initial_rhs)
 
-    if compatibility_mode == "strict-fsl":
-        # NEWMAT MaximumAbsoluteValue skips NaN, while armawrap Sum propagates it.
-        # The two operations deliberately have different NaN semantics in FSL.
-        finite = np.isfinite(signals)
-        max_signal = np.max(np.where(finite, np.abs(signals), 0.0), axis=1)
-        mean_signal = np.sum(signals, axis=1) / float(signals.shape[1])
-    else:
-        max_signal = np.max(np.abs(signals), axis=1)
-        mean_signal = np.mean(signals, axis=1)
-    max_log = 23.0 if compatibility_mode == "strict-fsl" else np.log(
-        np.finfo(np.float64).max
+    robust_log, mean_signal, max_log = _signal_floor_log(
+        signals, positive, initial, compatibility_mode,
     )
-    s0 = max_signal.copy()
-    valid_s0 = initial[:, 6] > -max_log
-    s0[valid_s0] = np.exp(-initial[valid_s0, 6])
-    s0 = np.where(s0 < mean_signal, max_signal, s0)
-
-    floor = 0.01 * s0[:, None]
-    use_signal = positive & ((signals / s0[:, None]) > 0.01)
-    robust_signal = np.where(use_signal, signals, floor)
-    robust_log = np.log(robust_signal)
-    fitted = _solve_wls(design, weights, robust_log)
+    fitted = _solve_normal(normal, _weighted_rhs(design, weights, robust_log))
+    small = np.max(np.abs(fitted[:, :6]), axis=1) <= _SMALL_TENSOR_REFERENCE_THRESHOLD
+    if np.any(small):
+        # 复用已构造的设计子集，完整重算两遍 WLS；不归零、不截断张量。
+        sub_design = design if design.ndim == 2 else design[small]
+        sub_weights = weights[small]
+        reference_normal, reference_rhs = _reference_normal_equations(
+            sub_design, sub_weights, initial_log[small],
+        )
+        reference_initial = _solve_normal(reference_normal, reference_rhs)
+        reference_log, _, _ = _signal_floor_log(
+            signals[small], positive[small], reference_initial, compatibility_mode,
+        )
+        reference_normal, reference_rhs = _reference_normal_equations(
+            sub_design, sub_weights, reference_log,
+        )
+        fitted[small] = _solve_normal(reference_normal, reference_rhs)
+        robust_log[small] = reference_log
     tensor = fitted[:, :6]
     if not return_sse and not return_metrics:
         return tensor

@@ -46,18 +46,20 @@ field artifacts. A compatible uncompressed `.nii` is verified blockwise and
 used directly by mmap; `.nii.gz` is decoded once to a shared uncompressed
 intermediate. The selected strategy is recorded in QA.
 
-Run the legacy correction path while preserving SimNIBS 4.6 b-vector behavior:
+Run the legacy correction path with motion-aware gradient rotation (the v0.4.0 default):
 
 ```bash
 dwi2cond-xp preprocess-legacy \
   raw_dwi.nii.gz bvals bvecs legacy_outputs \
-  --workers 8 --bvec-mode compat46
+  --workers 8 --bvec-mode corrected
 ```
 
 This writes the corrected DWI and mean, every final volume transform, nodif and
-brain mask, tensor/FA/SSE and validity outputs, and `legacy_qa.json`. Use
-`--bvec-mode corrected` only as an explicit scientific correction to the 4.6
-script behavior.
+brain mask, tensor/FA/SSE and validity outputs, and `legacy_qa.json`.
+`--bvec-mode compat46` skips motion-induced gradient rotation for upstream
+comparison. The default physical component mode still transforms the gradients
+when storage axes change; add `--component-mode simnibs46-literal` to retain
+the old component behavior as well. See [v0.4.0 migration](RELEASE_NOTES_v0.4.0.md).
 
 Prepare a fixed GRE/FUGUE correction from an already scaled rad/s fieldmap and
 compose its signed world-mm displacement into the legacy command:

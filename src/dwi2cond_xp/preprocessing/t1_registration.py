@@ -7,12 +7,15 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import json
 from pathlib import Path
+from threading import Lock
 import time
 
 import nibabel as nib
 import numpy as np
 
 from ..registration import register_tensor_affine
+from ._nifti_io import NiftiWriter, save_nifti
+from .flirt_pyramid import build_flirt_pyramid
 from .flirt_registration import FlirtRegistrationResult, register_flirt_affine
 from .image_ops import (
     apply_positive_mask,
@@ -51,6 +54,8 @@ def _save_like(
     reference: nib.spatialimages.SpatialImage,
     output: Path,
     dtype: np.dtype | type[np.generic],
+    *,
+    writer: NiftiWriter | None = None,
 ) -> Path:
     """Write an array using the full reference T1 geometry."""
 
@@ -60,7 +65,7 @@ def _save_like(
     image = nib.Nifti1Image(np.asarray(values, dtype=dtype), reference.affine, header)
     image.set_qform(reference.get_qform(), int(reference.header["qform_code"]))
     image.set_sform(reference.get_sform(), int(reference.header["sform_code"]))
-    nib.save(image, str(output))
+    save_nifti(image, output, writer=writer)
     return output
 
 
@@ -116,7 +121,8 @@ def _build_charm_t1_inputs(
 
 
 def _write_charm_t1_inputs(
-    inputs: _CharmT1Inputs, output_directory: str | Path
+    inputs: _CharmT1Inputs, output_directory: str | Path,
+    *, writer: NiftiWriter | None = None,
 ) -> dict[str, Path]:
     """Write the computed T1 inputs using upstream filenames."""
 
@@ -127,24 +133,28 @@ def _write_charm_t1_inputs(
             inputs.t1,
             output / "T1_brainmask.nii.gz",
             np.uint8,
+            writer=writer,
         ),
         "t1_brain": _save_like(
             inputs.t1_brain,
             inputs.corrected,
             output / "T1_brain.nii.gz",
             np.float32,
+            writer=writer,
         ),
         "brain_rim": _save_like(
             inputs.brain_rim,
             inputs.t1,
             output / "T1_brainrim_QA.nii.gz",
             np.uint8,
+            writer=writer,
         ),
         "reference_weight": _save_like(
             inputs.reference_weight,
             inputs.corrected,
             output / "T1_mask.nii.gz",
             np.float32,
+            writer=writer,
         ),
     }
 
@@ -154,12 +164,15 @@ def prepare_charm_t1_inputs(
     labeling_file: str | Path,
     bias_corrected_file: str | Path,
     output_directory: str | Path,
+    *,
+    _writer: NiftiWriter | None = None,
 ) -> dict[str, Path]:
     """Reproduce and write the script's T1 brain, reference weight, and brain-edge QA."""
 
     return _write_charm_t1_inputs(
         _build_charm_t1_inputs(t1_file, labeling_file, bias_corrected_file),
         output_directory,
+        writer=_writer,
     )
 
 
@@ -175,6 +188,21 @@ def _load_finite_3d(path: str | Path, name: str) -> tuple[nib.Nifti1Image, np.nd
     return image, values
 
 
+def _same_prepared_geometry(
+    first: nib.spatialimages.SpatialImage,
+    second: nib.spatialimages.SpatialImage,
+) -> bool:
+    """复用前逐值比较活动 affine 与采样尺寸，不放宽网格误差。"""
+
+    return (
+        first.shape == second.shape
+        and np.array_equal(first.affine, second.affine)
+        and np.array_equal(
+            first.header.get_zooms()[:3], second.header.get_zooms()[:3]
+        )
+    )
+
+
 def _estimate(
     reference_image: nib.Nifti1Image,
     reference: np.ndarray,
@@ -185,17 +213,24 @@ def _estimate(
     degrees_of_freedom: int,
     workers: int,
     progress: ProgressCallback | None,
+    _pyramid_builder: Callable | None = None,
 ) -> FlirtRegistrationResult:
     """Estimate a scaled-mm transform using the FSL default schedule."""
 
-    reference_sampling = fsl_voxel_to_scaled_mm(reference.shape, reference_image.affine)
-    moving_sampling = fsl_voxel_to_scaled_mm(moving.shape, moving_image.affine)
+    reference_sampling = fsl_voxel_to_scaled_mm(
+        reference.shape, reference_image.affine, reference_image.header.get_zooms()[:3]
+    )
+    moving_sampling = fsl_voxel_to_scaled_mm(
+        moving.shape, moving_image.affine, moving_image.header.get_zooms()[:3]
+    )
     qsform = world_matrix_to_fsl(
         np.eye(4),
         moving.shape,
         moving_image.affine,
         reference.shape,
         reference_image.affine,
+        moving_voxel_sizes=moving_image.header.get_zooms()[:3],
+        reference_voxel_sizes=reference_image.header.get_zooms()[:3],
     )
     return register_flirt_affine(
         reference,
@@ -208,6 +243,8 @@ def _estimate(
         qsform_matrix=qsform,
         workers=workers,
         progress=progress,
+        _pyramid_builder=_pyramid_builder,
+        _blocked_correlation_ratio=True,
     )
 
 
@@ -266,6 +303,7 @@ def _run_t1_registration_nifti_impl(
     workers: int = 8,
     register_tensor_output: bool = True,
     progress: ProgressCallback | None = None,
+    _writer: NiftiWriter | None = None,
 ) -> dict[str, object]:
     """Run the SimNIBS 4.6 rigid/affine T1 registration and QA output pipeline."""
 
@@ -277,7 +315,7 @@ def _run_t1_registration_nifti_impl(
     output.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     prepared = prepare_charm_t1_inputs(
-        t1_file, labeling_file, bias_corrected_file, output
+        t1_file, labeling_file, bias_corrected_file, output, _writer=_writer,
     )
     prepared_at = time.perf_counter()
     if progress is not None:
@@ -309,7 +347,17 @@ def _run_t1_registration_nifti_impl(
         )
         qa_registration = primary
     else:
-        # The two FLIRT runs have no data dependency, so execute their schedules in parallel.
+        # 此闭包只服务相同输入的主配准和 QA 配准，共享只读金字塔。
+        pyramid_lock = Lock()
+        shared_pyramid = None
+
+        def shared_builder(*args, **kwargs):
+            nonlocal shared_pyramid
+            with pyramid_lock:
+                if shared_pyramid is None:
+                    shared_pyramid = build_flirt_pyramid(*args, **kwargs)
+                return shared_pyramid
+
         with ThreadPoolExecutor(max_workers=2) as registration_executor:
             primary_future = registration_executor.submit(
                 _estimate,
@@ -317,6 +365,7 @@ def _run_t1_registration_nifti_impl(
                 degrees_of_freedom=12,
                 workers=workers,
                 progress=None,
+                _pyramid_builder=shared_builder,
             )
             qa_future = registration_executor.submit(
                 _estimate,
@@ -324,6 +373,7 @@ def _run_t1_registration_nifti_impl(
                 degrees_of_freedom=6,
                 workers=workers,
                 progress=None,
+                _pyramid_builder=shared_builder,
             )
             primary = primary_future.result()
             qa_registration = qa_future.result()
@@ -337,6 +387,8 @@ def _run_t1_registration_nifti_impl(
         moving_image.affine,
         reference.shape,
         reference_image.affine,
+        moving_voxel_sizes=moving_image.header.get_zooms()[:3],
+        reference_voxel_sizes=reference_image.header.get_zooms()[:3],
     )
     np.savetxt(output / "FA2T1.mat", primary.matrix, fmt="%.10g")
     np.savetxt(output / "FA2T1_world.mat", primary_world, fmt="%.17g")
@@ -347,6 +399,8 @@ def _run_t1_registration_nifti_impl(
         moving_image.affine,
         reference.shape,
         reference_image.affine,
+        moving_voxel_sizes=moving_image.header.get_zooms()[:3],
+        reference_voxel_sizes=reference_image.header.get_zooms()[:3],
     )
     np.savetxt(output / "FA2T1_QA.mat", qa_registration.matrix, fmt="%.10g")
 
@@ -378,6 +432,7 @@ def _run_t1_registration_nifti_impl(
                     reference_image,
                     output / f"DTI_coregT1_{suffix}.nii.gz",
                     np.float32,
+                    writer=_writer,
                 )
                 for suffix in ("FA", "V1")
             ]
@@ -452,6 +507,7 @@ def _run_t1_registration_nifti_impl(
                 reference_image,
                 path,
                 np.float32,
+                writer=_writer,
             )
             for values, path in qa_outputs
         ]
@@ -463,6 +519,18 @@ def _run_t1_registration_nifti_impl(
     if raw_fa_file is not None and raw_sse_file is not None:
         raw_started = time.perf_counter()
         raw_image, raw_fa = _load_finite_3d(raw_fa_file, "raw DWI FA")
+        raw_sse_image, raw_sse = _load_finite_3d(raw_sse_file, "raw DWI SSE")
+        if not _same_grid(raw_image, raw_sse_image):
+            raise ValueError("DTI SSE must match the DTI FA grid")
+        reuse_registration = False
+        if registered_sse is not None and sse_file is not None:
+            sse_image, sse = _load_finite_3d(sse_file, "DTI SSE")
+            reuse_registration = (
+                _same_prepared_geometry(raw_image, moving_image)
+                and _same_prepared_geometry(raw_sse_image, sse_image)
+                and np.array_equal(raw_fa, moving)
+                and np.array_equal(raw_sse, sse)
+            )
         raw_arguments = (
             reference_image,
             reference,
@@ -470,11 +538,15 @@ def _run_t1_registration_nifti_impl(
             raw_image,
             raw_fa,
         )
-        raw_registration = _estimate(
-            *raw_arguments,
-            degrees_of_freedom=6,
-            workers=workers,
-            progress=None,
+        raw_registration = (
+            qa_registration
+            if reuse_registration
+            else _estimate(
+                *raw_arguments,
+                degrees_of_freedom=6,
+                workers=workers,
+                progress=None,
+            )
         )
         raw_world = fsl_matrix_to_world(
             raw_registration.matrix,
@@ -482,16 +554,23 @@ def _run_t1_registration_nifti_impl(
             raw_image.affine,
             reference.shape,
             reference_image.affine,
+            moving_voxel_sizes=raw_image.header.get_zooms()[:3],
+            reference_voxel_sizes=reference_image.header.get_zooms()[:3],
         )
         np.savetxt(output / "FA2T1_raw_QA.mat", raw_registration.matrix, fmt="%.10g")
-        raw_registered_fa, raw_registered_sse, _ = _resample_qa_images(
-            raw_fa,
-            raw_image,
-            reference.shape,
-            reference_image.affine,
-            raw_world,
-            raw_sse_file,
-        )
+        if reuse_registration:
+            # 原始 QA 的两个输入与网格均相同；保留独立输出和后续掩膜操作。
+            raw_registered_fa = registered_fa.copy()
+            raw_registered_sse = registered_sse.copy()
+        else:
+            raw_registered_fa, raw_registered_sse, _ = _resample_qa_images(
+                raw_fa,
+                raw_image,
+                reference.shape,
+                reference_image.affine,
+                raw_world,
+                raw_sse_file,
+            )
         raw_registered_fa[~brain_mask] = 0.0
         if raw_registered_sse is None:
             raise RuntimeError("raw SSE resampling did not produce an output")
@@ -501,16 +580,19 @@ def _run_t1_registration_nifti_impl(
             reference_image,
             output / "DTIraw_FA_6dof_QA.nii.gz",
             np.float32,
+            writer=_writer,
         )
         _save_like(
             raw_registered_sse,
             reference_image,
             output / "DTIraw_SSE_6dof_QA.nii.gz",
             np.float32,
+            writer=_writer,
         )
         raw_qa_seconds = time.perf_counter() - raw_started
         raw_qa_report = {
             "status": "available",
+            "registration_reused": reuse_registration,
             "fsl_scaled_mm_matrix": raw_registration.matrix.tolist(),
             "world_matrix": raw_world.tolist(),
             "cost": raw_registration.cost,
@@ -524,6 +606,7 @@ def _run_t1_registration_nifti_impl(
     report: dict[str, object] = {
         "status": "completed",
         "mode": "rigid" if degrees_of_freedom == 6 else "affine",
+        "correlation_ratio_reduction": "fine-fp64-adaptive-blocks-v1",
         "workers": workers,
         "primary": {
             "fsl_scaled_mm_matrix": primary.matrix.tolist(),
@@ -591,18 +674,20 @@ def run_t1_registration_nifti(
 
     if not isinstance(workers, (int, np.integer)) or workers < 1:
         raise ValueError("workers must be a positive integer")
-    return _run_t1_registration_nifti_impl(
-        tensor_file,
-        fa_file,
-        t1_file,
-        labeling_file,
-        bias_corrected_file,
-        output_directory,
-        sse_file=sse_file,
-        raw_fa_file=raw_fa_file,
-        raw_sse_file=raw_sse_file,
-        degrees_of_freedom=degrees_of_freedom,
-        workers=int(workers),
-        register_tensor_output=register_tensor_output,
-        progress=progress,
-    )
+    with NiftiWriter(workers) as writer:
+        return _run_t1_registration_nifti_impl(
+            tensor_file,
+            fa_file,
+            t1_file,
+            labeling_file,
+            bias_corrected_file,
+            output_directory,
+            sse_file=sse_file,
+            raw_fa_file=raw_fa_file,
+            raw_sse_file=raw_sse_file,
+            degrees_of_freedom=degrees_of_freedom,
+            workers=int(workers),
+            register_tensor_output=register_tensor_output,
+            progress=progress,
+            _writer=writer,
+        )

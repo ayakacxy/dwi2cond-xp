@@ -20,7 +20,7 @@ from ._numba import set_available_numba_threads
 from .brain_mask import write_bet_brain_mask
 from .flirt_registration import register_flirt_nosearch_mutual_information
 from .fieldmap import run_fieldmap_nifti
-from .nomoco import _prepare_fitting_input, _write_masked_brain
+from .nomoco import _prepare_bvecs, _prepare_fitting_input, _write_masked_brain
 from .orientation import write_fsl_reoriented
 from .resampling import resample_image
 from .rigid import (
@@ -331,12 +331,12 @@ def _resample_series(
 
 
 def _rotate_bvecs(
-    bvals: np.ndarray, bvecs: np.ndarray, world_matrices: Sequence[np.ndarray]
+    bvals: np.ndarray, bvecs: np.ndarray, fsl_matrices: Sequence[np.ndarray]
 ) -> np.ndarray:
-    """Generate explicit corrected b-vectors using the final affine's finite-strain rotation."""
+    """在梯度所属的 FSL scaled-mm 基内提取并应用最终仿射旋转。"""
 
     rotated = np.asarray(bvecs, dtype=np.float64).copy()
-    for index, (bvalue, matrix) in enumerate(zip(bvals, world_matrices, strict=True)):
+    for index, (bvalue, matrix) in enumerate(zip(bvals, fsl_matrices, strict=True)):
         if bvalue == 0:
             continue
         rotation, _ = polar(np.asarray(matrix, dtype=np.float64)[:3, :3])
@@ -414,7 +414,8 @@ def run_legacy_nifti(
     output_directory: str | Path,
     *,
     grad_dev_file: str | Path | None = None,
-    bvec_mode: str = "compat46",
+    bvec_mode: str = "corrected",
+    component_mode: str = "physical",
     fieldmap_displacement_file: str | Path | None = None,
     fieldmap_corrected_mask_file: str | Path | None = None,
     fieldmap_magnitude_file: str | Path | None = None,
@@ -435,6 +436,8 @@ def run_legacy_nifti(
 
     if bvec_mode not in ("compat46", "corrected"):
         raise ValueError("bvec_mode must be compat46 or corrected")
+    if component_mode not in ("physical", "simnibs46-literal"):
+        raise ValueError("component_mode must be physical or simnibs46-literal")
     if workers <= 0:
         raise ValueError("The worker count must be a positive integer")
     prepared_fieldmap = (
@@ -485,7 +488,10 @@ def run_legacy_nifti(
         data_file, paths["materialized"], z_chunk=max(8, z_chunk)
     )
     shutil.copyfile(bvals_file, paths["bvals"])
-    bvals, original_bvecs = load_gradients(bvals_file, bvecs_file)
+    bvals, _ = load_gradients(bvals_file, bvecs_file)
+    original_bvecs = _prepare_bvecs(
+        data_file, bvals_file, bvecs_file, paths["bvecs"], component_mode=component_mode
+    )
     image = nib.load(str(fitting_input), mmap=True)
     if bvals.size != image.shape[3]:
         raise ValueError("The DWI fourth axis does not match bvals")
@@ -641,27 +647,24 @@ def run_legacy_nifti(
     _save_nifti(np.maximum(corrected, np.float32(0.0)), image, paths["dwi_for_fit"])
     _save_nifti(corrected_mean, image, paths["mean"])
     paths["transforms"].mkdir(exist_ok=True)
-    world_matrices = []
     for index, matrix in enumerate(final_matrices):
         np.savetxt(paths["transforms"] / f"MAT_{index:04d}", matrix, fmt="%.10g")
-        world_matrices.append(
-            fsl_matrix_to_world(matrix, image.shape[:3], image.affine, image.shape[:3], image.affine)
-        )
     output_bvecs = (
         original_bvecs
         if bvec_mode == "compat46"
-        else _rotate_bvecs(bvals, original_bvecs, world_matrices)
+        else _rotate_bvecs(bvals, original_bvecs, final_matrices)
     )
-    if bvec_mode == "compat46":
-        shutil.copyfile(bvecs_file, paths["bvecs"])
-    else:
+    if bvec_mode == "corrected":
         np.savetxt(paths["bvecs"], output_bvecs.T, fmt="%.10g")
     stage_seconds["final_single_resample"] = perf_counter() - started
 
     normalized_grad_dev = None
     if grad_dev_file is not None:
         normalized_grad_dev = output / "grad_dev.nii"
-        write_fsl_reoriented(grad_dev_file, normalized_grad_dev, float32=True)
+        write_fsl_reoriented(
+            grad_dev_file, normalized_grad_dev, float32=True,
+            component_kind="grad-dev", component_mode=component_mode,
+        )
     if fieldmap_corrected_mask_file is not None:
         _replace_mask_with_corrected(
             fieldmap_corrected_mask_file,
@@ -693,9 +696,14 @@ def run_legacy_nifti(
     report: dict[str, object] = {
         "status": "completed",
         "mode": "legacy",
-        "algorithm_contract": "simnibs-4.6-compat46",
+        "algorithm_contract": "simnibs-4.6-legacy",
         "bvec_mode": bvec_mode,
-        "bvec_contract": "copied_original" if bvec_mode == "compat46" else "finite_strain_rotated",
+        "bvec_contract": (
+            "copied_original" if bvec_mode == "compat46" and component_mode == "simnibs46-literal"
+            else "storage_basis_only" if bvec_mode == "compat46"
+            else "fsl_basis_finite_strain_rotated"
+        ),
+        "component_mode": component_mode,
         "workers": workers,
         "compatibility_mode": compatibility_mode,
         "input_shape": list(image.shape),

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import math
 from threading import local
 
-from numba import njit, prange
+from numba import get_num_threads, njit, prange, set_num_threads
 import numpy as np
 
 from ._numba import set_available_numba_threads
@@ -516,6 +515,25 @@ def _weighted_correlation_ratio_kernel(
     return np.float32(within_variance / variance)
 
 
+@njit(cache=True, nogil=True, parallel=True, fastmath=False)
+def _weighted_correlation_ratio_many_kernel(
+    reference, moving, reference_weight, moving_weight, unit_moving_weight,
+    reference_first_x, reference_last_x, reference_bins, voxel_mappings,
+    moving_voxel_sizes, bins, smooth_size,
+):
+    """批量调用原单候选内核；每个候选的浮点顺序和独立直方图保持。"""
+
+    result = np.empty(voxel_mappings.shape[0], dtype=np.float32)
+    for index in prange(voxel_mappings.shape[0]):
+        result[index] = _weighted_correlation_ratio_kernel(
+            reference, moving, reference_weight, moving_weight,
+            unit_moving_weight, reference_first_x, reference_last_x,
+            reference_bins, voxel_mappings[index], moving_voxel_sizes,
+            bins, smooth_size,
+        )
+    return result
+
+
 @njit(cache=True, nogil=True, parallel=True)
 def _weighted_correlation_ratio_ordered_parallel_kernel(
     reference: np.ndarray,
@@ -930,7 +948,7 @@ class FlirtWeightedCorrelationRatio:
         )
 
     def evaluate_many(self, transforms: np.ndarray, workers: int = 8) -> np.ndarray:
-        """Evaluate candidates in input order without changing per-cost reductions."""
+        """按原次序批量计算候选，保留每个候选原来的浮点规约。"""
 
         matrices = np.asarray(transforms, dtype=np.float64)
         if matrices.ndim != 3 or matrices.shape[1:] != (4, 4) or matrices.shape[0] == 0:
@@ -940,6 +958,21 @@ class FlirtWeightedCorrelationRatio:
         validated = [_finite_4x4(matrix, "transform") for matrix in matrices]
         if len(validated) == 1:
             return np.asarray([self(validated[0])], dtype=np.float64)
-        with ThreadPoolExecutor(max_workers=min(int(workers), len(validated))) as executor:
-            results = list(executor.map(self, validated))
-        return np.asarray(results, dtype=np.float64)
+        mappings = (
+            self._inverse_moving_sampling
+            @ np.linalg.inv(np.asarray(validated))
+            @ self.reference_sampling
+        )
+        previous_threads = get_num_threads()
+        set_available_numba_threads(min(int(workers), len(validated)))
+        try:
+            return _weighted_correlation_ratio_many_kernel(
+                self.reference, self.moving, self.reference_weight,
+                self.moving_weight, self._unit_moving_weight,
+                self._reference_first_x, self._reference_last_x,
+                self._reference_bins, mappings, self._moving_voxel_sizes,
+                int(self.bins), np.float32(self.smooth_size),
+            ).astype(np.float64)
+        finally:
+            # 单候选的体素并行仍使用调用方原有预算。
+            set_num_threads(previous_threads)

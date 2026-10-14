@@ -13,6 +13,10 @@ from uuid import uuid4
 import nibabel as nib
 import numpy as np
 
+from .conductivity import fsl_tensor_basis
+from .simnibs_tensor_consumer import (
+    bind_simnibs_tensor_consumer, describe_simnibs_tensor_consumer,
+)
 
 SIMNIBS_REQUIRED_VERSION = "4.6.0"
 
@@ -174,6 +178,8 @@ def build_tdcs_session(
     fields: str = "E",
     solver: str = "pardiso",
     volume_tissues: tuple[int, ...] = (1, 2, 3),
+    basis_mode: str = "physical",
+    eigensystem_mode: str = "stable",
 ):
     """Construct a fixed-montage SimNIBS 4.6 SESSION without solving."""
     _validate_tdcs_parameters(
@@ -210,6 +216,10 @@ def build_tdcs_session(
     session.tissues_in_niftis = list(volume_tissues)
     session.fields = fields
     session.eeg_cap = input_contract["eeg_cap"]
+    # 即使没有张量，也提前核验模式名称，避免标量运行接受无效设置。
+    fsl_tensor_basis(np.eye(4), basis_mode=basis_mode)
+    if eigensystem_mode not in {"stable", "simnibs46-literal"}:
+        raise ValueError("eigensystem_mode must be stable or simnibs46-literal")
     if input_contract["tensor"] is not None:
         session.fname_tensor = input_contract["tensor"]["path"]
 
@@ -218,6 +228,11 @@ def build_tdcs_session(
     tdcs.currents = [current_ampere, -current_ampere]
     tdcs.anisotropy_type = input_contract["mode"]
     tdcs.solver_options = solver
+    if input_contract["tensor"] is not None:
+        session._dwi2cond_xp_tensor_basis = bind_simnibs_tensor_consumer(
+            tdcs, input_contract["tensor"]["path"],
+            basis_mode=basis_mode, eigensystem_mode=eigensystem_mode,
+        )
 
     for channel, centre in ((1, anode), (2, cathode)):
         electrode = tdcs.add_electrode()
@@ -371,6 +386,8 @@ def run_tdcs(
     volume_tissues: tuple[int, ...] = (1, 2, 3),
     cpus: int = 8,
     dry_run: bool = False,
+    basis_mode: str = "physical",
+    eigensystem_mode: str = "stable",
 ) -> dict[str, Any]:
     """Validate, record, and optionally execute one tDCS conductivity mode."""
     if cpus <= 0:
@@ -387,6 +404,15 @@ def run_tdcs(
         volume_tissues=volume_tissues,
     )
     contract = validate_simulation_inputs(subpath, mode=mode, tensor_file=tensor_file)
+    fsl_tensor_basis(np.eye(4), basis_mode=basis_mode)
+    if eigensystem_mode not in {"stable", "simnibs46-literal"}:
+        raise ValueError("eigensystem_mode must be stable or simnibs46-literal")
+    basis_report = None
+    if contract["tensor"] is not None:
+        basis_report = describe_simnibs_tensor_consumer(
+            contract["tensor"]["path"], basis_mode=basis_mode,
+            eigensystem_mode=eigensystem_mode,
+        )
     root = Path(output_root).resolve()
     output_directory = root / "dry-run" / mode if dry_run else root / mode
     attempt_id = uuid4().hex
@@ -406,6 +432,9 @@ def run_tdcs(
         "schema_version": 1,
         "status": "planned" if dry_run else "running",
         "required_simnibs_version": SIMNIBS_REQUIRED_VERSION,
+        "basis_mode": basis_mode,
+        "eigensystem_mode": eigensystem_mode,
+        "tensor_consumption": basis_report,
         "input": contract,
         "montage": {
             "anode": anode,
@@ -444,7 +473,13 @@ def run_tdcs(
                 fields=fields,
                 solver=solver,
                 volume_tissues=volume_tissues,
+                basis_mode=basis_mode,
+                eigensystem_mode=eigensystem_mode,
             )
+            manifest["tensor_consumption"] = getattr(
+                session, "_dwi2cond_xp_tensor_basis", basis_report
+            )
+            _write_manifest(manifest_path, manifest)
             phase = "solve"
             from simnibs import run_simnibs
 

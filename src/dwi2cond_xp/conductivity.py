@@ -119,21 +119,49 @@ def _anisotropic_intensity_scale(
     return float(intensity_scale)
 
 
-def correct_fsl_tensor_basis(tensors: np.ndarray, affine: np.ndarray) -> np.ndarray:
-    """Convert FSL tensor component directions to SimNIBS mesh world directions."""
-    tensors = np.asarray(tensors, dtype=np.float64)
+def fsl_tensor_basis(
+    affine: np.ndarray, *, basis_mode: str = "physical"
+) -> np.ndarray:
+    """分离体素尺度和方向，并保留用于官方对照的逐句归一化方式。"""
+
+    if basis_mode not in {"physical", "simnibs46-literal"}:
+        raise ValueError("basis_mode must be physical or simnibs46-literal")
     affine = np.asarray(affine, dtype=np.float64)
-    if tensors.shape[-2:] != (3, 3) or affine.shape != (4, 4):
-        raise ValueError("tensors must be Nx3x3 and affine must be 4x4")
+    if affine.shape != (4, 4) or not np.all(np.isfinite(affine)):
+        raise ValueError("affine must be a finite 4x4 matrix")
     linear = affine[:3, :3]
     norms = np.linalg.norm(linear, axis=0)
     if np.any(norms == 0):
         raise ValueError("affine contains a zero-length spatial axis")
-    orientation = linear / norms[:, None]
+    if basis_mode == "physical":
+        orientation = linear / norms[None, :]
+        # NIfTI sform 的 float32 舍入允许微小误差，剪切不能当作方向旋转。
+        if not np.allclose(
+            orientation.T @ orientation, np.eye(3), rtol=0.0, atol=1.0e-6
+        ):
+            raise ValueError(
+                "physical tensor basis requires orthogonal affine axes; "
+                "sheared grids must be resampled before conductivity conversion"
+            )
+    else:
+        orientation = linear / norms[:, None]
+    if abs(np.linalg.det(orientation)) < 1.0e-12:
+        raise ValueError("affine spatial axes must be linearly independent")
     reflection = np.eye(3)
     if np.linalg.det(orientation) > 0:
         reflection[0, 0] = -1
-    orientation = orientation @ reflection
+    return orientation @ reflection
+
+
+def correct_fsl_tensor_basis(
+    tensors: np.ndarray, affine: np.ndarray, *, basis_mode: str = "physical"
+) -> np.ndarray:
+    """将 FSL 张量分量变换到网格世界坐标，避免体素间距改变特征值。"""
+
+    tensors = np.asarray(tensors, dtype=np.float64)
+    if tensors.ndim != 3 or tensors.shape[-2:] != (3, 3):
+        raise ValueError("tensors must be Nx3x3 and affine must be 4x4")
+    orientation = fsl_tensor_basis(affine, basis_mode=basis_mode)
     return np.einsum(
         "ij,njk,lk->nil", orientation, tensors, orientation, optimize=True
     )

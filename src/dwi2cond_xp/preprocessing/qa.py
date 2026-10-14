@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
+import gzip
 import json
 from pathlib import Path
 from collections.abc import Callable
@@ -11,7 +13,8 @@ from typing import Mapping
 import nibabel as nib
 import numpy as np
 
-from ..registration import tensor6_to_matrix
+from ._nifti_io import NiftiWriter, save_nifti
+from .tensor_ops import _eigh_tensor6_batched
 
 
 QaProgress = Callable[[str, int, int], None]
@@ -54,12 +57,18 @@ def _load_finite(path: Path, *, ndim: int | None = None) -> tuple[nib.Nifti1Imag
     if ndim is not None and len(image.shape) != ndim:
         raise ValueError(f"{path} must be {ndim}D")
     values = np.asarray(image.dataobj)
-    if not np.all(np.isfinite(values)):
-        raise ValueError(f"{path} contains NaN or Inf")
+    # NIfTI 代理提供连续存储；分块检查避免与整幅图同大小的布尔临时数组。
+    flat = values.ravel(order="K")
+    for start in range(0, flat.size, 1_048_576):
+        if not np.all(np.isfinite(flat[start:start + 1_048_576])):
+            raise ValueError(f"{path} contains NaN or Inf")
     return image, values
 
 
-def _save_like(values: np.ndarray, reference: nib.Nifti1Image, path: Path) -> None:
+def _save_like(
+    values: np.ndarray, reference: nib.Nifti1Image, path: Path,
+    *, writer: NiftiWriter | None = None,
+) -> None:
     """Atomically publish a float32 NIfTI while preserving reference-space metadata."""
 
     header = reference.header.copy()
@@ -68,7 +77,7 @@ def _save_like(values: np.ndarray, reference: nib.Nifti1Image, path: Path) -> No
     image.set_qform(reference.get_qform(), int(reference.header["qform_code"]))
     image.set_sform(reference.get_sform(), int(reference.header["sform_code"]))
     temporary = path.with_name(f".{path.name}.tmp.nii.gz")
-    nib.save(image, str(temporary))
+    save_nifti(image, temporary, writer=writer)
     temporary.replace(path)
 
 
@@ -102,22 +111,63 @@ def _mean_artifacts(
     diffusion_indices: np.ndarray,
     output: Path,
     prefix: str,
+    *, workers: int = 1,
 ) -> tuple[dict[str, str], np.ndarray, np.ndarray, nib.Nifti1Image]:
     """Decode DWI once and generate b0 and diffusion means without repeated gzip reads."""
 
-    image, values = _load_finite(path, ndim=4)
+    image = nib.load(str(path), mmap=True)
+    if len(image.shape) != 4:
+        raise ValueError(f"{path} must be 4D")
     expected_volumes = int(b0_indices.size + diffusion_indices.size)
     maximum_index = int(max(b0_indices.max(), diffusion_indices.max()))
-    if values.shape[3] != expected_volumes or maximum_index >= values.shape[3]:
+    if image.shape[3] != expected_volumes or maximum_index >= image.shape[3]:
         raise ValueError(f"{path} volume count does not match b-values")
-    b0_mean = np.mean(values[..., b0_indices], axis=3, dtype=np.float64)
-    diffusion_mean = np.mean(
-        values[..., diffusion_indices], axis=3, dtype=np.float64
+    proxy = image.dataobj
+    streaming = (
+        str(path).lower().endswith(".nii.gz") and proxy.order == "F"
+        and proxy.slope == 1.0 and proxy.inter == 0.0
+        and proxy.dtype.kind in "fiu"
+        and np.all(np.diff(b0_indices) > 0)
+        and np.all(np.diff(diffusion_indices) > 0)
+        and np.array_equal(
+            np.sort(np.concatenate((b0_indices, diffusion_indices))),
+            np.arange(image.shape[3]),
+        )
     )
+    b0_mean = np.zeros(image.shape[:3], dtype=np.float64, order="F")
+    diffusion_mean = np.zeros_like(b0_mean)
+    if streaming:
+        # 无缩放 F 序数据按卷顺序解码，完整检查每卷，保留各组原累加顺序。
+        b0_set = set(b0_indices.tolist())
+        volume_bytes = int(np.prod(image.shape[:3])) * proxy.dtype.itemsize
+        buffer = bytearray(volume_bytes)
+        with gzip.open(path, "rb") as stream:
+            stream.seek(int(proxy.offset))
+            for index in range(image.shape[3]):
+                if stream.readinto(buffer) != volume_bytes:
+                    raise EOFError(f"Incomplete gzip NIfTI image: {path}")
+                volume = np.frombuffer(buffer, dtype=proxy.dtype).reshape(
+                    image.shape[:3], order="F",
+                )
+                if not np.all(np.isfinite(volume)):
+                    raise ValueError(f"{path} contains NaN or Inf")
+                mean = b0_mean if index in b0_set else diffusion_mean
+                np.add(mean, volume, out=mean)
+            # 消费尾部以检查 gzip CRC 和截断；有界缓冲也支持拼接成员。
+            while stream.read(8 * 1024 * 1024):
+                pass
+    else:
+        _, values = _load_finite(path, ndim=4)
+        for indices, mean in ((b0_indices, b0_mean), (diffusion_indices, diffusion_mean)):
+            for index in indices:
+                np.add(mean, values[..., int(index)], out=mean)
+    b0_mean /= b0_indices.size
+    diffusion_mean /= diffusion_indices.size
     b0_path = output / f"{prefix}_b0_mean.nii.gz"
     diffusion_path = output / f"{prefix}_mean_dwi.nii.gz"
-    _save_like(b0_mean, image, b0_path)
-    _save_like(diffusion_mean, image, diffusion_path)
+    with NiftiWriter(workers) as writer:
+        _save_like(b0_mean, image, b0_path, writer=writer)
+        _save_like(diffusion_mean, image, diffusion_path, writer=writer)
     return (
         {"b0_mean": str(b0_path), "mean_dwi": str(diffusion_path)},
         b0_mean,
@@ -283,6 +333,7 @@ def build_pipeline_qa(
     *,
     b0_threshold: float = 0.0,
     progress: QaProgress | None = None,
+    workers: int = 1,
 ) -> dict[str, object]:
     """Generate all available P11 QA and explicitly list inapplicable mode-specific items."""
 
@@ -297,7 +348,44 @@ def build_pipeline_qa(
         raise ValueError("QA requires at least one b0 and one diffusion volume")
     original_bvecs = _load_bvecs(inputs.original_bvecs, bvals.size)
 
-    mask_image, raw_mask = _load_finite(inputs.brain_mask, ndim=3)
+    # 只预载原流程会消费的成对输入，保留单项 overlay 忽略及 raw 配对拒绝。
+    overlay_paths = (
+        (inputs.t1, inputs.registered_fa)
+        if inputs.t1 is not None and inputs.registered_fa is not None
+        else ()
+    )
+    raw_fit_paths = (
+        (inputs.raw_registered_fa, inputs.raw_registered_sse)
+        if inputs.raw_registered_fa is not None and inputs.raw_registered_sse is not None
+        else ()
+    )
+    # 独立核心图像可并行读取；同一 QA 内重复引用的 FA/掩膜只解码一次。
+    core_paths = tuple(dict.fromkeys(
+        Path(path).resolve() for path in (
+            inputs.brain_mask, inputs.fa, inputs.tensor, inputs.valid_mask,
+            inputs.raw_dwi_brain_mask or inputs.dwi_brain_mask,
+            inputs.corrected_dwi_brain_mask or inputs.dwi_brain_mask,
+            inputs.v1, inputs.sse, inputs.field_hz, inputs.jacobian,
+            *overlay_paths, *raw_fit_paths,
+        ) if path is not None
+    ))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=min(workers, len(core_paths))) as executor:
+            finite_inputs = dict(zip(core_paths, executor.map(_load_finite, core_paths)))
+    else:
+        finite_inputs = {path: _load_finite(path) for path in core_paths}
+
+    def load_finite(path: Path, *, ndim: int | None = None):
+        resolved = Path(path).resolve()
+        item = finite_inputs.get(resolved)
+        if item is None:
+            item = _load_finite(resolved)
+            finite_inputs[resolved] = item
+        if ndim is not None and len(item[0].shape) != ndim:
+            raise ValueError(f"{path} must be {ndim}D")
+        return item
+
+    mask_image, raw_mask = load_finite(inputs.brain_mask, ndim=3)
     mask = raw_mask != 0
     if np.count_nonzero(mask) == 0:
         raise ValueError("brain mask must contain at least one voxel")
@@ -309,7 +397,7 @@ def build_pipeline_qa(
     def load_dwi_mask(path: Path | None) -> tuple[nib.Nifti1Image, np.ndarray]:
         if path is None:
             return mask_image, mask
-        image, values = _load_finite(path, ndim=3)
+        image, values = load_finite(path, ndim=3)
         selected = values != 0
         if np.count_nonzero(selected) == 0:
             raise ValueError("DWI brain mask must contain at least one voxel")
@@ -319,9 +407,9 @@ def build_pipeline_qa(
     corrected_dwi_mask_image, corrected_dwi_mask = load_dwi_mask(
         corrected_dwi_mask_path
     )
-    fa_image, fa_values = _load_finite(inputs.fa, ndim=3)
-    tensor_image, tensor_values = _load_finite(inputs.tensor, ndim=4)
-    valid_image, valid_values = _load_finite(inputs.valid_mask, ndim=3)
+    fa_image, fa_values = load_finite(inputs.fa, ndim=3)
+    tensor_image, tensor_values = load_finite(inputs.tensor, ndim=4)
+    valid_image, valid_values = load_finite(inputs.valid_mask, ndim=3)
     if tensor_values.shape[-1] != 6:
         raise ValueError("tensor final axis must contain six components")
     spatial_shape = mask.shape
@@ -350,6 +438,7 @@ def build_pipeline_qa(
             diffusion_indices,
             output,
             "raw",
+            workers=workers,
         )
         if raw_dwi_mask.shape != raw_mean.shape or not np.allclose(
             raw_dwi_mask_image.affine,
@@ -374,6 +463,7 @@ def build_pipeline_qa(
                 diffusion_indices,
                 output,
                 "corrected",
+                workers=workers,
             )
         )
         if corrected_dwi_mask.shape != corrected_mean.shape or not np.allclose(
@@ -420,9 +510,9 @@ def build_pipeline_qa(
     if progress is not None:
         progress("gradients", 4, 8)
 
-    matrices = tensor6_to_matrix(np.asarray(tensor_values[valid], dtype=np.float64))
-    eigenvalues, eigenvectors = np.linalg.eigh(matrices)
-    principal = eigenvectors[:, :, -1]
+    eigenvalues, principal = _eigh_tensor6_batched(
+        tensor_values[valid], workers, principal_only=True,
+    )
     v1_qa: dict[str, object] = {
         "computed_valid_vectors": int(principal.shape[0]),
         "max_norm_error": float(
@@ -430,7 +520,7 @@ def build_pipeline_qa(
         ),
     }
     if inputs.v1 is not None:
-        stored_v1_image, stored_v1 = _load_finite(inputs.v1, ndim=4)
+        stored_v1_image, stored_v1 = load_finite(inputs.v1, ndim=4)
         if stored_v1.shape != spatial_shape + (3,):
             raise ValueError("V1 must share the tensor grid and have final axis 3")
         if not np.allclose(
@@ -456,7 +546,7 @@ def build_pipeline_qa(
 
     field_qa: dict[str, object] = {"status": "not_provided"}
     if inputs.field_hz is not None:
-        field_image, field_values = _load_finite(inputs.field_hz, ndim=3)
+        field_image, field_values = load_finite(inputs.field_hz, ndim=3)
         if field_values.shape == corrected_dwi_mask.shape and np.allclose(
             field_image.affine,
             corrected_dwi_mask_image.affine,
@@ -481,7 +571,7 @@ def build_pipeline_qa(
                 field_values * inputs.readout_seconds, field_mask
             )
     if inputs.jacobian is not None:
-        jacobian_image, jacobian_values = _load_finite(inputs.jacobian, ndim=3)
+        jacobian_image, jacobian_values = load_finite(inputs.jacobian, ndim=3)
         if jacobian_values.shape != spatial_shape or not np.allclose(
             jacobian_image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6
         ):
@@ -512,8 +602,8 @@ def build_pipeline_qa(
 
     overlay: dict[str, object] = {"status": "not_provided"}
     if inputs.t1 is not None and inputs.registered_fa is not None:
-        t1_image, t1_values = _load_finite(inputs.t1, ndim=3)
-        registered_fa_image, registered_fa = _load_finite(
+        t1_image, t1_values = load_finite(inputs.t1, ndim=3)
+        registered_fa_image, registered_fa = load_finite(
             inputs.registered_fa, ndim=3
         )
         if (
@@ -540,7 +630,7 @@ def build_pipeline_qa(
 
     sse_qa: dict[str, object] = {"status": "not_provided"}
     if inputs.sse is not None:
-        sse_image, sse_values = _load_finite(inputs.sse, ndim=3)
+        sse_image, sse_values = load_finite(inputs.sse, ndim=3)
         if sse_values.shape != spatial_shape or not np.allclose(
             sse_image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6
         ):
@@ -551,10 +641,10 @@ def build_pipeline_qa(
     if inputs.raw_registered_fa is not None or inputs.raw_registered_sse is not None:
         if inputs.raw_registered_fa is None or inputs.raw_registered_sse is None:
             raise ValueError("raw registered FA and SSE must be provided together")
-        raw_fa_image, raw_fa_values = _load_finite(
+        raw_fa_image, raw_fa_values = load_finite(
             inputs.raw_registered_fa, ndim=3
         )
-        raw_sse_image, raw_sse_values = _load_finite(
+        raw_sse_image, raw_sse_values = load_finite(
             inputs.raw_registered_sse, ndim=3
         )
         if (

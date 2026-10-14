@@ -4,6 +4,9 @@
 
 [文档目录](README.md) · [项目首页](../../README.zh-CN.md)
 
+下列默认设置对应 `v0.4.0` 实现。与早期坐标行为的差异见
+[v0.4.0 迁移说明](RELEASE_NOTES_v0.4.0.md)。已发布 `v0.3.0` 的验证结果仍作为独立历史记录保留。
+
 ## 不校正 DWI 的原始数据流程
 
 `preprocess-nomoco` 对应 SimNIBS 4.6 的 `nomoco` 流程。它按 FSL/NewNifti 的
@@ -14,7 +17,8 @@ float32 Gram–Schmidt、带符号轴置换和严格相等时的取舍规则调�
 
 DWI、b 值和 b 向量必须对应同一组、同一顺序的体积。严格拟合在确认只有一个非零壳层后
 使用全部输入体积，不会自动从多壳数据中挑选壳层。可选 `grad_dev` 必须与原 DWI 的网格
-一致，并随 DWI 一起调整存储方向。
+一致，并随 DWI 一起调整存储方向。默认 `--component-mode physical` 同时把 b 向量
+和采用 HCP/FSL 列主序的 `grad_dev` 分量转换到重排后图像的 FSL 基底。
 
 只有逐块确认未压缩 `.nii` 为 float32、符合所需 FSL 存储方向、所有值有限且非负时，
 才直接通过内存映射读取。其他输入（包括所有 `.nii.gz`）会解码一次，写成供多个进程
@@ -31,9 +35,11 @@ DWI、b 值和 b 向量必须对应同一组、同一顺序的体积。严格拟
 最终 sinc 重采样。生成两轮参考均值时的临时重采样结果不作为最终输出。失败时流程
 终止，不自动改用 `nomoco`。
 
-默认 `--bvec-mode compat46` 逐字节复制原 b 向量文件，与 SimNIBS 4.6 脚本一致。
-`--bvec-mode corrected` 则用各最终仿射矩阵的有限应变旋转更新非零壳层 b 向量，
-并恢复单位长度。这是需主动选择的独立模式。
+默认 `--bvec-mode corrected` 在 FSL scaled-mm 基底中，用各最终仿射矩阵的有限
+应变旋转更新非零壳层 b 向量，并恢复单位长度；存储轴变化在运动旋转之前处理。
+显式 `--bvec-mode compat46` 不做运动旋转，但在 physical 分量模式下仍随存储轴
+变化转换梯度。只有选择 `--component-mode simnibs46-literal` 或存储变换为恒等时，
+才逐字节复制原 b 向量文件。
 
 可选 `--fieldmap-displacement` 必须是 DWI 网格上形状为 `(X,Y,Z,3)` 的有限位移场，
 单位为移动图像世界坐标中的毫米。它与仿射反向采样坐标组合后，一起用于最终插值；
@@ -48,6 +54,9 @@ dwell time 和相位编码方向，并在流程内生成位移场与掩膜。
 匹配对应图像的网格。voxel-shift 输出以体素为单位；`displacement_world_mm.nii.gz`
 是带符号的 NIfTI 世界坐标反向采样位移，供 `preprocess-legacy --fieldmap-displacement`
 使用。此流程不包含 PRELUDE，因此拒绝原始缠绕的 Siemens 相位图。
+
+相位编码 `x/y/z` 参数指存储轴重排后的 FSL 内部轴，不会自动重映射原 NIfTI/BIDS
+的 `i/j/k` 轴。
 
 ### TOPUP
 
@@ -101,15 +110,23 @@ DWI 应已完成该采集所需的运动、涡流和磁敏感/EPI 畸变校正�
 张量 NIfTI 的形状为 `(X,Y,Z,6)`，末维依次为 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`，所有值必须
 有限。应保留拟合产生的有效性掩膜，或由外部张量生成工具提供该掩膜。
 
-`run-prefit-pipeline` 接受符合上游格式的预拟合张量，执行仅改变存储方向的重排和
+`run-prefit-pipeline` 接受符合上游格式的预拟合张量，执行存储轴重排和
 `fslmaths -tensor_decomp` 对应分解，随后进入与原始 DWI 相同的 T1 配准、输出发布和
 QA 步骤，无需原始 DWI。
+默认 `--component-mode physical` 同时转换张量分量以保持物理方向；
+`simnibs46-literal` 保留上游仅重排体素的行为。
 
 ## 兼容模式
 
 拟合和非线性 PPD 默认使用 `strict-fsl`，保留兼容 FSL 的输入处理；在 FSL 本身会
 终止，或有效区域中的折叠/奇异变换无法得到合法张量时，明确报错。可主动选择 `robust`
 来排除无效拟合体素，并将不安全的非线性位置填零。所选模式记入阶段参数，不会自动改变。
+
+有效性策略与坐标、特征分解选项独立。对应命令的默认值为
+`--bvec-mode corrected`、`--component-mode physical`、`--jacobian-mode physical`、
+`--basis-mode physical` 和 `--eigensystem-mode stable`。显式对照旧版上游行为时，
+b 向量选择 `compat46`，其余四项选择 `simnibs46-literal`。所选模式均记录到 QA
+和阶段参数。
 
 ## 配准到 T1
 
@@ -132,6 +149,15 @@ QA 步骤，无需原始 DWI。
 DWI 与 T1 来自同一被试并不代表已经对齐：运动、畸变、分辨率、方向和扫描仪坐标都
 可能不同，不能仅据此使用 `--assume-aligned`。
 
+仿射配准和稠密非线性张量入口使用 header `pixdim` 定义 FSL 采样，使用有效 affine
+定义世界坐标，支持合法的 sform 尺度与 `pixdim` 不一致文件。原始预处理及 FNIRT
+估计/系数展开目前要求两种尺度一致，不一致时明确报错；使用这些路径前，应将输入
+重采样到明确指定的网格。
+
+非线性张量命令默认 `--jacobian-mode physical`：位移梯度除以目标体素大小，PPD
+与折叠 QA 共用同一物理 Jacobian。`simnibs46-literal` 保留旧版按体素索引求导的
+PPD，包含其对分辨率的依赖，供显式对照。
+
 ## CHARM 掩膜与最终输出
 
 脑掩膜使用 SimNIBS `dwi2cond` 的标签区间 1–499。最终张量位于 T1 网格，保存为
@@ -150,7 +176,12 @@ DWI 与 T1 来自同一被试并不代表已经对齐：运动、畸变、分辨
 默认 `--eigensystem-mode stable` 用 `eigh` 获得正交的对称张量基底。显式
 `simnibs46-literal` 模式按 SimNIBS 4.6 的 `eig`、取实部、降序排序与重建方式运行，
 也保留重复特征值可能产生非正交基底的行为。QA 记录所选模式、最大正交误差和受影响
-基底数量。FEM 流程调用已安装的 SimNIBS SESSION，不会替换为此独立转换命令。
+基底数量。正式 FEM 和先导场流程同样默认使用稳定特征分解；通过当前 SimNIBS
+实例上的项目内电导率适配接入，仍调用已安装的 SESSION，不修改安装模块。
+
+默认 `--basis-mode physical` 分别归一化 affine 的三个空间列，倾斜、非等距体素
+不会因此增加尺度各向异性。此模式拒绝含剪切的 affine；`simnibs46-literal` 保留
+上游的归一化方式，供显式对照。
 
 形状、仿射矩阵、有限值、有效性掩膜和来源记录检查失败时均明确报错；各向异性流程
 不会自动改成标量 FEM。

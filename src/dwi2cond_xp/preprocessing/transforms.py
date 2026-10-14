@@ -233,23 +233,32 @@ def decompose_affine(matrix: np.ndarray, center: np.ndarray | None = None) -> np
 
 
 def fsl_voxel_to_scaled_mm(
-    shape: Sequence[int], affine: np.ndarray
+    shape: Sequence[int], affine: np.ndarray, voxel_sizes: Sequence[float] | None = None
 ) -> np.ndarray:
-    """Return FSL's voxel-to-scaled-mm matrix for a NIfTI grid.
+    """构造 FSL scaled-mm 网格；NIfTI 调用方应传入 header 的 pixdim。
 
-    FSL internally uses a radiological scaled-mm grid. Neurological NIfTI
-    storage therefore receives an x-axis flip about the final voxel.
+    单独的 affine 无法恢复 pixdim；未显式传入时假定其列长度与 pixdim 一致。
+    正行列式存储在 FSL 坐标中沿 x 轴反射。
     """
 
     spatial_shape = tuple(int(value) for value in shape)
     world = _finite_matrix(affine, "affine")
     if len(spatial_shape) != 3 or any(value <= 0 for value in spatial_shape):
         raise ValueError("shape must contain three positive dimensions")
-    voxel_sizes = nib.affines.voxel_sizes(world)
-    result = np.diag([*voxel_sizes, 1.0])
+    dimensions = np.asarray(
+        nib.affines.voxel_sizes(world) if voxel_sizes is None else voxel_sizes,
+        dtype=np.float64,
+    )
+    if (
+        dimensions.shape != (3,)
+        or not np.all(np.isfinite(dimensions))
+        or np.any(dimensions <= 0)
+    ):
+        raise ValueError("voxel_sizes must contain three positive finite values")
+    result = np.diag([*dimensions, 1.0])
     if np.linalg.det(world[:3, :3]) > 0:
         result[0, 0] *= -1.0
-        result[0, 3] = (spatial_shape[0] - 1) * voxel_sizes[0]
+        result[0, 3] = (spatial_shape[0] - 1) * dimensions[0]
     return result
 
 
@@ -259,14 +268,19 @@ def fsl_matrix_to_world(
     moving_affine: np.ndarray,
     reference_shape: Sequence[int],
     reference_affine: np.ndarray,
+    *,
+    moving_voxel_sizes: Sequence[float] | None = None,
+    reference_voxel_sizes: Sequence[float] | None = None,
 ) -> np.ndarray:
-    """Convert a FLIRT source-to-reference matrix to NIfTI world coordinates."""
+    """使用各图像的 header 体素大小，把 FLIRT 矩阵转为 world 变换。"""
 
     fsl = _finite_matrix(fsl_matrix, "fsl_matrix")
     moving_world = _finite_matrix(moving_affine, "moving_affine")
     reference_world = _finite_matrix(reference_affine, "reference_affine")
-    moving_fsl = fsl_voxel_to_scaled_mm(moving_shape, moving_world)
-    reference_fsl = fsl_voxel_to_scaled_mm(reference_shape, reference_world)
+    moving_fsl = fsl_voxel_to_scaled_mm(moving_shape, moving_world, moving_voxel_sizes)
+    reference_fsl = fsl_voxel_to_scaled_mm(
+        reference_shape, reference_world, reference_voxel_sizes
+    )
     return (
         reference_world
         @ np.linalg.inv(reference_fsl)
@@ -282,14 +296,19 @@ def world_matrix_to_fsl(
     moving_affine: np.ndarray,
     reference_shape: Sequence[int],
     reference_affine: np.ndarray,
+    *,
+    moving_voxel_sizes: Sequence[float] | None = None,
+    reference_voxel_sizes: Sequence[float] | None = None,
 ) -> np.ndarray:
-    """Convert a NIfTI world transform to a FLIRT source-to-reference matrix."""
+    """使用各图像的 header 体素大小，把 world 变换转为 FLIRT 矩阵。"""
 
     world = _finite_matrix(world_matrix, "world_matrix")
     moving_world = _finite_matrix(moving_affine, "moving_affine")
     reference_world = _finite_matrix(reference_affine, "reference_affine")
-    moving_fsl = fsl_voxel_to_scaled_mm(moving_shape, moving_world)
-    reference_fsl = fsl_voxel_to_scaled_mm(reference_shape, reference_world)
+    moving_fsl = fsl_voxel_to_scaled_mm(moving_shape, moving_world, moving_voxel_sizes)
+    reference_fsl = fsl_voxel_to_scaled_mm(
+        reference_shape, reference_world, reference_voxel_sizes
+    )
     return (
         reference_fsl
         @ np.linalg.inv(reference_world)

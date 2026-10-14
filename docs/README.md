@@ -4,7 +4,8 @@
 
 [Documentation](en/README.md) · [Project home](../README.md)
 
-These guides describe `v0.3.0`. Each page has an English/Chinese switch; links
+These guides describe the `v0.4.0` release, with dated results
+for earlier releases retained separately. Each page has an English/Chinese switch; links
 within a guide stay in the selected language. For an older release, use the
 documentation in its tag, since supported commands and numerical behavior differ.
 
@@ -25,6 +26,7 @@ documentation in its tag, since supported commands and numerical behavior differ
 
 ## Versions and development
 
+- [v0.4.0 release notes and migration](en/RELEASE_NOTES_v0.4.0.md)
 - [Maintenance status](en/ROADMAP.md)
 - [Changelog](en/CHANGELOG.md)
 - [Release process](en/RELEASE_PROCESS.md)

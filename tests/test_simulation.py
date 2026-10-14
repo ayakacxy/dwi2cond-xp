@@ -195,12 +195,16 @@ def test_build_tdcs_session_maps_tensor_and_montage(monkeypatch, tmp_path: Path)
     simnibs.sim_struct = sim_struct
     monkeypatch.setitem(sys.modules, "simnibs", simnibs)
     monkeypatch.setitem(sys.modules, "simnibs.sim_struct", sim_struct)
+    monkeypatch.setattr(simulation, "bind_simnibs_tensor_consumer",
+                        lambda _consumer, path, **kwargs: simulation.describe_simnibs_tensor_consumer(path, **kwargs))
+    tensor_file = tmp_path / "tensor.nii.gz"
+    nib.save(nib.Nifti1Image(np.zeros((2, 2, 2, 6)), np.eye(4)), tensor_file)
     contract = {
         "subpath": "/tmp/m2m_test",
         "head_mesh": "/tmp/custom-head.msh",
         "eeg_cap": "/tmp/cap.csv",
         "mode": "vn",
-        "tensor": {"path": "/tmp/tensor.nii.gz"},
+        "tensor": {"path": str(tensor_file)},
     }
 
     session = build_tdcs_session(contract, tmp_path / "output")
@@ -208,7 +212,7 @@ def test_build_tdcs_session_maps_tensor_and_montage(monkeypatch, tmp_path: Path)
     assert session.map_to_vol is True
     assert session.fnamehead == "/tmp/custom-head.msh"
     assert session.tissues_in_niftis == [1, 2, 3]
-    assert session.fname_tensor == "/tmp/tensor.nii.gz"
+    assert session.fname_tensor == str(tensor_file)
     assert session.tdcs.currents == [0.001, -0.001]
     assert session.tdcs.anisotropy_type == "vn"
     assert [electrode.centre for electrode in session.tdcs.electrodes] == ["C3", "C4"]
@@ -230,7 +234,56 @@ def test_build_tdcs_session_rejects_wrong_simnibs_version(monkeypatch, tmp_path:
         )
 
 
+def test_run_tdcs_records_solver_consumer_and_keeps_published_tensor(monkeypatch, tmp_path):
+    subpath, source = _make_subject(tmp_path)
+    cosine = np.sqrt(0.5)
+    affine = np.eye(4)
+    affine[:3, :3] = [[cosine, -2 * cosine, 0], [cosine, 2 * cosine, 0], [0, 0, 3]]
+    for path in (subpath / "T1.nii.gz", subpath / "final_tissues.nii.gz"):
+        nib.save(nib.Nifti1Image(np.ones((3, 4, 5)), affine), path)
+    data = np.zeros((3, 4, 5, 6))
+    data[..., [0, 3, 5]] = [0.002, 0.001, 0.0005]
+    nib.save(nib.Nifti1Image(data, affine), source)
+    source_bytes = source.read_bytes()
+
+    def runner(session, cpus):
+        del cpus
+        assert session.fname_tensor == str(source)
+        output = Path(session.pathfem) / "subject_volumes"
+        output.mkdir()
+        nib.save(nib.Nifti1Image(np.ones((3, 4, 5, 3)), affine), output / "field_E.nii.gz")
+        return []
+
+    _install_simnibs(monkeypatch, runner=runner)
+    manifest = run_tdcs(subpath, tmp_path / "output", mode="vn", tensor_file=source)
+    report = manifest["tensor_consumption"]
+    assert source.read_bytes() == source_bytes
+    assert manifest["input"]["tensor"]["path"] == str(source)
+    assert report["adapter"] == "instance-scoped-method"
+    assert not report["tensor_file_rewritten"]
+    assert Path(report["consumer_tensor"]).is_file()
+    assert "attempt" not in report["consumer_tensor"]
+
+
+def test_simulation_dry_run_checks_shear_before_writing(tmp_path):
+    subpath, source = _make_subject(tmp_path)
+    affine = np.eye(4)
+    affine[0, 1] = 0.2
+    for path in (subpath / "T1.nii.gz", subpath / "final_tissues.nii.gz"):
+        nib.save(nib.Nifti1Image(np.ones((3, 4, 5)), affine), path)
+    nib.save(nib.Nifti1Image(np.zeros((3, 4, 5, 6)), affine), source)
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="sheared grids"):
+        run_tdcs(subpath, output, mode="vn", tensor_file=source, dry_run=True)
+    assert not output.exists()
+    manifest = run_tdcs(subpath, output, mode="vn", tensor_file=source, dry_run=True,
+                        basis_mode="simnibs46-literal")
+    assert not manifest["tensor_consumption"]["tensor_file_rewritten"]
+
+
 def _install_simnibs(monkeypatch, *, version="4.6.0", runner=None) -> ModuleType:
+    monkeypatch.setattr(simulation, "bind_simnibs_tensor_consumer",
+                        lambda _consumer, path, **kwargs: simulation.describe_simnibs_tensor_consumer(path, **kwargs))
     simnibs = ModuleType("simnibs")
     simnibs.__version__ = version
     sim_struct = ModuleType("simnibs.sim_struct")

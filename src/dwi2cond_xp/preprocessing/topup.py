@@ -20,7 +20,7 @@ from numba import get_num_threads, njit, prange, set_num_threads
 from scipy.sparse import csc_matrix
 
 from ._numba import set_available_numba_threads
-from .orientation import write_fsl_reoriented
+from .orientation import validate_fsl_raw_sampling, write_fsl_reoriented
 
 
 @dataclass(frozen=True)
@@ -812,6 +812,24 @@ def _expand_coefficients_fsl_order(
     return field
 
 
+@njit(cache=True)
+def _spline_row_support(basis: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """保存每行非零支持的首尾，区间内部的零权重仍由原算术处理。"""
+
+    first = np.empty(basis.shape[0], dtype=np.int64)
+    last = np.empty(basis.shape[0], dtype=np.int64)
+    for voxel in range(basis.shape[0]):
+        start = 0
+        while start < basis.shape[1] and basis[voxel, start] == 0.0:
+            start += 1
+        stop = basis.shape[1]
+        while stop > start and basis[voxel, stop - 1] == 0.0:
+            stop -= 1
+        first[voxel] = start
+        last[voxel] = stop
+    return first, last
+
+
 @njit(cache=True, parallel=True)
 def _expand_coefficients_fsl_order_voxel_parallel(
     coefficients: np.ndarray,
@@ -819,26 +837,29 @@ def _expand_coefficients_fsl_order_voxel_parallel(
     basis_y: np.ndarray,
     basis_z: np.ndarray,
 ) -> np.ndarray:
-    """Expand independent voxels while retaining FSL's coefficient order."""
+    """压缩恒零支持并按连续输出遍历，保留体素内的 FSL 系数规约。"""
 
     nx = basis_x.shape[0]
     ny = basis_y.shape[0]
     nz = basis_z.shape[0]
+    first_x, last_x = _spline_row_support(basis_x)
+    first_y, last_y = _spline_row_support(basis_y)
+    first_z, last_z = _spline_row_support(basis_z)
     field = np.zeros((nx, ny, nz), dtype=np.float64)
     for voxel in prange(nx * ny * nz):
-        voxel_x = voxel % nx
-        voxel_y = (voxel // nx) % ny
-        voxel_z = voxel // (nx * ny)
+        voxel_x = voxel // (ny * nz)
+        voxel_y = (voxel // nz) % ny
+        voxel_z = voxel % nz
         value = 0.0
-        for coefficient_z in range(coefficients.shape[2]):
+        for coefficient_z in range(first_z[voxel_z], last_z[voxel_z]):
             weight_z = basis_z[voxel_z, coefficient_z]
             if weight_z == 0.0:
                 continue
-            for coefficient_y in range(coefficients.shape[1]):
+            for coefficient_y in range(first_y[voxel_y], last_y[voxel_y]):
                 weight_zy = weight_z * basis_y[voxel_y, coefficient_y]
                 if weight_zy == 0.0:
                     continue
-                for coefficient_x in range(coefficients.shape[0]):
+                for coefficient_x in range(first_x[voxel_x], last_x[voxel_x]):
                     kernel = weight_zy * basis_x[voxel_x, coefficient_x]
                     value += (
                         coefficients[coefficient_x, coefficient_y, coefficient_z]
@@ -1093,8 +1114,12 @@ def _spline_jte_fsl_order(
     basis_y: np.ndarray,
     basis_z: np.ndarray,
 ) -> np.ndarray:
-    """Apply a spline transpose in FSL's coefficient and voxel order."""
+    """压缩支持域，但保持 FSL 体素规约与非有限值传播。"""
 
+    first_x, last_x = _spline_row_support(basis_x.T)
+    first_y, last_y = _spline_row_support(basis_y.T)
+    first_z, last_z = _spline_row_support(basis_z.T)
+    finite_image = np.all(np.isfinite(image))
     result = np.zeros(
         (basis_x.shape[1], basis_y.shape[1], basis_z.shape[1]), dtype=np.float64
     )
@@ -1106,15 +1131,18 @@ def _spline_jte_fsl_order(
         coefficient_y = (coefficient // coefficient_x_count) % coefficient_y_count
         coefficient_z = coefficient // (coefficient_x_count * coefficient_y_count)
         value = 0.0
-        for z in range(image.shape[2]):
+        for z in range(first_z[coefficient_z], last_z[coefficient_z]):
             weight_z = basis_z[z, coefficient_z]
             if weight_z == 0.0:
                 continue
-            for y in range(image.shape[1]):
+            for y in range(first_y[coefficient_y], last_y[coefficient_y]):
                 weight_zy = weight_z * basis_y[y, coefficient_y]
                 if weight_zy == 0.0:
                     continue
-                for x in range(image.shape[0]):
+                # 有非有限值时保留原全 x 扫描，维持 0*NaN/Inf 的原传播行为。
+                start_x = first_x[coefficient_x] if finite_image else 0
+                stop_x = last_x[coefficient_x] if finite_image else image.shape[0]
+                for x in range(start_x, stop_x):
                     if mask[x, y, z]:
                         value += (
                             basis_x[x, coefficient_x]
@@ -2458,7 +2486,7 @@ def run_simnibs46_topup(
     *,
     progress: Callable[[int, str], None] | None = None,
 ) -> TopupRunResult:
-    """Run the frozen nine-level SimNIBS 4.6 TOPUP subset."""
+    """执行固定九层 TOPUP；输入图像和返回的样条、运动参数使用内部 radiological 坐标。"""
 
     from .topup_optimizer import (
         fsl_levenberg_marquardt,
@@ -2614,7 +2642,7 @@ def run_topup_nifti(
     workers: int = 8,
     progress: Callable[[int, str], None] | None = None,
 ) -> dict[str, object]:
-    """Run the fixed TOPUP subset and write its public NIfTI artifacts."""
+    """转换 NIfTI 存储轴后执行 TOPUP，恢复空间输出并保存 FSL 可消费的内部样条参数。"""
 
     import nibabel as nib
 
@@ -2634,6 +2662,8 @@ def run_topup_nifti(
     source_reverse = nib.load(str(reverse_b0_file))
     if len(source_forward.shape) != 3 or len(source_reverse.shape) != 3:
         raise ValueError("forward and reverse b0 images must share one 3D shape")
+    validate_fsl_raw_sampling(source_forward)
+    validate_fsl_raw_sampling(source_reverse)
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
     prepared_forward = write_fsl_reoriented(
@@ -2655,6 +2685,13 @@ def run_topup_nifti(
     if not np.allclose(forward_image.affine, reverse_image.affine, rtol=0.0, atol=1e-6):
         raise ValueError("forward and reverse b0 images must share one affine")
     voxel_sizes = tuple(float(value) for value in forward_image.header.get_zooms()[:3])
+    radiological_flip = np.linalg.det(forward_image.affine[:3, :3]) > 0.0
+    if radiological_flip:
+        # 采集参数和运动参数使用 FSL 内部坐标，图像进入核心前反射 x 轴。
+        forward_internal = np.ascontiguousarray(forward[::-1])
+        reverse_internal = np.ascontiguousarray(reverse[::-1])
+    else:
+        forward_internal, reverse_internal = forward, reverse
     rows = np.asarray(
         [
             (*direction, readout_seconds)
@@ -2667,7 +2704,7 @@ def run_topup_nifti(
     try:
         set_available_numba_threads(workers)
         result = run_simnibs46_topup(
-            np.stack((forward, reverse), axis=3),
+            np.stack((forward_internal, reverse_internal), axis=3),
             rows,
             voxel_sizes,
             progress=progress,
@@ -2675,22 +2712,28 @@ def run_topup_nifti(
     finally:
         set_num_threads(previous_workers)
     algorithm_seconds = perf_counter() - started
+    # 场图和校正图像恢复 NIfTI 存储轴；样条系数及 movpar 保留内部坐标供 applytopup 使用。
+    field_hz = result.field_hz[::-1] if radiological_flip else result.field_hz
+    corrected_scans = (
+        result.corrected_scans[::-1] if radiological_flip else result.corrected_scans
+    )
+    joint_mask = result.joint_mask[::-1] if radiological_flip else result.joint_mask
 
     header = forward_image.header.copy()
     header.set_data_dtype(np.float32)
     nib.save(
-        nib.Nifti1Image(result.field_hz, forward_image.affine, header),
+        nib.Nifti1Image(field_hz, forward_image.affine, header),
         output / "field_hz.nii.gz",
     )
     nib.save(
-        nib.Nifti1Image(result.corrected_scans, forward_image.affine, header),
+        nib.Nifti1Image(corrected_scans, forward_image.affine, header),
         output / "corrected_pair.nii.gz",
     )
     mask_header = forward_image.header.copy()
     mask_header.set_data_dtype(np.uint8)
     nib.save(
         nib.Nifti1Image(
-            result.joint_mask.astype(np.uint8), forward_image.affine, mask_header
+            joint_mask.astype(np.uint8), forward_image.affine, mask_header
         ),
         output / "joint_mask.nii.gz",
     )
@@ -2720,14 +2763,16 @@ def run_topup_nifti(
         output / "topup_movpar.txt", result.movement_parameters, fmt="%.10g"
     )
     uncorrected_difference = forward.astype(np.float64) - reverse.astype(np.float64)
-    corrected_difference = result.corrected_scans[..., 0].astype(
+    corrected_difference = corrected_scans[..., 0].astype(
         np.float64
-    ) - result.corrected_scans[..., 1].astype(np.float64)
+    ) - corrected_scans[..., 1].astype(np.float64)
     report: dict[str, object] = {
         "status": "complete",
         "algorithm": "SimNIBS-4.6-b02b0_nosubsamp-fixed-subset",
         "algorithm_seconds": algorithm_seconds,
         "raw_storage_reorientation": "fslreorient2std-compatible-no-interpolation",
+        "internal_coordinate_system": "fsl-radiological-scaled-mm",
+        "internal_x_reflection": bool(radiological_flip),
         "input_shape": list(forward.shape),
         "voxel_sizes_mm": list(voxel_sizes),
         "phase_encoding_direction": phase_encoding_direction,

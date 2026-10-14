@@ -11,7 +11,7 @@ import numpy as np
 
 from .brain_mask import write_bet_brain_mask
 from .eddy import run_eddy_nifti
-from .orientation import write_fsl_reoriented
+from .orientation import validate_fsl_raw_sampling, write_fsl_reoriented
 from .rigid import write_aligned_b0_mean
 from .topup import run_topup_nifti
 
@@ -48,14 +48,19 @@ def run_topup_eddy_nifti(
     random_seed: int = 1,
     workers: int = 8,
     bet_backend: str = "optimized",
+    component_mode: str = "physical",
     progress: TopupEddyProgress | None = None,
 ) -> dict[str, object]:
-    """Execute the official reverse 4D preparation, TOPUP, BET, and EDDY sequence."""
+    """执行反向相位编码准备、TOPUP、BET 和 EDDY，并保留原始梯度坐标供入口转换。"""
 
     if not np.isfinite(readout_seconds) or not 0.01 <= readout_seconds <= 0.2:
         raise ValueError("readout seconds must be finite and within [0.01, 0.2]")
     if phase_encoding_direction not in ("x", "x-", "y", "y-"):
         raise ValueError("TOPUP phase-encoding direction must be x, x-, y, or y-")
+    if component_mode not in ("physical", "simnibs46-literal"):
+        raise ValueError("component_mode must be physical or simnibs46-literal")
+    validate_fsl_raw_sampling(nib.load(str(dwi_file)))
+    validate_fsl_raw_sampling(nib.load(str(reverse_phase_encoding_file)))
     root = Path(output_directory)
     preparation = root / "topup_preparation"
     topup = root / "topup"
@@ -146,6 +151,7 @@ def run_topup_eddy_nifti(
         random_seed=random_seed,
         workers=workers,
         progress=progress,
+        component_mode=component_mode,
     )
     report: dict[str, object] = {
         "status": "completed",
@@ -154,6 +160,7 @@ def run_topup_eddy_nifti(
         "readout_seconds": float(readout_seconds),
         "phase_encoding_direction": phase_encoding_direction,
         "workers": workers,
+        "component_mode": component_mode,
         "topup": topup_report,
         "eddy": eddy_report,
         "artifacts": {

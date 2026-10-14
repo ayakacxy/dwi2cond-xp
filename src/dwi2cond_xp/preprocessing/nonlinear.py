@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 import json
 import os
@@ -15,6 +15,7 @@ import nibabel as nib
 import numpy as np
 from scipy.ndimage import map_coordinates
 
+from ._nifti_io import NiftiWriter
 from .tensor_ops import decompose_tensor6
 from .transforms import fsl_voxel_to_scaled_mm
 
@@ -135,6 +136,19 @@ def fsl_warp_jacobians(
     ):
         raise ValueError("voxel_sizes must contain three positive finite values")
     gradient = fsl_displacement_gradient(displacement).astype(np.float64)
+    return _warp_jacobians_from_gradient(
+        gradient, directions, dimensions, singular_tolerance
+    )
+
+
+def _warp_jacobians_from_gradient(
+    gradient: np.ndarray,
+    directions: np.ndarray,
+    dimensions: np.ndarray,
+    singular_tolerance: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """用已计算的 float64 梯度保留原 Jacobian 算术和有效性判断。"""
+
     gradient *= (directions / dimensions).reshape((1, 1, 1, 1, 3))
     backward = gradient
     backward[..., 0, 0] += 1.0
@@ -207,9 +221,15 @@ def _fsl_pull_coordinates(
     source_shape: tuple[int, int, int],
     source_affine: np.ndarray,
     displacement: np.ndarray,
+    source_voxel_sizes: tuple[float, float, float] | None = None,
+    reference_voxel_sizes: tuple[float, float, float] | None = None,
 ) -> np.ndarray:
-    target_sampling = fsl_voxel_to_scaled_mm(reference_shape, reference_affine)
-    source_sampling = fsl_voxel_to_scaled_mm(source_shape, source_affine)
+    target_sampling = fsl_voxel_to_scaled_mm(
+        reference_shape, reference_affine, reference_voxel_sizes
+    )
+    source_sampling = fsl_voxel_to_scaled_mm(
+        source_shape, source_affine, source_voxel_sizes
+    )
     grid = np.indices(reference_shape, dtype=np.float64).reshape(3, -1)
     target_mm = target_sampling[:3, :3] @ grid + target_sampling[:3, 3, None]
     source_mm = target_mm + displacement.reshape(-1, 3).T
@@ -218,68 +238,36 @@ def _fsl_pull_coordinates(
     )
 
 
-def resample_tensor_ppd_fsl(
-    tensor: np.ndarray,
-    source_affine: np.ndarray,
-    reference_shape: tuple[int, int, int],
-    reference_affine: np.ndarray,
-    displacement: np.ndarray,
-    *,
-    source_mask: np.ndarray | None = None,
-    reference_mask: np.ndarray | None = None,
-    singular_tolerance: float = 1e-8,
-    repeated_eigenvalue_tolerance: float = 1e-8,
-    low_fa_threshold: float = 0.05,
-    compatibility_mode: str = "strict-fsl",
+_PPD_BATCH_VOXELS = 262144
+
+
+def _resample_tensor_ppd_slab(
+    start: int,
+    stop: int,
+    values: np.ndarray,
+    source_valid: np.ndarray,
+    target_valid: np.ndarray,
+    warp: np.ndarray,
+    target_sampling: np.ndarray,
+    source_sampling: np.ndarray,
+    source_sampling_inverse: np.ndarray,
+    voxel_axis_directions: np.ndarray,
+    voxel_sizes: np.ndarray,
+    singular_tolerance: float,
+    repeated_eigenvalue_tolerance: float,
+    low_fa_threshold: float,
+    compatibility_mode: str,
+    jacobian_mode: str,
 ) -> NonlinearTensorResult:
-    """Resample an FSL tensor through a dense FNIRT warp and apply PPD.
+    """计算一个连续 x 分块；相邻体素 halo 保持整网格的差分边界。"""
 
-    ``displacement`` is the relative-mm backward field on the reference grid:
-    each target voxel maps to the source FSL scaled-mm coordinate at the same
-    grid location plus the stored displacement vector.
-    """
-
-    values = np.asarray(tensor, dtype=np.float32)
-    target_shape = tuple(int(value) for value in reference_shape)
-    warp = np.asarray(displacement, dtype=np.float32)
-    if values.ndim != 4 or values.shape[-1] != 6:
-        raise ValueError("tensor must have shape (x, y, z, 6)")
-    if len(target_shape) != 3 or any(size <= 0 for size in target_shape):
-        raise ValueError("reference_shape must contain three positive dimensions")
-    if warp.shape != target_shape + (3,) or not np.all(np.isfinite(warp)):
-        raise ValueError("displacement must be finite and match the reference grid")
-    if not np.all(np.isfinite(source_affine)) or np.shape(source_affine) != (4, 4):
-        raise ValueError("source_affine must be a finite 4x4 matrix")
-    if not np.all(np.isfinite(reference_affine)) or np.shape(reference_affine) != (
-        4,
-        4,
-    ):
-        raise ValueError("reference_affine must be a finite 4x4 matrix")
-    if repeated_eigenvalue_tolerance <= 0 or low_fa_threshold < 0:
-        raise ValueError(
-            "eigenvalue tolerance must be positive and FA threshold nonnegative"
-        )
-    if compatibility_mode not in ("strict-fsl", "robust"):
-        raise ValueError("compatibility_mode must be strict-fsl or robust")
-
-    if source_mask is None:
-        source_valid = np.any(values[..., :3] != 0.0, axis=-1)
-    else:
-        source_valid = np.asarray(source_mask) != 0
-        if source_valid.shape != values.shape[:3]:
-            raise ValueError("source_mask must match the tensor grid")
-    target_valid = np.ones(target_shape, dtype=bool)
-    if reference_mask is not None:
-        target_valid = np.asarray(reference_mask) != 0
-        if target_valid.shape != target_shape:
-            raise ValueError("reference_mask must match the reference grid")
-
-    coordinates = _fsl_pull_coordinates(
-        target_shape,
-        np.asarray(reference_affine, dtype=np.float64),
-        values.shape[:3],
-        np.asarray(source_affine, dtype=np.float64),
-        warp,
+    slab_shape = (stop - start,) + warp.shape[1:3]
+    grid = np.indices(slab_shape, dtype=np.float64).reshape(3, -1)
+    grid[0] += start
+    target_mm = target_sampling[:3, :3] @ grid + target_sampling[:3, 3, None]
+    source_mm = target_mm + warp[start:stop].reshape(-1, 3).T
+    coordinates = source_sampling_inverse @ (
+        source_mm - source_sampling[:3, 3, None]
     )
     rounded = np.where(
         coordinates >= 0.0,
@@ -293,7 +281,7 @@ def resample_tensor_ppd_fsl(
     sampled_source_mask[rounded_in_bounds] = source_valid[
         tuple(rounded[:, rounded_in_bounds])
     ]
-    sampled = np.empty(target_shape + (6,), dtype=np.float32)
+    sampled = np.empty(slab_shape + (6,), dtype=np.float32)
     for component in range(6):
         sampled[..., component] = map_coordinates(
             values[..., component],
@@ -302,28 +290,42 @@ def resample_tensor_ppd_fsl(
             mode="grid-constant",
             cval=0.0,
             prefilter=False,
-        ).reshape(target_shape)
+        ).reshape(slab_shape)
 
-    reference_sampling = fsl_voxel_to_scaled_mm(target_shape, reference_affine)
-    voxel_axis_directions = np.sign(np.diag(reference_sampling)[:3])
-    backward, forward, _, ppd_fold, ppd_near_singular = fsl_warp_jacobians(
-        warp,
-        singular_tolerance=singular_tolerance,
-        voxel_axis_directions=voxel_axis_directions,
+    halo_start = max(0, start - 1)
+    halo_stop = min(warp.shape[0], stop + 1)
+    gradient = fsl_displacement_gradient(warp[halo_start:halo_stop])[
+        start - halo_start : stop - halo_start
+    ].astype(np.float64)
+    backward, forward, determinant, fold, near_singular = (
+        _warp_jacobians_from_gradient(
+            gradient.copy() if jacobian_mode == "simnibs46-literal" else gradient,
+            voxel_axis_directions,
+            voxel_sizes,
+            singular_tolerance,
+        )
     )
-    voxel_sizes = np.abs(np.diag(reference_sampling)[:3])
-    _, _, determinant, fold, near_singular = fsl_warp_jacobians(
-        warp,
-        singular_tolerance=singular_tolerance,
-        voxel_axis_directions=voxel_axis_directions,
-        voxel_sizes=voxel_sizes,
-    )
+    ppd_fold, ppd_near_singular = fold, near_singular
+    if jacobian_mode == "simnibs46-literal":
+        backward, forward, _, ppd_fold, ppd_near_singular = (
+            _warp_jacobians_from_gradient(
+                gradient,
+                voxel_axis_directions,
+                np.ones(3, dtype=np.float64),
+                singular_tolerance,
+            )
+        )
     matrices = _tensor6_to_matrix(sampled.astype(np.float64))
     finite_tensor = np.all(np.isfinite(matrices), axis=(-2, -1))
-    eigenvalues = np.full(target_shape + (3,), np.nan, dtype=np.float64)
-    eigenvectors = np.full(target_shape + (3, 3), np.nan, dtype=np.float64)
-    eigenvalues[finite_tensor], eigenvectors[finite_tensor] = np.linalg.eigh(
-        matrices[finite_tensor]
+    eigenvalues = np.full(slab_shape + (3,), np.nan, dtype=np.float64)
+    eigenvectors = np.full(slab_shape + (3, 3), np.nan, dtype=np.float64)
+    # 零矩阵的 NumPy 特征分解恒为零特征值与单位基；NaN/Inf 不进入此分支。
+    zero_tensor = finite_tensor & np.all(sampled == 0.0, axis=-1)
+    eigenvalues[zero_tensor] = 0.0
+    eigenvectors[zero_tensor] = np.eye(3, dtype=np.float64)
+    decompose = finite_tensor & ~zero_tensor
+    eigenvalues[decompose], eigenvectors[decompose] = np.linalg.eigh(
+        matrices[decompose]
     )
     scale = np.maximum(np.max(np.abs(eigenvalues), axis=-1), 1.0)
     repeated = (
@@ -333,12 +335,16 @@ def resample_tensor_ppd_fsl(
         )
         <= repeated_eigenvalue_tolerance * scale
     )
-    fa = _axial_fa(eigenvalues)
-    low_fa = fa < low_fa_threshold
-    rotation, ppd_stable = _ppd_rotation(
-        forward, eigenvectors, singular_tolerance=singular_tolerance
+    low_fa = _axial_fa(eigenvalues) < low_fa_threshold
+    active_support = target_valid[start:stop] & sampled_source_mask.reshape(slab_shape)
+    # 旋转只影响有效支持内的输出；完整网格的张量与 Jacobian QA 仍独立计算。
+    rotation = np.full(slab_shape + (3, 3), np.nan, dtype=np.float64)
+    ppd_stable = np.zeros(slab_shape, dtype=bool)
+    rotation[active_support], ppd_stable[active_support] = _ppd_rotation(
+        forward[active_support],
+        eigenvectors[active_support],
+        singular_tolerance=singular_tolerance,
     )
-    active_support = target_valid & sampled_source_mask.reshape(target_shape)
     unsafe = active_support & (
         ~finite_tensor
         | fold
@@ -369,10 +375,9 @@ def resample_tensor_ppd_fsl(
         rotation[valid],
         optimize=True,
     )
-    output = _matrix_to_tensor6(rotated).astype(np.float32)
     invalid_tensor = ~finite_tensor | ~np.all(np.isfinite(eigenvalues), axis=-1)
     return NonlinearTensorResult(
-        tensor=output,
+        tensor=_matrix_to_tensor6(rotated).astype(np.float32),
         valid_mask=valid,
         backward_jacobian=backward,
         forward_jacobian=forward,
@@ -383,6 +388,180 @@ def resample_tensor_ppd_fsl(
         repeated_eigenvalue_mask=repeated,
         invalid_tensor_mask=invalid_tensor,
     )
+
+
+def resample_tensor_ppd_fsl(
+    tensor: np.ndarray,
+    source_affine: np.ndarray,
+    reference_shape: tuple[int, int, int],
+    reference_affine: np.ndarray,
+    displacement: np.ndarray,
+    *,
+    source_mask: np.ndarray | None = None,
+    reference_mask: np.ndarray | None = None,
+    singular_tolerance: float = 1e-8,
+    repeated_eigenvalue_tolerance: float = 1e-8,
+    low_fa_threshold: float = 0.05,
+    compatibility_mode: str = "strict-fsl",
+    jacobian_mode: str = "physical",
+    source_voxel_sizes: tuple[float, float, float] | None = None,
+    reference_voxel_sizes: tuple[float, float, float] | None = None,
+    workers: int = 1,
+    ppd_device: str = "cpu",
+) -> NonlinearTensorResult:
+    """用相对毫米 backward 位移重采样 FSL 张量并执行 PPD。
+
+    physical 按 target scaled-mm 求导，旋转和 fold QA 共用物理 Jacobian。
+    simnibs46-literal 保留旧版 vecreg 按体素索引求导的分量重定向。
+    分块仅限制临时空间；每个体素的精度、阈值和全网格 QA 保持一致。
+    """
+
+    values = np.asarray(tensor, dtype=np.float32)
+    target_shape = tuple(int(value) for value in reference_shape)
+    warp = np.asarray(displacement, dtype=np.float32)
+    if values.ndim != 4 or values.shape[-1] != 6:
+        raise ValueError("tensor must have shape (x, y, z, 6)")
+    if len(target_shape) != 3 or any(size <= 0 for size in target_shape):
+        raise ValueError("reference_shape must contain three positive dimensions")
+    if warp.shape != target_shape + (3,) or not np.all(np.isfinite(warp)):
+        raise ValueError("displacement must be finite and match the reference grid")
+    if not np.all(np.isfinite(source_affine)) or np.shape(source_affine) != (4, 4):
+        raise ValueError("source_affine must be a finite 4x4 matrix")
+    if not np.all(np.isfinite(reference_affine)) or np.shape(reference_affine) != (
+        4,
+        4,
+    ):
+        raise ValueError("reference_affine must be a finite 4x4 matrix")
+    if repeated_eigenvalue_tolerance <= 0 or low_fa_threshold < 0:
+        raise ValueError(
+            "eigenvalue tolerance must be positive and FA threshold nonnegative"
+        )
+    if compatibility_mode not in ("strict-fsl", "robust"):
+        raise ValueError("compatibility_mode must be strict-fsl or robust")
+    if jacobian_mode not in ("physical", "simnibs46-literal"):
+        raise ValueError("jacobian_mode must be 'physical' or 'simnibs46-literal'")
+    if not np.isfinite(singular_tolerance) or singular_tolerance <= 0:
+        raise ValueError("singular_tolerance must be positive and finite")
+    if ppd_device not in ("cpu", "cuda"):
+        raise ValueError("ppd_device must be cpu or cuda")
+    if not isinstance(workers, (int, np.integer)) or workers < 1:
+        raise ValueError("workers must be a positive integer")
+
+    if source_mask is None:
+        source_valid = np.any(values[..., :3] != 0.0, axis=-1)
+    else:
+        source_valid = np.asarray(source_mask) != 0
+        if source_valid.shape != values.shape[:3]:
+            raise ValueError("source_mask must match the tensor grid")
+    target_valid = np.ones(target_shape, dtype=bool)
+    if reference_mask is not None:
+        target_valid = np.asarray(reference_mask) != 0
+        if target_valid.shape != target_shape:
+            raise ValueError("reference_mask must match the reference grid")
+
+    if any(size < 2 for size in target_shape):
+        raise ValueError(
+            "displacement must be finite with at least two voxels per axis"
+        )
+    reference_sampling = fsl_voxel_to_scaled_mm(
+        target_shape, reference_affine, reference_voxel_sizes
+    )
+    source_sampling = fsl_voxel_to_scaled_mm(
+        values.shape[:3], source_affine, source_voxel_sizes
+    )
+    source_sampling_inverse = np.linalg.inv(source_sampling[:3, :3])
+    voxel_axis_directions = np.sign(np.diag(reference_sampling)[:3])
+    voxel_sizes = np.abs(np.diag(reference_sampling)[:3])
+    result = NonlinearTensorResult(
+        tensor=np.empty(target_shape + (6,), dtype=np.float32),
+        valid_mask=np.empty(target_shape, dtype=bool),
+        backward_jacobian=np.empty(target_shape + (3, 3), dtype=np.float64),
+        forward_jacobian=np.empty(target_shape + (3, 3), dtype=np.float64),
+        backward_jacobian_determinant=np.empty(target_shape, dtype=np.float64),
+        fold_mask=np.empty(target_shape, dtype=bool),
+        near_singular_mask=np.empty(target_shape, dtype=bool),
+        low_fa_mask=np.empty(target_shape, dtype=bool),
+        repeated_eigenvalue_mask=np.empty(target_shape, dtype=bool),
+        invalid_tensor_mask=np.empty(target_shape, dtype=bool),
+    )
+    slab_width = max(1, _PPD_BATCH_VOXELS // (target_shape[1] * target_shape[2]))
+    slabs = iter(
+        (start, min(start + slab_width, target_shape[0]))
+        for start in range(0, target_shape[0], slab_width)
+    )
+
+    def compute_slab(start: int, stop: int) -> NonlinearTensorResult:
+        return _resample_tensor_ppd_slab(
+            start,
+            stop,
+            values,
+            source_valid,
+            target_valid,
+            warp,
+            reference_sampling,
+            source_sampling,
+            source_sampling_inverse,
+            voxel_axis_directions,
+            voxel_sizes,
+            singular_tolerance,
+            repeated_eigenvalue_tolerance,
+            low_fa_threshold,
+            compatibility_mode,
+            jacobian_mode,
+        )
+
+    def store_slab(start: int, stop: int, slab: NonlinearTensorResult) -> None:
+        for name in NonlinearTensorResult.__dataclass_fields__:
+            getattr(result, name)[start:stop] = getattr(slab, name)
+
+    if ppd_device == "cuda":
+        # CUDA 仅在显式请求时导入，单线程提交完整分块，源张量跨分块驻留。
+        try:
+            from .ppd_cuda import CudaPpdWorkspace
+        except ImportError as error:
+            raise RuntimeError("CUDA PPD requires CuPy; no CPU fallback") from error
+        workspace = CudaPpdWorkspace(
+            values, source_affine, target_shape, reference_affine,
+            source_mask=source_valid,
+            source_voxel_sizes=source_voxel_sizes,
+            reference_voxel_sizes=reference_voxel_sizes,
+        )
+        for start, stop in slabs:
+            slab, _ = workspace.slab(
+                warp, start, stop, reference_mask=target_valid,
+                compatibility_mode=compatibility_mode, jacobian_mode=jacobian_mode,
+                singular_tolerance=singular_tolerance,
+                repeated_eigenvalue_tolerance=repeated_eigenvalue_tolerance,
+                low_fa_threshold=low_fa_threshold,
+            )
+            store_slab(start, stop, slab)
+        return result
+
+    if workers == 1:
+        for start, stop in slabs:
+            store_slab(start, stop, compute_slab(start, stop))
+    else:
+        # 只保留 workers 个在途结果，避免完成顺序导致临时数组堆积。
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            pending = {}
+            for start, stop in slabs:
+                pending[executor.submit(compute_slab, start, stop)] = (start, stop)
+                if len(pending) == workers:
+                    break
+            while pending:
+                completed, _ = wait(pending, return_when=FIRST_COMPLETED)
+                while completed:
+                    future = completed.pop()
+                    start, stop = pending.pop(future)
+                    store_slab(start, stop, future.result())
+                    del future
+                    next_slab = next(slabs, None)
+                    if next_slab is not None:
+                        start, stop = next_slab
+                        pending[executor.submit(compute_slab, start, stop)] = (
+                            start, stop
+                        )
+    return result
 
 
 def register_tensor_nonlinear_nifti(
@@ -402,11 +581,17 @@ def register_tensor_nonlinear_nifti(
     workers: int = 8,
     derivative_base: str | None = None,
     compatibility_mode: str = "strict-fsl",
+    jacobian_mode: str = "physical",
+    ppd_device: str = "cpu",
 ) -> dict[str, object]:
-    """Apply a dense or coefficient FNIRT warp and write tensor derivatives."""
+    """应用 dense/coefficient FNIRT 位移并输出张量，默认使用物理 PPD。"""
 
+    if ppd_device not in ("cpu", "cuda"):
+        raise ValueError("ppd_device must be cpu or cuda")
     if not isinstance(workers, (int, np.integer)) or workers < 1:
         raise ValueError("workers must be a positive integer")
+    if jacobian_mode not in ("physical", "simnibs46-literal"):
+        raise ValueError("jacobian_mode must be 'physical' or 'simnibs46-literal'")
     started = time.perf_counter()
     tensor_image = nib.load(str(tensor_file))
     reference_image = nib.load(str(reference_file))
@@ -433,24 +618,43 @@ def register_tensor_nonlinear_nifti(
             raise ValueError(
                 "affine_matrix_file is required for an FNIRT coefficient warp"
             )
-        from .fnirt import expand_fnirt_coefficients
+        from .fnirt import expand_fnirt_coefficients, _expand_fnirt_displacement
+        from numba import get_num_threads, set_num_threads
+        from ._numba import set_available_numba_threads
 
+        _require_fnirt_header_geometry(reference_image)
         coefficients = np.asarray(warp_image.dataobj, dtype=np.float32)
         try:
             affine_matrix = np.loadtxt(affine_matrix_file, dtype=np.float64)
         except (OSError, ValueError) as error:
             raise ValueError("The FNIRT affine matrix could not be read") from error
-        expansion = expand_fnirt_coefficients(
-            coefficients,
-            reference_image.shape,
-            reference_image.affine,
-            affine_matrix,
-            knot_spacing=knot_spacing,
-            warp_resolution_mm=warp_resolution_mm,
-            final_subsampling=final_subsampling,
+        previous_workers = get_num_threads()
+        try:
+            set_available_numba_threads(workers)
+            expand = (
+                _expand_fnirt_displacement
+                if jacobian_mode == "physical" else expand_fnirt_coefficients
+            )
+            expansion = expand(
+                coefficients,
+                reference_image.shape,
+                reference_image.affine,
+                affine_matrix,
+                knot_spacing=knot_spacing,
+                warp_resolution_mm=warp_resolution_mm,
+                final_subsampling=final_subsampling,
+            )
+        finally:
+            set_num_threads(previous_workers)
+        displacement = (
+            expansion if jacobian_mode == "physical" else expansion.displacement
+        ).astype(np.float32)
+        analytic_jacobian = (
+            expansion.nonlinear_jacobian_determinant
+            if jacobian_mode == "simnibs46-literal" else None
         )
-        displacement = expansion.displacement.astype(np.float32)
-        analytic_jacobian = expansion.nonlinear_jacobian_determinant
+        # 展开后的全矩阵 Jacobian 和其它 float64 场不再参与 PPD，及时释放。
+        del expansion
         jacobian_contract = "FNIRT analytic nonlinear spline Jacobian"
     else:
         raise ValueError("warp_kind must be 'displacement' or 'coefficients'")
@@ -494,24 +698,33 @@ def register_tensor_nonlinear_nifti(
         source_mask=source_mask,
         reference_mask=reference_mask,
         compatibility_mode=compatibility_mode,
+        jacobian_mode=jacobian_mode,
+        source_voxel_sizes=tensor_image.header.get_zooms()[:3],
+        reference_voxel_sizes=reference_image.header.get_zooms()[:3],
+        workers=workers,
+        ppd_device=ppd_device,
     )
+    # PPD 已完成采样和差分；后续派生图、压缩不再需要源张量及完整位移。
+    del tensor, displacement
     output_jacobian = (
         result.backward_jacobian_determinant
-        if analytic_jacobian is None
+        if analytic_jacobian is None or jacobian_mode == "physical"
         else analytic_jacobian
     )
+    if jacobian_mode == "physical":
+        jacobian_contract = "finite-difference complete displacement"
     warped_at = time.perf_counter()
     output_tensor = result.tensor
     output_valid_mask = result.valid_mask
     if output_mask is not None:
-        # The original dwi2cond applies the T1 brain mask after vecreg and before tensor_decomp.
-        output_tensor = result.tensor.copy()
+        # 本次 PPD 结果只在当前调用中使用；原位施加脑掩膜，省去完整张量副本。
         output_tensor[~output_mask] = 0.0
         output_valid_mask = result.valid_mask & output_mask
     derived = decompose_tensor6(
         output_tensor,
         output_valid_mask,
         requested=("FA", "V1"),
+        workers=workers,
     )
     decomposed_at = time.perf_counter()
 
@@ -545,7 +758,7 @@ def register_tensor_nonlinear_nifti(
         image.set_sform(
             reference_image.get_sform(), int(reference_image.header["sform_code"])
         )
-        nib.save(image, str(path))
+        writer.save(image, path)
 
     output_values = (
         (output_tensor, paths["tensor"], np.dtype(np.float32)),
@@ -558,7 +771,9 @@ def register_tensor_nonlinear_nifti(
         (derived["FA"], paths["fa"], np.dtype(np.float32)),
         (derived["V1"], paths["v1"], np.dtype(np.float32)),
     )
-    with ThreadPoolExecutor(max_workers=min(workers, len(output_values))) as executor:
+    with NiftiWriter(workers) as writer, ThreadPoolExecutor(
+        max_workers=min(workers, len(output_values))
+    ) as executor:
         futures = [
             executor.submit(save_like, values, path, dtype)
             for values, path, dtype in output_values
@@ -576,6 +791,8 @@ def register_tensor_nonlinear_nifti(
         "tensor_component_order": ["Dxx", "Dxy", "Dxz", "Dyy", "Dyz", "Dzz"],
         "reorientation": "FSL vecreg preservation-of-principal-direction",
         "compatibility_mode": compatibility_mode,
+        "jacobian_mode": jacobian_mode,
+        "ppd_device": ppd_device,
         "output_mask_contract": (
             "none"
             if output_mask is None
@@ -617,6 +834,21 @@ def register_tensor_nonlinear_nifti(
     return qa
 
 
+def _require_fnirt_header_geometry(image: nib.Nifti1Image) -> None:
+    """array-only FNIRT 入口尚未接入独立 pixdim 时明确拒绝尺度不一致。"""
+
+    if not np.allclose(
+        image.header.get_zooms()[:3],
+        nib.affines.voxel_sizes(image.affine),
+        rtol=1e-5,
+        atol=1e-6,
+    ):
+        raise ValueError(
+            "FNIRT coefficient/estimation paths require header pixdim to match "
+            "the active affine voxel sizes; use an explicitly resampled grid"
+        )
+
+
 def register_tensor_fnirt_nifti(
     fa_file: str | Path,
     tensor_file: str | Path,
@@ -627,12 +859,21 @@ def register_tensor_fnirt_nifti(
     brain_mask_file: str | Path | None = None,
     workers: int = 8,
     compatibility_mode: str = "strict-fsl",
+    jacobian_mode: str = "physical",
     progress: Callable[[int, str, int, int, float | None], None] | None = None,
+    hessian_device: str = "cpu",
+    ppd_device: str = "cpu",
 ) -> dict[str, object]:
-    """Estimate the fixed FNIRT warp and run the SimNIBS tensor branch."""
+    """估计 FNIRT 位移并以所选 Jacobian 模式处理张量。"""
 
+    if ppd_device not in ("cpu", "cuda"):
+        raise ValueError("ppd_device must be cpu or cuda")
     if not isinstance(workers, (int, np.integer)) or workers < 1:
         raise ValueError("workers must be a positive integer")
+    if jacobian_mode not in ("physical", "simnibs46-literal"):
+        raise ValueError("jacobian_mode must be 'physical' or 'simnibs46-literal'")
+    if hessian_device not in ("cpu", "cuda"):
+        raise ValueError("hessian_device must be cpu or cuda")
     from .fnirt import (
         SIMNIBS46_FNIRT_LEVELS,
         FnirtLevelImages,
@@ -644,6 +885,8 @@ def register_tensor_fnirt_nifti(
     fa_image = nib.load(str(fa_file))
     tensor_image = nib.load(str(tensor_file))
     reference_image = nib.load(str(reference_file))
+    for image in (fa_image, tensor_image, reference_image):
+        _require_fnirt_header_geometry(image)
     if len(fa_image.shape) != 3 or len(reference_image.shape) != 3:
         raise ValueError("FA and reference images must be three-dimensional")
     if tensor_image.shape != fa_image.shape + (6,) or not np.allclose(
@@ -688,6 +931,7 @@ def register_tensor_fnirt_nifti(
         affine_matrix,
         workers=workers,
         progress=progress,
+        hessian_device=hessian_device,
     )
     estimated_at = time.perf_counter()
     if progress is not None:
@@ -745,7 +989,7 @@ def register_tensor_fnirt_nifti(
         image.set_sform(
             reference_image.get_sform(), int(reference_image.header["sform_code"])
         )
-        nib.save(image, str(path))
+        writer.save(image, path)
 
     full_level = FnirtLevelImages(
         reference=reference,
@@ -766,7 +1010,9 @@ def register_tensor_fnirt_nifti(
             calculate_derivatives=False,
         ).values
     )
-    with ThreadPoolExecutor(max_workers=min(workers, 3)) as executor:
+    with NiftiWriter(workers) as writer, ThreadPoolExecutor(
+        max_workers=min(workers, 3)
+    ) as executor:
         futures = (
             executor.submit(save_reference, result.expansion.displacement, field_path),
             executor.submit(
@@ -779,6 +1025,11 @@ def register_tensor_fnirt_nifti(
         for future in futures:
             future.result()
     written_at = time.perf_counter()
+    # 已写出的估计场不再需要驻留；保存报告小对象，释放后再展开量化系数。
+    levels = result.levels
+    jacobian_ranges = result.jacobian_ranges
+    displacement_knot_spacing = result.expansion.knot_spacing
+    del result, full_level, registered_fa, futures, coefficient_image
     if progress is not None:
         progress(4, "finalize_tensor", 1, 3, None)
 
@@ -789,18 +1040,20 @@ def register_tensor_fnirt_nifti(
         tensor_path,
         warp_kind="coefficients",
         affine_matrix_file=affine_matrix_file,
-        knot_spacing=result.expansion.knot_spacing,
+        knot_spacing=displacement_knot_spacing,
         output_mask_file=brain_mask_file,
         workers=workers,
         compatibility_mode=compatibility_mode,
+        jacobian_mode=jacobian_mode,
         derivative_base="DTI_coregT1",
+        ppd_device=ppd_device,
     )
     completed_at = time.perf_counter()
     if progress is not None:
         progress(4, "finalize_qa", 2, 3, None)
     level_records = (
         []
-        if not result.levels
+        if not levels
         else [
             {
                 "level": index,
@@ -809,11 +1062,11 @@ def register_tensor_fnirt_nifti(
                 "attempts": len(level_result.trace),
                 "cost": level_result.cost,
                 "status": level_result.status,
-                "jacobian_min": result.jacobian_ranges[index - 1][0],
-                "jacobian_max": result.jacobian_ranges[index - 1][1],
+                "jacobian_min": jacobian_ranges[index - 1][0],
+                "jacobian_max": jacobian_ranges[index - 1][1],
             }
             for index, (specification, level_result) in enumerate(
-                zip(SIMNIBS46_FNIRT_LEVELS, result.levels, strict=True),
+                zip(SIMNIBS46_FNIRT_LEVELS, levels, strict=True),
                 start=1,
             )
         ]
@@ -824,9 +1077,12 @@ def register_tensor_fnirt_nifti(
         "algorithm": "SimNIBS 4.6 fixed FNIRT plus FSL vecreg PPD",
         "fallback": "none",
         "compatibility_mode": compatibility_mode,
+        "jacobian_mode": jacobian_mode,
+        "ppd_device": ppd_device,
         "workers": int(workers),
-        "identity_fast_path": not result.levels,
-        "displacement_knot_spacing": list(result.expansion.knot_spacing),
+        "hessian_device": hessian_device,
+        "identity_fast_path": not levels,
+        "displacement_knot_spacing": list(displacement_knot_spacing),
         "levels": level_records,
         "outputs": {
             "coefficients": str(coefficient_path),

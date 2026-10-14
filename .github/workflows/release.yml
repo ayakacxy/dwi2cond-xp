@@ -20,10 +20,20 @@ jobs:
   release:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
+    env:
+      TMPDIR: ${{ github.workspace }}/.work/ci-release/tmp
+      TMP: ${{ github.workspace }}/.work/ci-release/tmp
+      TEMP: ${{ github.workspace }}/.work/ci-release/tmp
+      PIP_CACHE_DIR: ${{ github.workspace }}/.work/ci-release/pip
+      NUMBA_CACHE_DIR: ${{ github.workspace }}/.work/ci-release/numba
+      XDG_CACHE_HOME: ${{ github.workspace }}/.work/ci-release/cache
+      PYTHONPYCACHEPREFIX: ${{ github.workspace }}/.work/ci-release/pycache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - name: Prepare project temporary and cache directories
+        run: mkdir -p .work/ci-release/tmp .work/ci-release/pip .work/ci-release/numba .work/ci-release/cache .work/ci-release/pycache
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.11"
@@ -45,7 +55,9 @@ jobs:
           check-wheel-contents dist/*.whl
           python scripts/build_release_metadata.py --dist dist
           python scripts/verify_release.py --dist dist
-          python scripts/extract_release_notes.py --tag "${GITHUB_REF_NAME}" --output release-notes.md
+          python scripts/extract_release_notes.py --tag "${GITHUB_REF_NAME}" \
+            --changelog docs/en/CHANGELOG.md --chinese-changelog docs/zh/CHANGELOG.md \
+            --output .work/ci-release/release-notes.md
       - name: Attest distribution provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
@@ -66,11 +78,12 @@ jobs:
           if release_probe="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" 2>&1)"; then
             gh release upload "${GITHUB_REF_NAME}" dist/*.whl dist/*.tar.gz dist/*.json --clobber
             gh release upload "${GITHUB_REF_NAME}" dist/SHA256SUMS --clobber
-            gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --verify-tag
+            gh release edit "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --verify-tag \
+              --notes-file .work/ci-release/release-notes.md
           elif [[ "${release_probe}" == *"HTTP 404"* ]]; then
             gh release create "${GITHUB_REF_NAME}" \
               dist/*.whl dist/*.tar.gz dist/*.json dist/SHA256SUMS \
-              --verify-tag --notes-file release-notes.md
+              --verify-tag --notes-file .work/ci-release/release-notes.md
           else
             printf '%s\n' "${release_probe}" >&2
             exit 1

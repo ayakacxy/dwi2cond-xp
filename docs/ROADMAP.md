@@ -1,14 +1,13 @@
-# Maintenance Status
+# Project Status
 
 [English](en/ROADMAP.md) | [简体中文](zh/ROADMAP.md)
 
 [Documentation](en/README.md) · [Project home](../README.md)
 
-`v0.3.0` is the current stable release. The project is in maintenance mode:
-there is no active `v0.4.0` development cycle, no active `10x` target, and no
-scheduled performance release. The earlier performance cycle was cancelled
-before a reliable new baseline was completed; its planning samples do not
-define a product claim or future obligation.
+`v0.4.0` is the stable release dated 2026-10-14. It includes
+coordinate/orientation repairs and component optimizations, with complete
+CPU/GPU comparisons against the published v0.3.0 wheel and official FSL subscripts. See [v0.4.0 release notes](en/RELEASE_NOTES_v0.4.0.md)
+for migration and [Benchmarks](en/BENCHMARKS.md) for the measured scope.
 
 ## Stable release line
 
@@ -41,25 +40,26 @@ The current release evidence therefore remains the basis for the `v0.1.0` to
 in [Benchmarks](en/BENCHMARKS.md); they should be read as measured results for
 their stated boundaries, not as universal hardware or input guarantees.
 
-## If development is explicitly restarted
+## v0.4.0 completed work
 
-Any future feature or performance cycle would begin with a new, scoped
-decision. Before publishing a numerical or speed claim, it would need to:
+Completed changes cover legacy gradients, storage-axis components,
+GRE/TOPUP/EDDY handedness, physical PPD derivatives, conductivity bases and
+QA-before-publication. Optimizations reduce repeated work and large-array
+overhead in raw preparation, T1 registration, FNIRT, PPD, QA and output writing.
+CPU is the default; explicit CUDA backends accelerate FP64 Hessian assembly
+and PPD. LM/PCG remains on CPU.
 
-1. Freeze the exact reference tag or wheel and a legal, reproducible input.
-2. Establish a reliable baseline on a stable host under the same input, output,
-   resource, cache, and process boundary used for the candidate.
-3. Use repeated paired measurements with dispersion, rather than a fastest
-   sample or an interrupted run.
-4. Pass stage-level and end-to-end numerical A/B checks before interpreting
-   performance.
-5. Change one measurable hotspot at a time, retain the reference path, and keep
-   optimized-backend failures explicit.
-6. Support any GPU or cross-platform claim with runs on the relevant real
-   hardware and platform.
+The completed same-input comparison measured 205.452 s on CPU and 163.342 s
+on GPU, against 564.406 s for published v0.3.0 and 1290.073 s for FSL.
+These are single warm-cache observations on one Linux input with FEM off,
+qualified by differing output sets and core use. Stage-level numerical checks
+and CPU/GPU end-to-end artifact checks are recorded separately; no repeated-run
+dispersion or universal speed guarantee is inferred from the four-way table.
 
-These are scientific entry criteria, not a `v0.4.0` plan, release promise,
-schedule, or predetermined speed target.
+Further memory optimization was stopped at the user's request. The final source
+retains the earlier verified speed and numerical behavior. Historical
+v0.3.0 test counts and coverage remain attached to that version; v0.4.0
+validation is recorded separately in the release notes.
 
 ## Scope boundaries
 

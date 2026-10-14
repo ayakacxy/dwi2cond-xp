@@ -8,14 +8,14 @@
 [![CI](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml/badge.svg)](https://github.com/ayakacxy/dwi2cond-xp/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ayakacxy/dwi2cond-xp/badge)](https://scorecard.dev/viewer/?uri=github.com/ayakacxy/dwi2cond-xp)
-[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#-验证概览)
+[![v0.4.0 coverage: 100%](https://img.shields.io/badge/v0.4.0_coverage-100%25-brightgreen.svg)](#-验证概览)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
 [![SimNIBS 4.6](https://img.shields.io/badge/SimNIBS-4.6.0-6D4AFF.svg)](docs/zh/SIMNIBS_INTEGRATION.md)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md) · [文档](docs/zh/README.md) · [验证](docs/zh/VALIDATION.md) · [路线图](docs/zh/ROADMAP.md) · [更新记录](docs/zh/CHANGELOG.md)
 
-🧠 **DTI 拟合** · ⚡ **运行时无 FSL** · 🧭 **张量重定向** · ⚡ **各向异性 FEM** · 🧪 **100% 语句覆盖**
+🧠 **DTI 拟合** · ⚡ **运行时无 FSL** · 🧭 **张量重定向** · ⚡ **各向异性 FEM** · 🖥️ **CPU / 可选 CUDA**
 
 </div>
 
@@ -45,7 +45,40 @@
 第四次独立源码审计发现正确性缺陷后，`v0.3.0` 又于 2026-08-30 被同版本修正版替换。
 替换后的算法基线和验证范围见更新记录。
 
+`v0.4.0` 修复了梯度旋转、存储轴重排时的向量/张量分量转换、PPD 的物理导数，以及
+倾斜网格上的张量基底。同时减少重复计算和大数组开销，加入可选 FP64 CUDA 加速。
+CPU 是默认路径，无 GPU 或 CuPy 也能运行。发布日期为 2026-10-14。
+具体变化和旧坐标行为的迁移方式见
+[v0.4.0 发布说明](docs/zh/RELEASE_NOTES_v0.4.0.md)。
+
 ## ⚡ 验证概览
+
+`v0.4.0` 实现已与公开 `v0.3.0` wheel 和官方 FSL 流程完成同输入的完整流程对照：
+
+| 实现 | 完整耗时 | 主机峰值 RSS | GPU 分配峰值 |
+| --- | ---: | ---: | ---: |
+| v0.4.0 CPU | **205.45 秒** | **6.50 GiB** | 无 |
+| v0.4.0 GPU | **163.34 秒** | **6.72 GiB** | **8.83 GiB** |
+| 已发布 v0.3.0 CPU | 564.41 秒 | 25.47 GiB | 无 |
+| SimNIBS 4.6 / FSL 6.0.4 子脚本 | 1290.07 秒 | 3.79 GiB | 无 |
+
+此次测量中，CPU/GPU 相对 v0.3.0 **加速 2.75 倍 / 3.46 倍**。使用同一 HCP 单壳输入，
+含梯度非线性校正、`nomoco` 预处理及非线性配准，Linux、八个 CPU 核心和 RTX 2080 Ti，
+文件/JIT 缓存预热，包含全部项目 QA 和 m2m 张量发布，FEM 关闭。此次没有计时默认
+legacy 预处理路径。FSL 的输出范围和核心使用方式有所不同。这些是实测值，不是最低
+内存需求或通用速度保证；计时范围和数值对照见[性能测试](docs/zh/BENCHMARKS.md)。
+
+v0.4.0 的本地发布检查于 2026-10-14 完成：
+
+| 检查项目 | 结果 | 测试条件 |
+| --- | ---: | --- |
+| v0.4.0 正确性检查 | **955 passed · 0 skipped** | Linux 主批次 942 + 独立回归 1 + 电极配置 12 项，启用已配置的真实 FSL/SimNIBS 探针 |
+| 全包覆盖率门槛 | **100.00% 语句覆盖率** | 15,363/15,363 条语句；Numba 独立冷缓存和 JIT coverage，真实合成 TOPUP/EDDY/FNIRT CLI |
+
+语句覆盖率不代表完整分支覆盖或任意输入正确性。CUDA 数学检查与先前真实 GPU
+完整流程证据分别记录于[验证](docs/zh/VALIDATION.md)。
+
+以下历史检查对应已发布的 `v0.3.0` 标签；其测试数和覆盖率不是 v0.4.0 的新测量。
 
 | 检查项目 | 结果 | 测试条件 |
 | --- | ---: | --- |
@@ -59,7 +92,7 @@
 
 ## 🧭 支持范围
 
-`v0.3.0` 修复后的预处理与电导率流程为：
+预处理与电导率流程为：
 
 ```text
 原始或已预处理单壳 DWI，或六分量扩散张量
@@ -81,7 +114,7 @@ v0.2.0 审计发现的数据流向、掩膜、拟合行为、TOPUP→EDDY 流程
 最终 v0.3.0 修复还处理了方向判定、依赖、缓存、CHARM/FEM 集成及奇异 VN 张量问题。
 这些检查不代表所有 FSL 优化器都能逐位一致，也没有重新完成真实被试与官方流程的
 完整对照。具体数值结果与限制见
-[最新修复报告](docs/zh/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md)。
+[v0.3.0 修复报告](docs/zh/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md)。
 
 纯 Python DTI 与张量映射部分依赖 NumPy、SciPy、NiBabel、h5py 和 tqdm；已验证的
 非线性运行环境固定为 NumPy 2.3.0 与 Numba 0.64.0。网格电导率、FEM 与先导场
@@ -179,12 +212,14 @@ $\boldsymbol\Sigma_i=\sigma_t\mathbf I$。
 数值稳定扩展：先把奇异特征系统投影到配置的最大各向异性比，再执行既有 SimNIBS
 保护规则修正，并在 QA 中记录修复单元数。这是用户显式选择的数值扩展，与 SimNIBS 4.6 原有的秩亏处理不同。
 
-独立转换命令默认使用 `--eigensystem-mode stable`，即对称 `eigh` 求解器；
+转换命令、正式 FEM 和先导场默认使用 `--eigensystem-mode stable`，即对称 `eigh` 求解器；
 重复特征值张量仍保持正交、满秩基底。显式指定
 `--eigensystem-mode simnibs46-literal` 时，使用 SimNIBS 4.6 的通用 `eig`
 排序方式，包括重复特征值下可能产生非正交基底的情况；QA JSON 会记录模式和基底
-正交性诊断。正式 FEM 流程仍由已安装的 SimNIBS SESSION 构造电导率，不使用这一
-独立转换命令。
+正交性诊断。正式 FEM 流程仍调用已安装的 SimNIBS SESSION，通过所选实例上的项目内
+电导率适配接入，不修改安装模块。默认 `--basis-mode physical` 分别归一化 affine
+空间列，支持倾斜非等距体素，并拒绝剪切；显式 `simnibs46-literal` 保留上游归一化
+方式供对照。
 
 参考文献：
 
@@ -216,10 +251,11 @@ $\boldsymbol\Sigma_i=\sigma_t\mathbf I$。
 ```bash
 conda activate simnibs
 python -c "import simnibs; assert simnibs.__version__ == '4.6.0'"
-python -m pip install --no-deps dwi2cond_xp-0.3.0-py3-none-any.whl
+python -m pip install --no-deps dwi2cond_xp-0.4.0-py3-none-any.whl
 dwi2cond-xp --help
 ```
 
+从 [GitHub Release](https://github.com/ayakacxy/dwi2cond-xp/releases/tag/v0.4.0) 下载上述 v0.4.0 wheel。
 从当前源码开发时，将 wheel 安装命令替换为 `python -m pip install --no-deps -e .`。
 发布 wheel 曾以临时附加安装的方式与参考环境中的 SimNIBS 4.6.0 一起导入验证，
 该验证没有修改参考环境。
@@ -266,8 +302,14 @@ python scripts/check_markdown_links.py
 非线性系数 `grad_dev` 使用 FSL/HCP 九分量排列。
 
 `preprocess-legacy` 按 SimNIBS 4.6 的顺序执行两遍 6/12 自由度校正，每个体积仅做
-一次最终 sinc 重采样。默认 `compat46` 模式完整保留原始 b 向量文件，与上游脚本
-一致；显式选择 `corrected` 时，才根据最终变换旋转 b 向量。
+一次最终 sinc 重采样。默认 `corrected` 在 FSL 基底中按最终变换旋转 b 向量；显式
+`compat46` 不做运动旋转，但仍应用 physical 存储基底变换；只有分量模式为 literal
+或存储轴未改变时才复制原文件。
+
+存储轴重排默认 `--component-mode physical`，随图像轴转换 b 向量、张量和
+`grad_dev` 分量；非线性 PPD 默认 `--jacobian-mode physical`，张量旋转与折叠 QA
+共用按毫米求导的 Jacobian。显式 `simnibs46-literal` 选项保留上游行为供对照。
+header 采样及网格限制见[输入文件与坐标](docs/zh/INPUTS.md)。
 
 张量输入为四维 NIfTI，最后一维依次为 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`。可使用自动
 `register-t1` 或完整工作流。使用通用 `register-tensor` 时，需选择以下一种方式：
@@ -328,10 +370,10 @@ dwi2cond-xp preprocess-nomoco \
 ```bash
 dwi2cond-xp preprocess-legacy \
   raw_dwi.nii.gz bvals bvecs legacy_outputs \
-  --workers 8 --bvec-mode compat46
+  --workers 8 --bvec-mode corrected
 ```
 
-该命令输出校正后的 DWI 及均值图、每个体积的最终变换、nodif 与脑掩膜、张量/FA/SSE 和有效性输出，以及 `legacy_qa.json`。只有在明确需要对 4.6 脚本行为作科学修正时，才使用 `--bvec-mode corrected`。
+该命令输出校正后的 DWI 及均值图、每个体积的最终变换、nodif 与脑掩膜、张量/FA/SSE 和有效性输出，以及 `legacy_qa.json`。需要与 4.6 脚本的原始 b 向量处理对照时，使用 `--bvec-mode compat46 --component-mode simnibs46-literal`。
 
 使用已转换为 rad/s 的场图准备固定的 GRE/FUGUE 校正，并将其带方向符号的世界坐标毫米位移组合到旧版命令中：
 
@@ -469,18 +511,15 @@ NumPy 矩阵及 JSON 元数据。电极帽中的第一个电极为参考电极�
 
 ## 🛣️ 后续路线图
 
-`v0.3.0` 是根据 v0.2.0 审计及后续独立复审形成的当前正确性版本。项目现处于维护
-状态，没有正在执行的 `v0.4.0` 性能优化周期或 10 倍目标。现有时间数据按版本保留
-为历史测量，不作为最终标签的完整流程基线。
-
-维护工作可继续改善复现、兼容性和文档，或修复范围明确的正确性问题。未来性能工作
-需要单独提出新计划，建立可靠的同输入、同输出基线，并通过现有数值和错误处理
-检查。当前状态见[项目状态](docs/zh/ROADMAP.md)，版本变化见
-[更新记录](docs/zh/CHANGELOG.md)，历史测量见[性能测试](docs/zh/BENCHMARKS.md)。
+v0.4.0 稳定版包含算法修复、组件提速及 CPU/GPU 完整流程对照。进一步内存优化已暂停，
+优先保留经过验证的
+速度和数值行为。当前状态见[项目状态](docs/zh/ROADMAP.md)，迁移说明见
+[v0.4.0 发布说明](docs/zh/RELEASE_NOTES_v0.4.0.md)，实测见[性能测试](docs/zh/BENCHMARKS.md)。
 
 ## 🗂️ 文档与社区
 
 - [文档目录](docs/zh/README.md)
+- [v0.4.0 发布与迁移说明](docs/zh/RELEASE_NOTES_v0.4.0.md)
 - [输入文件与坐标](docs/zh/INPUTS.md)
 - [方法](docs/zh/METHODS.md)
 - [验证](docs/zh/VALIDATION.md)

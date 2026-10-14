@@ -8,6 +8,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
+from dwi2cond_xp import leadfield as leadfield_module
 from dwi2cond_xp.leadfield import (
     LEADFIELD_DATASET,
     _decode_text,
@@ -110,6 +111,9 @@ class _FakeLeadfield:
 
 
 def _install_fake_simnibs(monkeypatch, *, version: str = "4.6.0", runner=None):
+    monkeypatch.setattr(leadfield_module, "bind_simnibs_tensor_consumer",
+                        lambda _consumer, path, **kwargs: leadfield_module.describe_simnibs_tensor_consumer(
+                            path, basis_mode=kwargs["basis_mode"], eigensystem_mode=kwargs["eigensystem_mode"]))
     simnibs = ModuleType("simnibs")
     simnibs.__version__ = version
     sim_struct = ModuleType("simnibs.sim_struct")
@@ -134,8 +138,12 @@ def _contract(*, tensor: bool = True) -> dict:
 
 def test_build_leadfield_maps_volume_and_surface_contract(monkeypatch, tmp_path: Path) -> None:
     _install_fake_simnibs(monkeypatch)
+    tensor_file = tmp_path / "tensor.nii.gz"
+    nib.save(nib.Nifti1Image(np.zeros((2, 2, 2, 6)), np.eye(4)), tensor_file)
+    contract = _contract()
+    contract["tensor"]["path"] = str(tensor_file)
     volume = build_tdcs_leadfield(
-        _contract(),
+        contract,
         tmp_path,
         field="J",
         shape="rect",
@@ -145,7 +153,7 @@ def test_build_leadfield_maps_volume_and_surface_contract(monkeypatch, tmp_path:
         solver="default",
     )
     assert volume.field == "J"
-    assert volume.fname_tensor == "/tmp/tensor.nii.gz"
+    assert volume.fname_tensor == str(tensor_file)
     assert volume.interpolation is None
     assert volume.tissues == [1, 2, 3]
     assert volume.electrode.dimensions == [11.0, 12.0]

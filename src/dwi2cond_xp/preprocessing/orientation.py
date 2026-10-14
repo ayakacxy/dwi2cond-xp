@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import gzip
+import os
+import tempfile
 from pathlib import Path
 
 import nibabel as nib
@@ -223,21 +226,110 @@ def reorient_tensor6_voxel(
     return np.asarray(matrix_to_tensor6(transformed), dtype=values.dtype)
 
 
+def fsl_component_basis_transform(source_affine: np.ndarray) -> np.ndarray:
+    """返回原 FSL 分量基到 canonical 存储 FSL 分量基的正交变换。"""
+
+    orientation = fsl_canonical_orientation(source_affine)
+    basis = voxel_basis_transform(orientation)
+    old_affine = np.asarray(source_affine, dtype=np.float64)
+    new_affine = old_affine @ nib.orientations.inv_ornt_aff(orientation, (1, 1, 1))
+    old_handedness = np.diag(
+        [-1.0 if np.linalg.det(old_affine[:3, :3]) > 0 else 1.0, 1.0, 1.0]
+    )
+    new_handedness = np.diag(
+        [-1.0 if np.linalg.det(new_affine[:3, :3]) > 0 else 1.0, 1.0, 1.0]
+    )
+    return new_handedness @ basis @ old_handedness
+
+
+def reorient_bvecs_fsl(bvecs: np.ndarray, source_affine: np.ndarray) -> np.ndarray:
+    """把逐行 (N,3) 的 FSL bvec 转到重排后的图像 FSL 分量基。"""
+
+    vectors = np.asarray(bvecs)
+    if vectors.ndim != 2 or vectors.shape[1] != 3:
+        raise ValueError("bvecs must have shape (N, 3)")
+    if not np.all(np.isfinite(vectors)):
+        raise ValueError("bvecs contain NaN or Inf")
+    basis = fsl_component_basis_transform(source_affine)
+    return np.asarray(vectors @ basis.T, dtype=vectors.dtype)
+
+
+def validate_fsl_raw_sampling(image: nib.spatialimages.SpatialImage) -> None:
+    """raw array-only 算法尚未区分 pixdim 与 sform 尺度时明确拒绝。"""
+
+    if not np.allclose(
+        image.header.get_zooms()[:3],
+        nib.affines.voxel_sizes(image.affine),
+        rtol=1e-6,
+        atol=1e-6,
+    ):
+        raise ValueError(
+            "Raw preprocessing requires header pixdim to match the active affine "
+            "voxel sizes; use an explicitly resampled grid"
+        )
+
+
+def _stream_canonical_float32(source, input_file, output_file, orientation) -> Path:
+    """规范方向、无缩放的 float32 图像直接流式解压，NiBabel 仍生成输出头。"""
+    voxel_map = nib.orientations.inv_ornt_aff(orientation, source.shape[:3])
+    qform = source.get_qform() @ voxel_map
+    sform = source.get_sform() @ voxel_map
+    qcode, scode = int(source.header["qform_code"]), int(source.header["sform_code"])
+    # 零步长占位视图只提供形状和 dtype，不分配或计算全体积数据。
+    placeholder = np.broadcast_to(np.float32(0), source.shape)
+    image = nib.Nifti1Image(placeholder, sform if scode > 0 else qform, source.header.copy())
+    image.set_qform(qform, qcode)
+    image.set_sform(sform, scode)
+    header = image.header.copy()
+    header.set_data_dtype(np.float32)
+    header.set_slope_inter(1.0, 0.0)
+    header.set_data_offset(0)
+    output = Path(output_file)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=f".{output.name}.", suffix=".part", dir=output.parent)
+    staged = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as target, gzip.open(input_file, "rb") as stream:
+            header.write_to(target)
+            target.seek(int(header["vox_offset"]))
+            stream.seek(int(source.dataobj.offset))
+            remaining = source.dataobj.dtype.itemsize
+            for size in source.shape:
+                remaining *= size
+            while remaining:
+                block = stream.read(min(8 * 1024 * 1024, remaining))
+                if not block:
+                    raise EOFError("Incomplete gzip NIfTI image")
+                target.write(block)
+                remaining -= len(block)
+            # 完整图像后的读取触发标准 gzip 尾部校验；不复制额外 padding。
+            stream.read(1)
+        staged.replace(output)
+    finally:
+        staged.unlink(missing_ok=True)
+    return output
+
+
 def write_fsl_reoriented(
     input_file: str | Path,
     output_file: str | Path,
     *,
     float32: bool = False,
     nonnegative: bool = False,
+    component_kind: str | None = None,
+    component_mode: str = "physical",
+    stream_canonical: bool = False,
 ) -> Path:
-    """Write the limited ``fslreorient2std`` behavior used by SimNIBS.
+    """无插值地重排存储轴，并按显式类型转换张量或 grad-dev 分量。
 
-    This operation changes only storage order and the effective NIfTI transform;
-    it performs no interpolation and does not alter vector or tensor component
-    channels. ``float32`` and ``nonnegative`` fuse the official ``fslmaths`` copy
-    and ``-thr 0`` into the same input read; when disabled by default, they preserve
-    the original interface and numerical behavior.
+    physical 模式保持原物理方向；simnibs46-literal 仅重排体素。
+    grad-dev 九分量使用 FSL/HCP 列主序。
     """
+
+    if component_kind not in (None, "tensor", "grad-dev"):
+        raise ValueError("component_kind must be None, 'tensor', or 'grad-dev'")
+    if component_mode not in ("physical", "simnibs46-literal"):
+        raise ValueError("component_mode must be 'physical' or 'simnibs46-literal'")
 
     source = nib.load(str(input_file))
     qform_code = int(source.header["qform_code"])
@@ -246,12 +338,67 @@ def write_fsl_reoriented(
         raise ValueError("NIfTI orientation requires a valid qform or sform")
     active_affine = source.get_sform() if sform_code > 0 else source.get_qform()
     orientation = fsl_canonical_orientation(active_affine)
+    if (
+        stream_canonical and float32 and not nonnegative and component_kind is None
+        and type(source) is nib.Nifti1Image
+        and str(input_file).lower().endswith(".nii.gz")
+        and str(output_file).lower().endswith(".nii")
+        and source.dataobj.dtype.kind == "f" and source.dataobj.dtype.itemsize == 4
+        and source.dataobj.slope == 1.0 and source.dataobj.inter == 0.0
+        and source.dataobj.order == "F"
+        and np.array_equal(orientation, [[0, 1], [1, 1], [2, 1]])
+    ):
+        return _stream_canonical_float32(source, input_file, output_file, orientation)
     source_values = np.asanyarray(source.dataobj)
     if float32:
         source_values = np.asarray(source_values, dtype=np.float32)
-    values = reorient_spatial_array(source_values, orientation)
+    # 写盘按 NIfTI 的列主序遍历；保留重排视图，避免先复制成行主序再搬回。
+    values = nib.orientations.apply_orientation(source_values, orientation)
+    if component_kind is not None:
+        expected = 6 if component_kind == "tensor" else 9
+        if values.ndim != 4 or values.shape[-1] != expected:
+            raise ValueError(f"{component_kind} image must have {expected} component channels")
+        if component_mode == "physical":
+            basis = fsl_component_basis_transform(active_affine)
+            if np.issubdtype(values.dtype, np.floating) and np.all(np.isfinite(values)):
+                # 基变换是带符号的轴置换，无需展开九分量矩阵并进行稠密乘法。
+                axes = np.argmax(np.abs(basis), axis=1)
+                signs = basis[np.arange(3), axes]
+                components = (
+                    ((0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2))
+                    if component_kind == "tensor"
+                    else tuple((row, column) for column in range(3) for row in range(3))
+                )
+                original_components = {pair: index for index, pair in enumerate(components)}
+                indices = []
+                multipliers = []
+                for row, column in components:
+                    pair = (int(axes[row]), int(axes[column]))
+                    if component_kind == "tensor":
+                        pair = tuple(sorted(pair))
+                    indices.append(original_components[pair])
+                    multipliers.append(signs[row] * signs[column])
+                values = values[..., indices]
+                values *= np.asarray(multipliers, dtype=values.dtype)
+                # 稠密乘法中的零加法会将负零变成正零，保留此序列化细节。
+                values[values == 0] = 0
+            else:
+                # 非有限或整数输入继续沿用原稠密乘法的传播与类型转换规则。
+                matrices = (
+                    tensor6_to_matrix(values) if component_kind == "tensor"
+                    else values.reshape(values.shape[:3] + (3, 3)).swapaxes(-1, -2)
+                )
+                transformed = np.einsum(
+                    "ij,...jk,lk->...il", basis, matrices, basis, optimize=True
+                )
+                values = np.asarray(
+                    matrix_to_tensor6(transformed) if component_kind == "tensor"
+                    else transformed.swapaxes(-1, -2).reshape(values.shape),
+                    dtype=values.dtype,
+                )
     if nonnegative:
-        values = np.array(values, copy=True)
+        # 钳位不能修改输入 memmap；列主序副本可直接用于后续写盘。
+        values = np.array(values, copy=True, order="F")
         np.maximum(values, 0.0, out=values)
     new_voxel_to_old_voxel = nib.orientations.inv_ornt_aff(
         orientation, source.shape[:3]
@@ -267,6 +414,9 @@ def write_fsl_reoriented(
     header.set_data_dtype(np.float32 if float32 else source.get_data_dtype())
     output = Path(output_file)
     output.parent.mkdir(parents=True, exist_ok=True)
+    if output.exists() and Path(input_file).samefile(output):
+        # 同文件或硬链接覆盖会先截断 memmap；写盘前必须脱离输入存储。
+        values = np.array(values, copy=True, order="F")
     image = nib.Nifti1Image(values, new_active_affine, header)
     image.set_qform(qform, qform_code)
     image.set_sform(sform, sform_code)

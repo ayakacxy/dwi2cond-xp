@@ -3,6 +3,7 @@ import itertools
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import nibabel as nib
 import numpy as np
@@ -178,6 +179,36 @@ def test_reorientation_can_fuse_float_conversion_and_nonnegative_threshold(tmp_p
     assert np.array_equal(np.asarray(result.dataobj), np.maximum(values, 0).astype(np.float32))
 
 
+@pytest.mark.parametrize("alias", ["same_path", "hardlink"])
+def test_reorientation_can_overwrite_its_uncompressed_memmap(tmp_path, alias):
+    """同文件覆盖必须先脱离 memmap，避免截断输入导致 SIGBUS。"""
+
+    values = np.arange(64 * 8 * 8 * 3, dtype=np.float32).reshape(64, 8, 8, 3)
+    affine = _permuted_affine(positive=True)
+    source = tmp_path / "source.nii"
+    _write_image(source, values, affine)
+    output = source if alias == "same_path" else tmp_path / "hardlink.nii"
+    if alias == "hardlink":
+        os.link(source, output)
+    environment = os.environ.copy()
+    package_root = str(Path(orientation_module.__file__).resolve().parents[2])
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (package_root, environment.get("PYTHONPATH")))
+    )
+    # 隔离进程使此类回归以退出码失败，而不终止整个 pytest 进程。
+    result = subprocess.run(
+        [sys.executable, "-c", (
+            "import sys; from dwi2cond_xp.preprocessing.orientation "
+            "import write_fsl_reoriented; "
+            "write_fsl_reoriented(sys.argv[1], sys.argv[2], float32=True)"
+        ), str(source), str(output)],
+        capture_output=True, text=True, env=environment,
+    )
+    assert result.returncode == 0, result.stderr
+    expected = reorient_spatial_array(values, fsl_canonical_orientation(affine))
+    np.testing.assert_array_equal(np.asarray(nib.load(output).dataobj), expected)
+
+
 def test_voxel_basis_transform_preserves_vectors_and_tensors():
     affine = _permuted_affine(positive=True)
     orientation = fsl_canonical_orientation(affine)
@@ -229,6 +260,26 @@ def test_tensor_decomposition_outputs_fsl_maps_and_respects_mask():
     dtifit = decompose_tensor6(low_amplitude, semantics="dtifit")
     assert fslmaths["FA"][0, 0, 0] == pytest.approx(0.5773502692, rel=1e-6)
     assert dtifit["FA"][0, 0, 0] == 0.0
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_tensor6_bounded_eigh_matches_lapack(workers):
+    """跨分块边界的分解及仅保留主方向均与原矩阵分解完全一致。"""
+    from dwi2cond_xp.preprocessing.tensor_ops import _eigh_tensor6_batched
+    from dwi2cond_xp.registration import tensor6_to_matrix
+
+    values = np.random.default_rng(42).normal(size=(262_147, 6)).astype(np.float32)
+    values[:3] = [[0, 0, 0, 0, 0, 0], [1, 0, 0, 1, 0, 1],
+                  [1e-20, 0, 0, -1e-20, 0, 2e-20]]
+    expected_values, expected_vectors = np.linalg.eigh(tensor6_to_matrix(values.astype(np.float64)))
+    for principal_only in (False, True):
+        actual_values, actual_vectors = _eigh_tensor6_batched(
+            values, workers, principal_only=principal_only,
+        )
+        np.testing.assert_array_equal(actual_values, expected_values)
+        np.testing.assert_array_equal(
+            actual_vectors, expected_vectors[:, :, -1] if principal_only else expected_vectors,
+        )
 
 
 def test_tensor_decomposition_validation_errors():
@@ -505,3 +556,50 @@ def test_real_fsl_tensor_decomposition_ab(tmp_path):
         reference = np.asarray(nib.load(tmp_path / f"fsl_tensor_{suffix}.nii.gz").dataobj)
         dot = np.sum(ours[suffix] * reference, axis=-1)
         assert np.allclose(np.abs(dot), 1.0, rtol=1e-6, atol=1e-6)
+
+
+def test_raw_canonical_stream_preserves_header_extensions_and_data(tmp_path):
+    """核对流式路径的字节序、扩展、偏移、gzip 多成员及非有限值。"""
+    import gzip
+    for index, endian in enumerate(('<', '>')):
+        values = np.arange(3*4*5*2, dtype=np.float32).reshape(3, 4, 5, 2)
+        values.ravel()[:3] = [np.nan, np.inf, -np.inf]
+        affine = np.diag([-1.25, 1.5, 2.0, 1.0])
+        header = nib.Nifti1Header(endianness=endian)
+        header.extensions.append(nib.nifti1.Nifti1Extension(6, b'raw-stream-test'))
+        image = nib.Nifti1Image(values, affine, header)
+        image.set_qform(affine, 1)
+        image.set_sform(affine, 2 if index else 0)
+        raw = image.to_bytes()
+        source = tmp_path / f'source-{index}.nii.gz'
+        source.write_bytes(gzip.compress(raw[:401]) + gzip.compress(raw[401:]))
+        reference = tmp_path / f'reference-{index}.nii'
+        candidate = tmp_path / f'candidate-{index}.nii'
+        write_fsl_reoriented(source, reference, float32=True)
+        write_fsl_reoriented(source, candidate, float32=True, stream_canonical=True)
+        assert candidate.read_bytes() == reference.read_bytes()
+
+
+def test_raw_canonical_stream_ineligible_and_truncated_input(tmp_path):
+    """缩放/重排走原路径；截断流不得替换已有的有效结果。"""
+    values = np.arange(120, dtype=np.int16).reshape(3, 4, 5, 2)
+    affine = np.diag([-1., 2., 3., 1.])
+    source = tmp_path / 'scaled.nii.gz'
+    image = nib.Nifti1Image(values, affine)
+    image.header.set_slope_inter(2., 3.)
+    nib.save(image, source)
+    reference, candidate = tmp_path/'reference.nii', tmp_path/'candidate.nii'
+    write_fsl_reoriented(source, reference, float32=True)
+    write_fsl_reoriented(source, candidate, float32=True, stream_canonical=True)
+    assert candidate.read_bytes() == reference.read_bytes()
+    _write_image(source, values.astype(np.float32), _permuted_affine(positive=True))
+    write_fsl_reoriented(source, reference, float32=True)
+    write_fsl_reoriented(source, candidate, float32=True, stream_canonical=True)
+    assert candidate.read_bytes() == reference.read_bytes()
+    _write_image(source, np.arange(8000, dtype=np.float32).reshape(20, 20, 20), affine)
+    source.write_bytes(source.read_bytes()[:-12])
+    accepted = candidate.read_bytes()
+    with pytest.raises(EOFError):
+        write_fsl_reoriented(source, candidate, float32=True, stream_canonical=True)
+    assert candidate.read_bytes() == accepted
+    assert not list(tmp_path.glob('*.part'))

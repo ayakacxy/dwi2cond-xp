@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from collections.abc import Callable
 import json
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+
+from .preprocessing._nifti_io import NiftiWriter, save_nifti
 from threadpoolctl import threadpool_limits
 
 from .gradients import load_gradients, select_dti_volumes, validate_single_shell_volumes
@@ -35,6 +37,7 @@ def _save_float_map(
     *,
     intent_code: int | None = None,
     calibration: tuple[float, float] | None = None,
+    writer: NiftiWriter | None = None,
 ) -> None:
     """Write a float32 scalar or vector NIfTI using the reference-space contract."""
     header = reference.header.copy()
@@ -47,27 +50,25 @@ def _save_float_map(
     image = nib.Nifti1Image(values.astype(np.float32, copy=False), reference.affine, header)
     image.set_qform(reference.get_qform(), int(reference.header["qform_code"]))
     image.set_sform(reference.get_sform(), int(reference.header["sform_code"]))
-    nib.save(image, str(path))
+    save_nifti(image, path, writer=writer)
 
 
 def _save_derived_maps(
-    tensor: np.ndarray,
-    valid: np.ndarray,
-    s0: np.ndarray,
-    sse: np.ndarray,
+    outputs: dict[str, np.ndarray],
     reference: nib.spatialimages.SpatialImage,
     output_path: Path,
+    *,
+    workers: int,
+    executor: ThreadPoolExecutor | None = None,
+    writer: NiftiWriter | None = None,
 ) -> dict[str, str]:
-    """Generate FSL-style DTI QA derivatives from six-component tensors."""
+    """独立写出已分解的 DTI 派生图，保留各自几何与校准。"""
     name = output_path.name
     base = name[:-7] if name.endswith(".nii.gz") else output_path.stem
-    outputs = decompose_tensor6(tensor, valid, semantics="dtifit")
-    outputs["S0"] = s0
-    outputs["sse"] = sse
     l1_max = float(np.max(outputs["L1"], initial=0.0))
 
-    paths: dict[str, str] = {}
-    for suffix, values in outputs.items():
+    def save(item: tuple[str, np.ndarray]) -> tuple[str, str]:
+        suffix, values = item
         path = output_path.with_name(f"{base}_{suffix}.nii.gz")
         if suffix == "FA":
             calibration = (0.0, 1.0)
@@ -83,9 +84,16 @@ def _save_derived_maps(
             reference,
             intent_code=2003 if suffix.startswith("V") else None,
             calibration=calibration,
+            writer=writer,
         )
-        paths[suffix] = str(path)
-    return paths
+        return suffix, str(path)
+
+    if executor is not None:
+        return dict(executor.map(save, outputs.items()))
+    if workers == 1:
+        return dict(map(save, outputs.items()))
+    with ThreadPoolExecutor(max_workers=min(workers, len(outputs))) as executor:
+        return dict(executor.map(save, outputs.items()))
 
 
 def select_shell_nifti(
@@ -131,6 +139,15 @@ def select_shell_nifti(
     return selected
 
 
+def _masked_selected_signals(data_chunk, mask_chunk, selected):
+    """连续选卷用视图替代第二次复制，非连续选取保持原索引。"""
+
+    signals = data_chunk[mask_chunk]
+    if selected.size and np.all(np.diff(selected) == 1):
+        return signals[:, int(selected[0]):int(selected[-1]) + 1]
+    return signals[:, selected]
+
+
 @threadpool_limits.wrap(limits=1)
 def _fit_z_block(
     data_file: str,
@@ -157,9 +174,11 @@ def _fit_z_block(
         return z0, z1, fitted_volume, s0_volume, sse_volume, valid_volume, 0, 0, 0, 0
 
     data_chunk = np.asanyarray(data_img.dataobj[:, :, z0:z1, :], dtype=np.float32)
-    signals = data_chunk[mask_chunk][:, selected]
-    finite = np.all(np.isfinite(signals), axis=1)
-    has_positive = np.max(np.where(np.isfinite(signals), signals, -np.inf), axis=1) > 0
+    signals = _masked_selected_signals(data_chunk, mask_chunk, selected)
+    # 这一步只需要正值是否存在，不需要物化浮点 where 数组及最大值。
+    finite_values = np.isfinite(signals)
+    finite = np.all(finite_values, axis=1)
+    has_positive = np.any(finite_values & (signals > 0), axis=1)
     if compatibility_mode == "strict-fsl":
         if np.any(np.isinf(signals)):
             raise ValueError("strict-fsl rejects Inf because FSL dtifit aborts")
@@ -170,7 +189,7 @@ def _fit_z_block(
         raise ValueError("compatibility_mode must be strict-fsl or robust")
     nonfinite_count = int(np.count_nonzero(~finite))
     all_nonpositive_count = int(np.count_nonzero(finite & ~has_positive))
-    nonpositive_measurements = int(np.count_nonzero(np.isfinite(signals) & (signals <= 0)))
+    nonpositive_measurements = int(np.count_nonzero(finite_values & (signals <= 0)))
     grad_values = None
     if grad_dev_file is not None:
         grad_img = nib.load(grad_dev_file, mmap=True)
@@ -317,6 +336,8 @@ def fit_dti_nifti(
                 for z0, z1 in blocks
             }
             for future in as_completed(futures):
+                # 已消费的块不再由 future 字典保留结果副本。
+                futures.pop(future)
                 (
                     z0,
                     z1,
@@ -365,18 +386,19 @@ def fit_dti_nifti(
     header = data_img.header.copy()
     header.set_data_dtype(np.float32)
     header.set_xyzt_units("mm", "sec")
-    tensor_l1 = decompose_tensor6(
-        output, valid_output.astype(bool), requested=("L1",)
-    )["L1"]
+    derived = decompose_tensor6(
+        output, valid_output.astype(bool), semantics="dtifit", workers=workers,
+    )
+    derived["S0"] = s0_output
+    derived["sse"] = sse_output
     header["cal_min"] = 0.0
-    header["cal_max"] = float(np.max(tensor_l1, initial=0.0))
+    # 最大值以零为下界，与原 fslmaths 的非正 L1 清零规则等价。
+    header["cal_max"] = float(np.max(derived["L1"], initial=0.0))
     output_img = nib.Nifti1Image(output, data_img.affine, header=header)
     output_img.set_qform(data_img.get_qform(), int(data_img.header["qform_code"]))
     output_img.set_sform(data_img.get_sform(), int(data_img.header["sform_code"]))
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    nib.save(output_img, str(output_path))
-
     name = output_path.name
     base = name[:-7] if name.endswith(".nii.gz") else output_path.stem
     if valid_mask_file is None:
@@ -388,15 +410,24 @@ def fit_dti_nifti(
     valid_img.set_data_dtype(np.uint8)
     valid_img.set_qform(data_img.get_qform(), int(data_img.header["qform_code"]))
     valid_img.set_sform(data_img.get_sform(), int(data_img.header["sform_code"]))
-    nib.save(valid_img, str(valid_mask_path))
-    derived_paths = _save_derived_maps(
-        output,
-        valid_output.astype(bool),
-        s0_output,
-        sse_output,
-        data_img,
-        output_path,
-    )
+    with NiftiWriter(workers) as writer:
+        if workers == 1:
+            writer.save(output_img, output_path)
+            writer.save(valid_img, valid_mask_path)
+            derived_paths = _save_derived_maps(
+                derived, data_img, output_path, workers=1, writer=writer,
+            )
+        else:
+            # 文件任务共用压缩预算；所有独立文件完成后才写拟合 QA。
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                tensor_write = executor.submit(writer.save, output_img, output_path)
+                mask_write = executor.submit(writer.save, valid_img, valid_mask_path)
+                derived_paths = _save_derived_maps(
+                    derived, data_img, output_path, workers=workers, executor=executor,
+                    writer=writer,
+                )
+                tensor_write.result()
+                mask_write.result()
 
     if qa_file is None:
         qa_path = output_path.with_name(f"{base}_qa.json")
@@ -453,9 +484,11 @@ def _fit_dti_nifti_serial(
 
         # Arbitrary time indexing is costly for gzip NIfTI; read a z-block then select volumes.
         data_chunk = np.asanyarray(data_img.dataobj[:, :, z0:z1, :], dtype=np.float32)
-        signals = data_chunk[mask_chunk][:, selected]
-        finite = np.all(np.isfinite(signals), axis=1)
-        has_positive = np.max(np.where(np.isfinite(signals), signals, -np.inf), axis=1) > 0
+        signals = _masked_selected_signals(data_chunk, mask_chunk, selected)
+        # 与并行块相同，只保留实际需要的布尔统计。
+        finite_values = np.isfinite(signals)
+        finite = np.all(finite_values, axis=1)
+        has_positive = np.any(finite_values & (signals > 0), axis=1)
         if compatibility_mode == "strict-fsl":
             if np.any(np.isinf(signals)):
                 raise ValueError("strict-fsl rejects Inf because FSL dtifit aborts")
@@ -464,7 +497,7 @@ def _fit_dti_nifti_serial(
             valid = finite & has_positive
         nonfinite_voxels += int(np.count_nonzero(~finite))
         all_nonpositive_voxels += int(np.count_nonzero(finite & ~has_positive))
-        nonpositive_measurements += int(np.count_nonzero(np.isfinite(signals) & (signals <= 0)))
+        nonpositive_measurements += int(np.count_nonzero(finite_values & (signals <= 0)))
         grad_values = None
         if grad_img is not None:
             grad_chunk = np.asanyarray(grad_img.dataobj[:, :, z0:z1, :], dtype=np.float32)

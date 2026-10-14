@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import hashlib
 import importlib.metadata
@@ -109,11 +110,20 @@ def fingerprint_file(path: str | Path) -> dict[str, object]:
     if not resolved.is_file():
         raise FileNotFoundError(f"Pipeline input is not a file: {resolved}")
     stat = resolved.stat()
+    digest = _sha256_file(resolved)
+    if _file_signature(stat) != _file_signature(resolved.stat()):
+        raise ValueError(f"Pipeline file changed while hashing: {resolved}")
     return {
         "path": str(resolved),
         "size_bytes": int(stat.st_size),
-        "sha256": _sha256_file(resolved),
+        "sha256": digest,
     }
+
+
+def _file_signature(stat: os.stat_result) -> tuple[int, ...]:
+    """辅助检测哈希读取期间的修改，不能替代跨阶段的内容校验。"""
+
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
 
 def _artifact_metadata(
@@ -139,14 +149,15 @@ def _artifact_metadata(
 
     if not path.is_file():
         raise FileNotFoundError(f"Missing output artifact: {path}")
-    size = int(path.stat().st_size)
+    identity = fingerprint_file(path)
+    size = int(identity["size_bytes"])
     if size == 0 and not contract.allow_empty:
         raise ValueError(f"Output artifact is empty: {path}")
     metadata: dict[str, object] = {
         "path": str(path),
         "kind": contract.kind,
         "size_bytes": size,
-        "sha256": _sha256_file(path),
+        "sha256": identity["sha256"],
     }
     if contract.kind == "json":
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -190,12 +201,13 @@ def _artifact_metadata(
                     raise FileNotFoundError(
                         f"Missing dynamic output artifact: {dynamic_path}"
                     )
+                dynamic_identity = fingerprint_file(dynamic_path)
                 current = {
                     "path": str(dynamic_path),
                     "relative_path": relative_path,
                     "type": entry.get("type", "file"),
-                    "bytes": dynamic_path.stat().st_size,
-                    "sha256": _sha256_file(dynamic_path),
+                    "bytes": dynamic_identity["size_bytes"],
+                    "sha256": dynamic_identity["sha256"],
                 }
                 if current["type"] == "nifti":
                     image = nib.load(str(dynamic_path), mmap=True)
@@ -265,10 +277,12 @@ def _artifact_metadata(
         )
         if numerical:
             values = np.asarray(image.dataobj)
-            finite = np.isfinite(values)
-            if not np.all(finite):
-                raise ValueError(f"NIfTI contains NaN or Inf: {path}")
-            metadata["finite_values"] = int(np.count_nonzero(finite))
+            # 全值检查保持独立，仅用有界布尔块替代整幅临时数组。
+            flat = values.ravel(order="K")
+            for start in range(0, flat.size, 1_048_576):
+                if not np.all(np.isfinite(flat[start:start + 1_048_576])):
+                    raise ValueError(f"NIfTI contains NaN or Inf: {path}")
+            metadata["finite_values"] = int(values.size)
     return metadata
 
 
@@ -276,12 +290,23 @@ def validate_artifacts(
     contracts: Sequence[ArtifactContract],
     *,
     numerical: bool = False,
+    workers: int = 1,
 ) -> list[dict[str, object]]:
     """Validate outputs; cache hits read structure only unless formal validation reads values."""
 
-    return [
-        _artifact_metadata(contract, numerical=numerical) for contract in contracts
-    ]
+    if not isinstance(workers, int) or workers < 1:
+        raise ValueError("workers must be a positive integer")
+
+    def validate(contract: ArtifactContract) -> dict[str, object]:
+        return _artifact_metadata(
+            contract, numerical=numerical
+        )
+
+    if workers == 1 or len(contracts) < 2:
+        return list(map(validate, contracts))
+    # 只并行互相独立的文件读取与 hash；返回顺序及全部检查保持不变。
+    with ThreadPoolExecutor(max_workers=min(workers, len(contracts))) as executor:
+        return list(executor.map(validate, contracts))
 
 
 def _peak_rss_bytes() -> tuple[int | None, str]:
@@ -391,22 +416,25 @@ class PipelineRunner:
         *,
         progress: ProgressCallback | None = None,
         implementation_files: Sequence[str | Path] = (),
+        workers: int = 1,
     ) -> None:
         self.manifest_directory = Path(manifest_directory).resolve()
         self.progress = progress
+        if not isinstance(workers, int) or workers < 1:
+            raise ValueError("workers must be a positive integer")
+        self.workers = workers
         self.implementation_files = tuple(
             Path(path).resolve() for path in implementation_files
         )
-        self._file_fingerprints: dict[Path, dict[str, object]] = {}
         self._results: dict[str, StageRunResult] = {}
 
-    def _input_fingerprint(self, path: Path) -> dict[str, object]:
-        resolved = path.resolve()
-        cached = self._file_fingerprints.get(resolved)
-        if cached is None:
-            cached = fingerprint_file(resolved)
-            self._file_fingerprints[resolved] = cached
-        return cached
+    def _input_fingerprints(self, paths: Sequence[Path]) -> list[dict[str, object]]:
+        """每个阶段重新校验内容；并行独立文件，避免时间戳粒度造成错误复用。"""
+
+        if self.workers == 1 or len(paths) < 2:
+            return [fingerprint_file(path) for path in paths]
+        with ThreadPoolExecutor(max_workers=min(self.workers, len(paths), 8)) as executor:
+            return list(executor.map(fingerprint_file, paths))
 
     def _stage_identity(
         self,
@@ -416,9 +444,7 @@ class PipelineRunner:
         dependencies = {
             name: self._results[name].fingerprint for name in stage.dependencies
         }
-        implementation = [
-            self._input_fingerprint(path) for path in self.implementation_files
-        ]
+        implementation = self._input_fingerprints(self.implementation_files)
         payload = {
             "schema_version": 1,
             "stage": stage.name,
@@ -452,7 +478,10 @@ class PipelineRunner:
                 or manifest.get("fingerprint") != fingerprint
             ):
                 return None
-            current_artifacts = validate_artifacts(stage.outputs, numerical=False)
+            current_artifacts = validate_artifacts(
+                stage.outputs, numerical=False,
+                workers=self.workers,
+            )
             if manifest.get("artifacts") != current_artifacts:
                 return None
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -476,7 +505,7 @@ class PipelineRunner:
                 "Stage dependencies have not completed: "
                 + ", ".join(missing_dependencies)
             )
-        inputs = [self._input_fingerprint(path) for path in stage.inputs]
+        inputs = self._input_fingerprints(stage.inputs)
         fingerprint, identity = self._stage_identity(stage, inputs)
         manifest_path = self._manifest_path(stage.name)
         cached = self._cached_result(stage, manifest_path, fingerprint)
@@ -494,7 +523,10 @@ class PipelineRunner:
             _remove_declared_outputs(stage.outputs)
         try:
             action_result = stage.action()
-            artifacts = validate_artifacts(stage.outputs, numerical=False)
+            artifacts = validate_artifacts(
+                stage.outputs, numerical=False,
+                workers=self.workers,
+            )
         except Exception as error:
             if not stage.preserve_outputs_on_attempt:
                 _remove_declared_outputs(stage.outputs)

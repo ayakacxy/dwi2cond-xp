@@ -131,13 +131,15 @@ def test_complete_workflow_writes_stage_manifests_and_reuses_cache(
     def fake_aligned(data, _bvals, target, **kwargs):
         image = nib.load(data)
         _nifti(Path(target), image.shape[:3])
+        if kwargs.get("qa_file") is not None:
+            _json(Path(kwargs["qa_file"]))
         if kwargs.get("progress") is not None:
             kwargs["progress"](1, 1)
         return Path(target)
 
     def fake_bet(_source, target, **_kwargs):
         _nifti(Path(target), (3, 3, 3))
-        return SimpleNamespace()
+        return SimpleNamespace(passes=0, mask=np.ones((3, 3, 3)))
 
     monkeypatch.setattr(workflow, "run_nomoco_nifti", fake_nomoco)
     monkeypatch.setattr(workflow, "fit_dti_nifti", fake_fit)
@@ -183,6 +185,13 @@ def test_complete_workflow_writes_stage_manifests_and_reuses_cache(
         "completed",
     ]
     assert calls == {"preprocess": 3, "registration": 3, "qa": 3}
+    # 即使关闭 FEM，改变方向策略也不能复用记录旧策略的 QA。
+    literal_basis = workflow.Dwi2CondPipelineConfig(**{
+        **config.__dict__, "basis_mode": "simnibs46-literal",
+    })
+    switched = workflow.run_dwi2cond_pipeline(literal_basis)
+    assert calls == {"preprocess": 3, "registration": 3, "qa": 4}
+    assert json.loads(switched.qa_manifest.read_text())["geometry_modes"]["basis_mode"] == "simnibs46-literal"
     assert first.final_tensor.is_file()
     assert json.loads(first.qa_manifest.read_text())["status"] == "completed"
     manifests = sorted((config.output_directory / "manifests").glob("*.json"))
@@ -193,6 +202,64 @@ def test_complete_workflow_writes_stage_manifests_and_reuses_cache(
         "publish_tensor",
         "register_t1",
     ]
+
+
+def test_nomoco_preparation_dependency_recovers_a_corrupt_producer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """生产者损坏时重新准备，保留两次独立拟合与原始负信号。"""
+
+    import dwi2cond_xp.preprocessing.nomoco as nomoco
+
+    config = _fixture(tmp_path)
+    data = nib.load(config.data)
+    values = np.asarray(data.dataobj, dtype=np.float32)
+    values[0, 0, 0, 0] = -2.0
+    nib.save(nib.Nifti1Image(values, data.affine, data.header), config.data)
+    original = config.data.read_bytes()
+    _install_common_workflow_stubs(monkeypatch)
+    minima: list[float] = []
+
+    def fit(data, _bvals, _bvecs, _mask, tensor, **kwargs):
+        minima.append(float(np.min(np.asarray(nib.load(data).dataobj))))
+        directory = Path(tensor).parent
+        _nifti(Path(tensor), (3, 3, 3, 6))
+        _nifti(directory / "DTI_FA.nii.gz", (3, 3, 3))
+        _nifti(directory / "DTI_sse.nii.gz", (3, 3, 3))
+        _nifti(Path(kwargs["valid_mask_file"]), (3, 3, 3))
+        Path(kwargs["qa_file"]).write_text(json.dumps({
+            "status": "completed", "masked_voxels": 27, "valid_fitted_voxels": 27,
+            "derived_outputs": {
+                "FA": str(directory / "DTI_FA.nii.gz"),
+                "sse": str(directory / "DTI_sse.nii.gz"),
+            },
+        }), encoding="utf-8")
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Prepared b0 and BET must not be recomputed")
+
+    monkeypatch.setattr(workflow, "fit_dti_nifti", fit)
+    monkeypatch.setattr(nomoco, "fit_dti_nifti", fit)
+    monkeypatch.setattr(nomoco, "write_aligned_b0_mean", unexpected)
+    monkeypatch.setattr(nomoco, "write_bet_brain_mask", unexpected)
+    first = workflow.run_dwi2cond_pipeline(config)
+    second = workflow.run_dwi2cond_pipeline(config)
+    assert minima == [-2.0, 0.0]
+    assert all(stage.status == "cached" for stage in second.stages)
+    manifest = json.loads((config.output_directory / "manifests/preprocess_nomoco.json").read_text())
+    assert list(manifest["dependencies"]) == ["fit_raw_dti_qa"]
+    assert any(Path(item["path"]).name == "preparation_qa.json" for item in manifest["inputs"])
+
+    preparation_file = config.output_directory / "preprocess/raw_dti_qa/preparation_qa.json"
+    preparation = json.loads(preparation_file.read_text())
+    preparation["component_mode"] = "simnibs46-literal"
+    preparation_file.write_text(json.dumps(preparation), encoding="utf-8")
+    recovered = workflow.run_dwi2cond_pipeline(config)
+    assert recovered.stages[0].status == "completed"
+    assert recovered.stages[1].status == "cached"
+    assert minima == [-2.0, 0.0, -2.0]
+    assert config.data.read_bytes() == original
+    assert first.final_tensor.read_bytes() == recovered.final_tensor.read_bytes()
 
 
 def test_workflow_eddy_default_mask_does_not_require_external_file(
@@ -240,6 +307,10 @@ def test_run_pipeline_cli_preserves_explicit_modes_and_worker_count(
             "eddy",
             "--t1-mode",
             "nonlinear",
+            "--fnirt-device",
+            "cuda",
+            "--ppd-device",
+            "cuda",
             "--dwi-brain-mask",
             str(tmp_path / "mask.nii.gz"),
             "--readout-seconds",
@@ -258,6 +329,8 @@ def test_run_pipeline_cli_preserves_explicit_modes_and_worker_count(
     assert status == 0
     assert captured[0].preprocessing_mode == "eddy"
     assert captured[0].t1_mode == "nonlinear"
+    assert captured[0].fnirt_device == "cuda"
+    assert captured[0].ppd_device == "cuda"
     assert captured[0].phase_encoding_direction == "y-"
     assert captured[0].workers == 8
     assert captured[0].fem_smoke == "dry-run"
@@ -299,6 +372,7 @@ def test_run_prefit_pipeline_cli_uses_official_import_mode(
     assert captured[0].bvals is None
     assert captured[0].bvecs is None
     assert captured[0].t1_mode == "affine"
+    assert captured[0].ppd_device == "cpu"
     assert captured[0].publish_to_m2m is False
 
 
@@ -398,13 +472,15 @@ def _install_common_workflow_stubs(
     def fake_aligned(data, _bvals, target, **kwargs):
         image = nib.load(data)
         _nifti(Path(target), image.shape[:3])
+        if kwargs.get("qa_file") is not None:
+            _json(Path(kwargs["qa_file"]))
         if kwargs.get("progress") is not None:
             kwargs["progress"](1, 1)
         return Path(target)
 
     def fake_bet(_source, target, **_kwargs):
         _nifti(Path(target), (3, 3, 3))
-        return SimpleNamespace()
+        return SimpleNamespace(passes=0, mask=np.ones((3, 3, 3)))
 
     monkeypatch.setattr(workflow, "run_t1_registration_nifti", fake_registration)
     monkeypatch.setattr(workflow, "fit_dti_nifti", fake_fit)
@@ -426,6 +502,15 @@ def test_eddy_nonlinear_and_all_fem_modes_form_one_explicit_dag(
     _nifti(field, (3, 3, 3))
     events = _install_common_workflow_stubs(monkeypatch)
 
+    nonlinear_calls = []
+    nonlinear_stub = workflow.register_tensor_fnirt_nifti
+
+    def capture_nonlinear(*args, **kwargs):
+        nonlinear_calls.append(kwargs)
+        return nonlinear_stub(*args, **kwargs)
+
+    monkeypatch.setattr(workflow, "register_tensor_fnirt_nifti", capture_nonlinear)
+
     def fake_aligned(data, _bvals, target, **kwargs):
         image = nib.load(data)
         _nifti(Path(target), image.shape[:3])
@@ -437,7 +522,8 @@ def test_eddy_nonlinear_and_all_fem_modes_form_one_explicit_dag(
         return SimpleNamespace()
 
     def fake_eddy(*args, **kwargs):
-        assert Path(args[0]).name == "DWIraw.nii"
+        # 原始 DWI 的 affine 必须留给 EDDY，以同步转换梯度分量基。
+        assert Path(args[0]) == config.data
         assert Path(args[3]).name == "nodif_brain_mask.nii.gz"
         assert "eddy_mask_preparation" in str(args[3])
         output = Path(args[4])
@@ -475,6 +561,8 @@ def test_eddy_nonlinear_and_all_fem_modes_form_one_explicit_dag(
             **config.__dict__,
             "preprocessing_mode": "eddy",
             "t1_mode": "nonlinear",
+            "fnirt_device": "cuda",
+            "ppd_device": "cuda",
             "dwi_brain_mask": None,
             "susceptibility_field": field,
             "readout_seconds": 0.05,
@@ -490,14 +578,20 @@ def test_eddy_nonlinear_and_all_fem_modes_form_one_explicit_dag(
         "fit_dti",
         "register_t1",
         "register_nonlinear",
-        "publish_tensor",
         "fem_scalar",
         "fem_vn",
         "fem_dir",
         "fem_mc",
         "pipeline_qa",
+        "publish_tensor",
     ]
     assert all(stage.status == "completed" for stage in result.stages)
+    nonlinear_manifest = json.loads(
+        (complete.output_directory / "manifests/register_nonlinear.json").read_text()
+    )
+    assert nonlinear_manifest["parameters"]["fnirt_device"] == "cuda"
+    assert nonlinear_manifest["parameters"]["ppd_device"] == "cuda"
+    assert nonlinear_calls[0]["ppd_device"] == "cuda"
     assert any(name.startswith("preprocess_eddy:") for name, *_ in events)
     assert any(name.startswith("register_nonlinear:") for name, *_ in events)
     assert any(name.startswith("pipeline_qa:") for name, *_ in events)
@@ -513,7 +607,7 @@ def test_eddy_nonlinear_and_all_fem_modes_form_one_explicit_dag(
         complete.output_directory / "preprocess/eddy/eddy_parameters.txt",
         complete.output_directory / "preprocess/eddy/outlier_map.txt",
         complete.output_directory / "nonlinear/FA2T1_jacobian.nii.gz",
-        field,
+        complete.output_directory / "preprocess/eddy/susceptibility_field_hz.nii.gz",
     } <= qa_input_paths
     preprocess_manifest = json.loads(
         (config.output_directory / "manifests" / "preprocess_eddy.json").read_text()
@@ -698,8 +792,8 @@ def test_prefit_tensor_forms_complete_registration_publish_and_qa_dag(
     assert [stage.name for stage in result.stages] == [
         "import_prefit_tensor",
         "register_t1",
-        "publish_tensor",
         "pipeline_qa",
+        "publish_tensor",
     ]
     imported = config.output_directory / "preprocess/prefit/DTI_tensor.nii.gz"
     assert imported.is_file()
@@ -793,7 +887,7 @@ def test_prefit_import_rejects_invalid_tensor_payloads(tmp_path: Path) -> None:
     values[0, 0, 0, 0] = np.nan
     nib.save(nib.Nifti1Image(values, np.eye(4)), nonfinite)
 
-    with pytest.raises(ValueError, match="shape"):
+    with pytest.raises(ValueError, match="component channels"):
         workflow._import_prefit_tensor(invalid_shape, tmp_path / "shape-output")
     with pytest.raises(ValueError, match="NaN or Inf"):
         workflow._import_prefit_tensor(nonfinite, tmp_path / "finite-output")
@@ -1018,6 +1112,10 @@ def test_workflow_covers_all_new_input_contract_failures(tmp_path: Path) -> None
     (
         ({"preprocessing_mode": "bad"}, "preprocessing_mode"),
         ({"t1_mode": "bad"}, "t1_mode"),
+        ({"fnirt_device": "bad"}, "fnirt_device"),
+        ({"fnirt_device": "cuda", "t1_mode": "affine"}, "requires t1_mode=nonlinear"),
+        ({"ppd_device": "bad"}, "ppd_device"),
+        ({"ppd_device": "cuda", "t1_mode": "affine"}, "requires t1_mode=nonlinear"),
         ({"fem_smoke": "bad"}, "fem_smoke"),
         ({"workers": 0}, "workers"),
         ({"preprocessing_mode": "nomoco", "susceptibility_field": Path("missing")}, "only valid"),
@@ -1081,6 +1179,89 @@ def test_eddy_requires_both_readout_and_phase_encoding(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="readout_seconds"):
         workflow.run_dwi2cond_pipeline(invalid)
+
+
+def test_qa_failure_keeps_previous_tensor_and_provenance(tmp_path, monkeypatch) -> None:
+    """汇总 QA 失败时，不得先覆盖既有发布文件。"""
+
+    config = _fixture(tmp_path)
+    _install_common_workflow_stubs(monkeypatch)
+
+    def fake_nomoco(_data, _bvals, _bvecs, output, **kwargs):
+        output.mkdir(parents=True, exist_ok=True)
+        for name, shape in (
+            ("DWIraw.nii", (3, 3, 3, 2)),
+            ("DTI_tensor.nii.gz", (3, 3, 3, 6)),
+            ("DTI_FA.nii.gz", (3, 3, 3)),
+            ("DTI_sse.nii.gz", (3, 3, 3)),
+            ("DTI_valid_mask.nii.gz", (3, 3, 3)),
+            ("nodif_brain_mask.nii.gz", (3, 3, 3)),
+        ):
+            _nifti(output / name, shape)
+        (output / "DWIbvals").write_bytes(config.bvals.read_bytes())
+        (output / "DWIbvecs").write_bytes(config.bvecs.read_bytes())
+        _json(output / "nomoco_qa.json")
+        return {"status": "completed", "mode": "nomoco"}
+
+    def failed_qa(*args, **kwargs):
+        raise RuntimeError("QA rejected the final result")
+
+    previous = config.m2m_directory / "DTI_coregT1_tensor.nii.gz"
+    provenance = config.m2m_directory / "DTI_coregT1_tensor.provenance.json"
+    _nifti(previous, (3, 3, 3, 6), value=0.25)
+    provenance.write_text('{"status":"previous"}\n')
+    expected = (previous.read_bytes(), provenance.read_bytes())
+    monkeypatch.setattr(workflow, "run_nomoco_nifti", fake_nomoco)
+    monkeypatch.setattr(workflow, "build_pipeline_qa", failed_qa)
+
+    with pytest.raises(RuntimeError, match="QA rejected"):
+        workflow.run_dwi2cond_pipeline(config)
+    assert (previous.read_bytes(), provenance.read_bytes()) == expected
+    assert not (config.output_directory / "manifests/publish_tensor.json").exists()
+
+
+def test_eddy_qa_consumes_reoriented_field_grid(tmp_path, monkeypatch) -> None:
+    """外部场图的原存储方向不同，最终 QA 应消费 EDDY 准备后的场图。"""
+
+    from dwi2cond_xp.preprocessing.qa import build_pipeline_qa
+
+    original = _fixture(tmp_path)
+    _install_common_workflow_stubs(monkeypatch)
+    field = tmp_path / "rotated_field.nii.gz"
+    rotation = np.array([[0, -1, 0, 2], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float)
+    nib.save(nib.Nifti1Image(np.full((3, 3, 3), 2.0, dtype=np.float32), rotation), field)
+
+    def fake_eddy(_data, _bvals, _bvecs, _mask, output, **kwargs):
+        output.mkdir(parents=True, exist_ok=True)
+        for name, shape in (
+            ("DWIraw.nii", (3, 3, 3, 2)),
+            ("corrected_dwi.nii.gz", (3, 3, 3, 2)),
+            ("outlier_free_data.nii.gz", (3, 3, 3, 2)),
+            ("nodif_brain_mask.nii.gz", (3, 3, 3)),
+            ("eddy_output_mask.nii.gz", (3, 3, 3)),
+        ):
+            _nifti(output / name, shape)
+        workflow.write_fsl_reoriented(field, output / "susceptibility_field_hz.nii.gz", float32=True)
+        (output / "bvals").write_bytes(original.bvals.read_bytes())
+        (output / "rotated_bvecs").write_bytes(original.bvecs.read_bytes())
+        (output / "eddy_parameters.txt").write_text("0 0\n0 0\n")
+        (output / "outlier_map.txt").write_text("0\n0\n")
+        _json(output / "eddy_qa.json")
+        return {"status": "completed", "algorithm": "eddy"}
+
+    config = workflow.Dwi2CondPipelineConfig(**{
+        **original.__dict__, "preprocessing_mode": "eddy",
+        "susceptibility_field": field, "readout_seconds": 0.05,
+        "phase_encoding_direction": "y",
+    })
+    monkeypatch.setattr(workflow, "run_eddy_nifti", fake_eddy)
+    monkeypatch.setattr(workflow, "build_pipeline_qa", build_pipeline_qa)
+    result = workflow.run_dwi2cond_pipeline(config)
+    report = json.loads(result.qa_manifest.read_text())
+    assert report["status"] == "completed"
+    assert report["susceptibility"]["field_hz"]["mean"] == 2.0
+    assert report["geometry_modes"]["component_mode"] == "physical"
+    assert [stage.name for stage in result.stages][-2:] == ["pipeline_qa", "publish_tensor"]
 
 
 def test_missing_legacy_field_is_rejected_after_valid_mode_check(tmp_path: Path) -> None:

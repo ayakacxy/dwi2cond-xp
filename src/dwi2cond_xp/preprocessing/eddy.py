@@ -16,7 +16,11 @@ from numba import get_num_threads, njit, prange, set_num_threads, threading_laye
 from ..gradients import _is_single_fsl_shell, load_gradients
 from ._numba import set_available_numba_threads
 from .brain_mask import robust_intensity_limits
-from .orientation import write_fsl_reoriented
+from .orientation import (
+    reorient_bvecs_fsl,
+    validate_fsl_raw_sampling,
+    write_fsl_reoriented,
+)
 from .topup import (
     _cubic_derivative_weight,
     _cubic_weight,
@@ -3070,7 +3074,10 @@ def run_simnibs46_eddy(
     align_shells_post_eddy: bool = True,
     progress: Callable[[str, int, int], None] | None = None,
 ) -> EddyRunResult:
-    """Run the complete single-shell SimNIBS 4.6 EDDY fixed subset."""
+    """执行单壳层 EDDY 核心；空间数组必须已按 FSL 内部 radiological 方式排列。
+
+    梯度、相位编码和运动参数均使用 FSL scaled-mm 坐标，NIfTI 存储转换由入口负责。
+    """
 
     _validate_eddy_readout_seconds(readout_seconds)
     values = np.asarray(scans, dtype=np.float32)
@@ -3326,9 +3333,10 @@ def run_eddy_nifti(
     workers: int = 8,
     replace_outliers: bool = True,
     align_shells_post_eddy: bool = True,
+    component_mode: str = "physical",
     progress: Callable[[str, int, int], None] | None = None,
 ) -> dict[str, object]:
-    """Run the fixed EDDY subset and write its public NIfTI artifacts."""
+    """在 NIfTI 存储和 FSL 内部坐标之间转换，执行 EDDY 并保存结果。"""
 
     import nibabel as nib
 
@@ -3347,6 +3355,13 @@ def run_eddy_nifti(
         raise ValueError("workers must be positive")
     if random_seed < 0:
         raise ValueError("random seed must be nonnegative")
+    if component_mode not in ("physical", "simnibs46-literal"):
+        raise ValueError("component_mode must be physical or simnibs46-literal")
+    source_dwi_image = nib.load(str(dwi_file))
+    validate_fsl_raw_sampling(source_dwi_image)
+    validate_fsl_raw_sampling(nib.load(str(brain_mask_file)))
+    if susceptibility_field_file is not None:
+        validate_fsl_raw_sampling(nib.load(str(susceptibility_field_file)))
 
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
@@ -3371,6 +3386,11 @@ def run_eddy_nifti(
     if not np.allclose(image.affine, mask_image.affine, rtol=0.0, atol=1.0e-6):
         raise ValueError("brain mask and DWI must share one affine")
     bvals, loaded_bvecs = load_gradients(bvals_file, bvecs_file)
+    if component_mode == "physical":
+        # 存储轴重排须同步改变梯度分量；下面的内部 x 反射不再次改变 FSL bvec。
+        loaded_bvecs = reorient_bvecs_fsl(
+            loaded_bvecs, source_dwi_image.affine
+        )
     bvecs = loaded_bvecs.T
     if bvals.shape != (scans.shape[3],):
         raise ValueError("b-values must contain one value per DWI volume")
@@ -3393,40 +3413,60 @@ def run_eddy_nifti(
         phase_encoding_direction
     ]
     voxel_sizes = tuple(float(value) for value in image.header.get_zooms()[:3])
+    radiological_flip = np.linalg.det(image.affine[:3, :3]) > 0.0
+    if radiological_flip:
+        scans_internal = np.ascontiguousarray(scans[::-1])
+        mask_internal = np.ascontiguousarray(mask[::-1])
+        field_internal = (
+            None
+            if susceptibility_field is None
+            else np.ascontiguousarray(susceptibility_field[::-1])
+        )
+    else:
+        scans_internal, mask_internal = scans, mask
+        field_internal = susceptibility_field
     started = perf_counter()
     result = run_simnibs46_eddy(
-        scans,
+        scans_internal,
         bvals,
         bvecs,
-        mask,
+        mask_internal,
         voxel_sizes,
         phase_encoding_axis,
         phase_encoding_sign,
         readout_seconds,
         random_seed=random_seed,
-        susceptibility_field_hz=susceptibility_field,
+        susceptibility_field_hz=field_internal,
         workers=workers,
         replace_outliers=replace_outliers,
         align_shells_post_eddy=align_shells_post_eddy,
         progress=progress,
     )
     algorithm_seconds = perf_counter() - started
+    # 仅恢复空间数组；运动、EC、shell 变换和旋转后 bvec 保持 FSL 内部参数语义。
+    corrected_scans = (
+        result.corrected_scans[::-1] if radiological_flip else result.corrected_scans
+    )
+    joint_mask = result.joint_mask[::-1] if radiological_flip else result.joint_mask
+    outlier_free_scans = result.outlier_free_scans
+    if radiological_flip and outlier_free_scans is not None:
+        outlier_free_scans = outlier_free_scans[::-1]
 
     float_header = image.header.copy()
     float_header.set_data_dtype(np.float32)
     nib.save(
-        nib.Nifti1Image(result.corrected_scans, image.affine, float_header),
+        nib.Nifti1Image(corrected_scans, image.affine, float_header),
         output / "corrected_dwi.nii.gz",
     )
     mask_header = mask_image.header.copy()
     mask_header.set_data_dtype(np.uint8)
     nib.save(
-        nib.Nifti1Image(result.joint_mask.astype(np.uint8), image.affine, mask_header),
+        nib.Nifti1Image(joint_mask.astype(np.uint8), image.affine, mask_header),
         output / "eddy_output_mask.nii.gz",
     )
-    if result.outlier_free_scans is not None:
+    if outlier_free_scans is not None:
         nib.save(
-            nib.Nifti1Image(result.outlier_free_scans, image.affine, float_header),
+            nib.Nifti1Image(outlier_free_scans, image.affine, float_header),
             output / "outlier_free_data.nii.gz",
         )
     parameters = np.column_stack(
@@ -3484,6 +3524,9 @@ def run_eddy_nifti(
         "align_shells_post_eddy": align_shells_post_eddy,
         "susceptibility_field": susceptibility_field is not None,
         "raw_storage_reorientation": "fslreorient2std-compatible-no-interpolation",
+        "component_mode": component_mode,
+        "internal_coordinate_system": "fsl-radiological-scaled-mm",
+        "internal_x_reflection": bool(radiological_flip),
         "outlier_slices": int(np.count_nonzero(result.outlier_map)),
         "joint_mask_voxels": int(np.count_nonzero(result.joint_mask)),
         "scale_factor": result.scale_factor,

@@ -221,6 +221,8 @@ def register_tensor_affine(
             tensor_img.affine,
             reference_img.shape[:3],
             reference_img.affine,
+            moving_voxel_sizes=tensor_img.header.get_zooms()[:3],
+            reference_voxel_sizes=reference_img.header.get_zooms()[:3],
         )
         if reorientation_transform is None
         else np.asarray(reorientation_transform, dtype=np.float64)

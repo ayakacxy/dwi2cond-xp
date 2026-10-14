@@ -2,9 +2,66 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 
 from ..registration import tensor6_to_matrix
+
+
+def _eigh_batched(
+    matrices: np.ndarray, workers: int = 1
+) -> tuple[np.ndarray, np.ndarray]:
+    """并行处理互相独立的张量，保留每个矩阵的 NumPy LAPACK 分解。"""
+
+    if not isinstance(workers, (int, np.integer)) or workers < 1:
+        raise ValueError("workers must be a positive integer")
+    count = matrices.shape[0]
+    if workers == 1 or count < 100_000:
+        return np.linalg.eigh(matrices)
+    chunk = min(262_144, max(1, (count + workers - 1) // workers))
+    spans = tuple((start, min(start + chunk, count)) for start in range(0, count, chunk))
+    eigenvalues = np.empty((count, 3), dtype=np.float64)
+    eigenvectors = np.empty((count, 3, 3), dtype=np.float64)
+    with ThreadPoolExecutor(max_workers=min(workers, len(spans))) as executor:
+        results = executor.map(
+            np.linalg.eigh, (matrices[start:stop] for start, stop in spans)
+        )
+        for (start, stop), (values, vectors) in zip(spans, results, strict=True):
+            eigenvalues[start:stop] = values
+            eigenvectors[start:stop] = vectors
+    return eigenvalues, eigenvectors
+
+
+def _eigh_tensor6_batched(
+    components: np.ndarray, workers: int = 1, *, principal_only: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """分块构造 float64 矩阵；线程直接写入独立输出片段，避免积压分解副本。"""
+
+    if not isinstance(workers, (int, np.integer)) or workers < 1:
+        raise ValueError("workers must be a positive integer")
+    count = components.shape[0]
+    eigenvalues = np.empty((count, 3), dtype=np.float64)
+    vector_shape = (count, 3) if principal_only else (count, 3, 3)
+    eigenvectors = np.empty(vector_shape, dtype=np.float64)
+    chunk = min(262_144, max(1, (count + workers - 1) // workers))
+    spans = tuple((start, min(start + chunk, count)) for start in range(0, count, chunk))
+
+    def decompose(span: tuple[int, int]) -> None:
+        start, stop = span
+        matrices = tensor6_to_matrix(np.asarray(components[start:stop], dtype=np.float64))
+        values, vectors = np.linalg.eigh(matrices)
+        eigenvalues[start:stop] = values
+        eigenvectors[start:stop] = vectors[:, :, -1] if principal_only else vectors
+
+    if workers == 1 or count < 100_000:
+        for span in spans:
+            decompose(span)
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(spans))) as executor:
+            for _ in executor.map(decompose, spans):
+                pass
+    return eigenvalues, eigenvectors
 
 
 def decompose_tensor6(
@@ -14,6 +71,7 @@ def decompose_tensor6(
     semantics: str = "fslmaths",
     requested: tuple[str, ...] | None = None,
     return_eigenvalue_range: bool = False,
+    workers: int = 1,
 ) -> dict[str, np.ndarray] | tuple[dict[str, np.ndarray], tuple[float | None, float | None]]:
     """Decompose a six-component tensor according to ``fslmaths`` or ``dtifit`` semantics."""
 
@@ -33,13 +91,16 @@ def decompose_tensor6(
     unknown = wanted - available
     if unknown:
         raise ValueError(f"Unknown tensor decomposition outputs: {sorted(unknown)}")
-    flat = np.asarray(values[selected], dtype=np.float64)
+    flat = values[selected]
     if not np.all(np.isfinite(flat)):
         raise ValueError("Selected tensor components contain NaN or Inf")
-    matrices = tensor6_to_matrix(flat)
-    eigenvalues, eigenvectors = np.linalg.eigh(matrices)
+    principal_only = not wanted.intersection({"V2", "V3"})
+    eigenvalues, eigenvectors = _eigh_tensor6_batched(
+        flat, workers, principal_only=principal_only,
+    )
     eigenvalues = eigenvalues[:, ::-1]
-    eigenvectors = eigenvectors[:, :, ::-1]
+    if not principal_only:
+        eigenvectors = eigenvectors[:, :, ::-1]
     # fslmaths gates on the largest eigenvalue; dtifit writes fitted voxels inside the mask unconditionally.
     write_values = (
         eigenvalues[:, 0] > 0
@@ -47,20 +108,26 @@ def decompose_tensor6(
         else np.ones(eigenvalues.shape[0], dtype=bool)
     )
 
-    mean = np.mean(eigenvalues, axis=1)
-    denominator = np.sum(eigenvalues * eigenvalues, axis=1)
-    numerator = 1.5 * np.sum((eigenvalues - mean[:, None]) ** 2, axis=1)
-    fa_denominator_threshold = 0.0 if semantics == "fslmaths" else 1e-10
-    fa_values = np.sqrt(
-        np.divide(
-            numerator,
-            denominator,
-            out=np.zeros_like(numerator),
-            where=denominator > fa_denominator_threshold,
-        )
+    mean = (
+        np.mean(eigenvalues, axis=1)
+        if wanted.intersection({"FA", "MD", "MO"}) else None
     )
+    scalar_values: dict[str, np.ndarray] = {}
+    if "FA" in wanted:
+        denominator = np.sum(eigenvalues * eigenvalues, axis=1)
+        numerator = 1.5 * np.sum((eigenvalues - mean[:, None]) ** 2, axis=1)
+        fa_denominator_threshold = 0.0 if semantics == "fslmaths" else 1e-10
+        scalar_values["FA"] = np.sqrt(
+            np.divide(
+                numerator,
+                denominator,
+                out=np.zeros_like(numerator),
+                where=denominator > fa_denominator_threshold,
+            )
+        )
+    if "MD" in wanted:
+        scalar_values["MD"] = mean
     outputs: dict[str, np.ndarray] = {}
-    scalar_values: dict[str, np.ndarray] = {"FA": fa_values, "MD": mean}
     if "MO" in wanted:
         centered = eigenvalues - mean[:, None]
         e1, e2, e3 = centered[:, 2], centered[:, 1], centered[:, 0]
@@ -87,8 +154,6 @@ def decompose_tensor6(
             1.0,
         )
     for suffix, selected_values in scalar_values.items():
-        if suffix not in wanted:
-            continue
         output = np.zeros(spatial_shape, dtype=np.float32)
         output[selected] = np.where(write_values, selected_values, 0.0)
         outputs[suffix] = output
@@ -102,7 +167,8 @@ def decompose_tensor6(
         if vector_name in wanted:
             vector = np.zeros(spatial_shape + (3,), dtype=np.float32)
             vector[selected] = np.where(
-                write_values[:, None], eigenvectors[:, :, index], 0.0
+                write_values[:, None],
+                eigenvectors if principal_only else eigenvectors[:, :, index], 0.0,
             )
             outputs[vector_name] = vector
     if not return_eigenvalue_range:

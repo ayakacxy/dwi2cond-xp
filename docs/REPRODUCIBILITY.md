@@ -11,10 +11,11 @@ The primary full-pipeline installation may use an existing, verified SimNIBS
 
 ```bash
 conda activate simnibs
-python -m pip install --no-deps dwi2cond_xp-0.3.0-py3-none-any.whl
+python -m pip install --no-deps dwi2cond_xp-0.4.0-py3-none-any.whl
 python -c "import simnibs, dwi2cond_xp; assert simnibs.__version__ == '4.6.0'"
 ```
 
+Use the v0.4.0 wheel from the matching GitHub Release.
 For editable development in that frozen environment, use
 `python -m pip install --no-deps -e .` instead of the wheel command. This keeps
 the existing dependency versions; confirm they match the validated versions.
@@ -58,6 +59,20 @@ For release-asset verification, download the wheel, sdist, SBOM, and
 `sha256sum -c SHA256SUMS`, install the downloaded wheel into a new environment,
 and verify its import and CLI. The tag workflow additionally runs Twine,
 wheel-content, archive-privacy, dependency, provenance, and SBOM checks.
+
+## CPU and optional CUDA
+
+CPU is the default for both FNIRT Hessian assembly and PPD and does not need
+CuPy or a CUDA device. The two independent options are `--fnirt-device cuda`
+and `--ppd-device cuda` on the nonlinear registration and pipeline commands.
+The first uses Numba CUDA; the second also needs a compatible CuPy installation.
+These GPU dependencies are not installed by the CPU wheel or environment file.
+
+The tested GPU environment was Linux, RTX 2080 Ti, CUDA 12.8, Numba 0.64.0 and
+CuPy 14.2.0. This is a tested runtime, not a clean-environment installation
+recipe or a GPU certification for macOS/Windows. Explicit CUDA failures stop
+the run; select `cpu` to run without GPU support. See [Methods](en/METHODS.md)
+and [v0.4.0 release notes](en/RELEASE_NOTES_v0.4.0.md).
 
 ## Reference tools
 

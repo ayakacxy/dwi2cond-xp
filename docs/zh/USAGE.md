@@ -39,15 +39,18 @@ dwi2cond-xp preprocess-nomoco \
 
 该命令输出 `DTI_tensor.nii.gz`、`DTI_FA.nii.gz`、`DTI_sse.nii.gz`、脑掩膜、有效掩膜及 `nomoco_qa.json`，不生成运动、涡流或场校正产物。对于兼容的未压缩 `.nii`，程序逐块验证后直接使用 mmap 读取；`.nii.gz` 则只解压一次，生成共享的未压缩中间文件。实际读取方式会记录在 QA 中。
 
-运行旧版校正路径，并保留 SimNIBS 4.6 的 b 向量处理方式：
+运行 legacy 校正路径，并旋转梯度以跟随运动校正（v0.4.0 默认）：
 
 ```bash
 dwi2cond-xp preprocess-legacy \
   raw_dwi.nii.gz bvals bvecs legacy_outputs \
-  --workers 8 --bvec-mode compat46
+  --workers 8 --bvec-mode corrected
 ```
 
-该命令输出校正后的 DWI 及均值图、每个体积的最终变换、nodif 与脑掩膜、张量/FA/SSE 和有效性输出，以及 `legacy_qa.json`。只有在明确需要对 4.6 脚本行为作科学修正时，才使用 `--bvec-mode corrected`。
+该命令输出校正后的 DWI 及均值图、每个体积的最终变换、nodif 与脑掩膜、张量/FA/SSE 和有效性输出，以及 `legacy_qa.json`。
+`--bvec-mode compat46` 为上游对照跳过运动引起的梯度旋转；默认的 physical 分量模式
+仍会在存储轴改变时转换梯度。若同时需要保留旧分量行为，添加
+`--component-mode simnibs46-literal`。迁移细节见[v0.4.0 发布说明](RELEASE_NOTES_v0.4.0.md)。
 
 使用已转换为 rad/s 的场图准备固定的 GRE/FUGUE 校正，并将其带方向符号的世界坐标毫米位移组合到旧版命令中：
 
