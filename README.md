@@ -78,7 +78,7 @@ The tensor core uses Python, NumPy, SciPy, NiBabel, Numba and h5py. Mesh conduct
 ### Implemented equations
 
 The equations below are the mappings implemented by this project and matched
-against SimNIBS 4.6. For element or voxel $i$ in anisotropic tissue $t$, write
+against SimNIBS 4.6. For element or voxel $`i`$ in anisotropic tissue $`t`$, write
 the repaired diffusion tensor as
 
 $$
@@ -87,13 +87,13 @@ $$
 \qquad d_{i1}\ge d_{i2}\ge d_{i3}>0,
 $$
 
-where $\mathbf V_i$ contains the principal directions, $\sigma_t$ is the
-reference scalar conductivity of tissue $t$, and $w_i$ is the tetrahedron
+where $`\mathbf V_i`$ contains the principal directions, $`\sigma_t`$ is the
+reference scalar conductivity of tissue $`t`$, and $`w_i`$ is the tetrahedron
 volume (or one for an unweighted voxel calculation).
 
 #### `vn`: volume-normalized anisotropic mapping
 
-Define the local geometric mean $g_i=(d_{i1}d_{i2}d_{i3})^{1/3}$. The core
+Define the local geometric mean $`g_i=(d_{i1}d_{i2}d_{i3})^{1/3}`$. The core
 mapping is
 
 $$
@@ -139,7 +139,7 @@ the direct mappings described by Rullmann et al. and Opitz et al. [1,2,4].
 
 #### `mc`: mean-conductivity control
 
-`mc` uses the same fitted factor $s$ as `dir`, but replaces every local tensor
+`mc` uses the same fitted factor $`s`$ as `dir`, but replaces every local tensor
 by an isotropic tensor with the same determinant:
 
 $$
@@ -162,7 +162,7 @@ the non-calibrated safety path and accepts that input. `vn` performs
 normalization, safety correction, renormalization, and a second safety
 correction; a bound-triggered final correction can therefore slightly perturb
 the ideal determinant equality above. Tissues not selected for anisotropy use
-$\boldsymbol\Sigma_i=\sigma_t\mathbf I$.
+$`\boldsymbol\Sigma_i=\sigma_t\mathbf I`$.
 
 A nonzero rank-deficient tensor has no defined VN determinant normalization.
 The default policy therefore raises an explicit error instead of emitting NaN

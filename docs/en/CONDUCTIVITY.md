@@ -16,7 +16,7 @@ The equations below use tissue reference conductivities and diffusion tensors sa
 ## Implemented equations
 
 The equations below are the mappings implemented by this project and matched
-against SimNIBS 4.6. For element or voxel $i$ in anisotropic tissue $t$, write
+against SimNIBS 4.6. For element or voxel $`i`$ in anisotropic tissue $`t`$, write
 the repaired diffusion tensor as
 
 $$
@@ -25,13 +25,13 @@ $$
 \qquad d_{i1}\ge d_{i2}\ge d_{i3}>0,
 $$
 
-where $\mathbf V_i$ contains the principal directions, $\sigma_t$ is the
-reference scalar conductivity of tissue $t$, and $w_i$ is the tetrahedron
+where $`\mathbf V_i`$ contains the principal directions, $`\sigma_t`$ is the
+reference scalar conductivity of tissue $`t`$, and $`w_i`$ is the tetrahedron
 volume (or one for an unweighted voxel calculation).
 
 ### `vn`: volume-normalized anisotropic mapping
 
-Define the local geometric mean $g_i=(d_{i1}d_{i2}d_{i3})^{1/3}$. The core
+Define the local geometric mean $`g_i=(d_{i1}d_{i2}d_{i3})^{1/3}`$. The core
 mapping is
 
 $$
@@ -77,7 +77,7 @@ the direct mappings described by Rullmann et al. and Opitz et al. [1,2,4].
 
 ### `mc`: mean-conductivity control
 
-`mc` uses the same fitted factor $s$ as `dir`, but replaces every local tensor
+`mc` uses the same fitted factor $`s`$ as `dir`, but replaces every local tensor
 by an isotropic tensor with the same determinant:
 
 $$
