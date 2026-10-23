@@ -4,184 +4,87 @@
 
 [文档目录](README.md) · [项目首页](../../README.zh-CN.md)
 
-下列默认设置对应 `v0.4.0` 实现。与早期坐标行为的差异见
-[v0.4.0 迁移说明](RELEASE_NOTES_v0.4.0.md)。已发布 `v0.3.0` 的验证结果仍作为独立历史记录保留。
+流程接受原始单壳层 DWI、预处理后的 DWI，或已拟合的六分量张量。请根据数据已经完成的处理选择入口。
 
-## 不校正 DWI 的原始数据流程
+## 所需文件
 
-`preprocess-nomoco` 对应 SimNIBS 4.6 的 `nomoco` 流程。它按 FSL/NewNifti 的
-float32 Gram–Schmidt、带符号轴置换和严格相等时的取舍规则调整 NIfTI 存储方向；
-只配准精确 `b=0` 的体积，用于生成均值图和脑掩膜。在拟合前才按上游规则将信号限制为
-非负，然后执行 WLS。估计出的 b0 变换不会应用到 DWI；此流程不校正 DWI 的运动、涡流
-或磁敏感畸变。
+| 输入 | 要求 |
+| --- | --- |
+| DWI | 有限值四维 NIfTI；b 值、b 向量与图像体积顺序一致 |
+| 梯度 | 每个体积对应一个 b 值和一个向量；b 向量支持 `3×N` 或 `N×3` |
+| 脑掩膜 | 与被掩膜图像的空间形状和仿射矩阵一致 |
+| 梯度偏差 | 可选 HCP/FSL 九分量 `grad_dev`，位于原始 DWI 网格 |
+| 拟合张量 | 有限值 `(X,Y,Z,6)` NIfTI，分量为 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz` |
+| 头模型 | SimNIBS 4.6 CHARM 生成的 `m2m_<subject>` 目录，包含 T1 和分割结果 |
 
-DWI、b 值和 b 向量必须对应同一组、同一顺序的体积。严格拟合在确认只有一个非零壳层后
-使用全部输入体积，不会自动从多壳数据中挑选壳层。可选 `grad_dev` 必须与原 DWI 的网格
-一致，并随 DWI 一起调整存储方向。默认 `--component-mode physical` 同时把 b 向量
-和采用 HCP/FSL 列主序的 `grad_dev` 分量转换到重排后图像的 FSL 基底。
+张量模型拟合精确 b=0 体积及一个非零壳层。多壳层数据请通过 `select-shell` 或 `fit-dti --shell` 显式选壳。独立 `fit-dti --b0-threshold` 可纳入近零 b 值；原始 DWI 流程按精确 b=0 选择。这些设置独立于 `strict-fsl` 和 `robust` 拟合策略。
 
-只有逐块确认未压缩 `.nii` 为 float32、符合所需 FSL 存储方向、所有值有限且非负时，
-才直接通过内存映射读取。其他输入（包括所有 `.nii.gz`）会解码一次，写成供多个进程
-共享的未压缩 `DWIforfit.nii`。读取方式及是否生成中间文件记入 `nomoco_qa.json`。
+## 不进行校正的原始 DWI
 
-## SimNIBS legacy 校正
+`preprocess-nomoco` 构建对齐的 b0 均值和脑掩膜后拟合 DWI，不把 b0 变换应用到扩散体积，也不校正其运动、涡流或磁敏感畸变。仅在这种处理方式适合采集数据时选择此入口。
 
-`preprocess-legacy` 接受同样按体积对应的 DWI、b 值、b 向量、可选梯度偏差图，以及
-明确的单壳拟合参数。为匹配 SimNIBS 4.6，b0 用精确零值筛选，扩散加权均值用严格
-`b>0` 筛选，不使用可配置的近零阈值。
+存储重定向采用 FSL/NewNifti 的 float32 Gram–Schmidt 和带符号轴置换规则。物理分量处理同时把 b 向量和列优先的 `grad_dev` 矩阵变换到重定向后的 FSL 基底。非负信号阈值在最终拟合前应用。
 
-流程执行两轮兼容 MCFLIRT 的 6/12 自由度校正，将校正后的扩散均值图配准到 nodif，
-将 b0 变换替换为直接估计的 6 自由度变换，再组合全部变换。每个原始体积只执行一次
-最终 sinc 重采样。生成两轮参考均值时的临时重采样结果不作为最终输出。失败时流程
-终止，不自动改用 `nomoco`。
+方向已规范、值有限且非负的未压缩 float32 `.nii`，经过分块检查后可直接 mmap 读取。其他输入（包括 `.nii.gz`）会一次性规范化为 `DWIforfit.nii`，所选方式记录在 `nomoco_qa.json`。
 
-默认 `--bvec-mode corrected` 在 FSL scaled-mm 基底中，用各最终仿射矩阵的有限
-应变旋转更新非零壳层 b 向量，并恢复单位长度；存储轴变化在运动旋转之前处理。
-显式 `--bvec-mode compat46` 不做运动旋转，但在 physical 分量模式下仍随存储轴
-变化转换梯度。只有选择 `--component-mode simnibs46-literal` 或存储变换为恒等时，
-才逐字节复制原 b 向量文件。
+## 运动和畸变校正
 
-可选 `--fieldmap-displacement` 必须是 DWI 网格上形状为 `(X,Y,Z,3)` 的有限位移场，
-单位为移动图像世界坐标中的毫米。它与仿射反向采样坐标组合后，一起用于最终插值；
-同时必须提供对应的已校正脑掩膜。完整流程也可接收幅度图、已解缠且单位为 rad/s 的场图、
-dwell time 和相位编码方向，并在流程内生成位移场与掩膜。
+### Legacy 校正
+
+`preprocess-legacy` 执行两轮 6/12 自由度校正，将校正后的扩散均值对齐到 nodif，并使用直接的 6 自由度 b0 配准。最后组合变换，对每个原始体积执行一次 sinc 插值。
+
+默认 `--bvec-mode corrected` 在 FSL scaled-mm 基底中应用最终运动仿射的有限应变旋转，再归一化非零壳层向量。`compat46` 跳过运动旋转；存储轴变化仍会变换向量，除非选择 `--component-mode simnibs46-literal`，或存储变换本身为恒等。
 
 ### GRE 场图
 
-`prepare-fieldmap <magnitude> <field_radians_per_second> <b0_brain> <output_directory>`
-实现 SimNIBS 4.6 中接收已缩放 rad/s 场图的 GRE/FUGUE 流程。必须提供 `--dwell-ms`
-和 `--phase-encoding-direction {x,x-,y,y-,z,z-}`。可选幅度图掩膜与 b0 掩膜各自必须
-匹配对应图像的网格。voxel-shift 输出以体素为单位；`displacement_world_mm.nii.gz`
-是带符号的 NIfTI 世界坐标反向采样位移，供 `preprocess-legacy --fieldmap-displacement`
-使用。此流程不包含 PRELUDE，因此拒绝原始缠绕的 Siemens 相位图。
+`prepare-fieldmap` 接受幅度图、已解缠且单位为弧度/秒的场图，以及 b0 脑图像。需指定 `--dwell-ms` 和相位编码方向，可选掩膜应与各自图像网格一致。包裹的 Siemens 相位需先由外部工具解缠。
 
-相位编码 `x/y/z` 参数指存储轴重排后的 FSL 内部轴，不会自动重映射原 NIfTI/BIDS
-的 `i/j/k` 轴。
+生成的位移形状为 `(X,Y,Z,3)`，单位为带符号的 NIfTI 世界坐标毫米，网格必须与 DWI 一致。通过 `preprocess-legacy --fieldmap-displacement` 传入时，应同时提供其校正掩膜；完整流程可直接从 GRE 输入准备这两项输出。
 
-### TOPUP
+### 反向相位编码 TOPUP 和 EDDY
 
-`prepare-topup <forward_b0> <reverse_b0> <output_directory>` 使用 SimNIBS 4.6 的固定
-`b02b0_nosubsamp.cnf` 配置。两幅输入必须是数值有限、形状和仿射矩阵一致的三维 NIfTI。
-`--readout-seconds` 必须为正；相位编码方向仅接受 `x`、`x-`、`y`、`y-`，因为 FSL
-6.0.4 TOPUP 不支持 z 方向。
+`prepare-topup` 接受形状和仿射矩阵一致的两份有限值三维 b0 图像，读出时间必须为正。支持 `x`、`x-`、`y`、`y-`，对应固定的 FSL 6.0.4 TOPUP 配置。
 
-输出包括 Hz 场图、float32 样条系数、每次扫描的六个运动参数、校正后的图像对、联合
-掩膜与 QA JSON。保留 `field_coefficients.nii.gz` 和 `movement_parameters.txt`，
-另生成 FSL 可读取的 `topup_fieldcoef.nii.gz`/`topup_movpar.txt`。系数 NIfTI 使用
-三次 TOPUP 的 intent code `2016`，并在 `intent_p1..p3` 中记录原始体素尺寸；该组合
-已通过真实 FSL 6.0.4 `applytopup` 读取检查。计算失败时终止，不自动换用其他场估计器。
+`prepare-eddy` 接受 DWI、对应梯度及同网格脑掩膜，要求一个非零壳层和正读出时间。不使用 TOPUP 时，EDDY 也支持 `z`、`z-`。可选磁敏感场应位于 DWI 网格、单位为 Hz，且所有值有限。
 
-### EDDY
+对于反向相位编码四维序列，`run-pipeline` 完成存储重定向、刚体对齐和平均，估计 TOPUP，从第一份校正 b0 生成 EDDY 掩膜，再把 TOPUP 结果传入 EDDY。此组合流程支持 x/y 方向。没有反向序列时，流程构建精确 b0 均值和 BET `f=0.2` 掩膜；显式 `--dwi-brain-mask` 可覆盖该掩膜，来源会写入阶段记录。
 
-`prepare-eddy <dwi> <bvals> <bvecs> <brain_mask> <output_directory>` 使用 SimNIBS 4.6
-固定的单壳 EDDY 流程。DWI 与掩膜的空间形状和仿射矩阵必须相同；b 值和 `3xN` 或
-`Nx3` b 向量必须按顺序对应 DWI 体积。非零 b 值只能构成一个壳层。
-`--readout-seconds` 必须为正，相位编码方向可为 `x`、`x-`、`y`、`y-`、`z`、`z-`。
-可选 `--susceptibility-field` 是 DWI 网格上数值有限、单位为 Hz 的 NIfTI。
+PE 标记指存储重定向后的 FSL 内部轴，不会自动转换原始 NIfTI/BIDS 的 `i/j/k` 方向。命令见[使用示例](USAGE.md)。
 
-命令默认使用预测信号替换异常切片，并记录确定性的随机种子。输出包括校正后的 DWI、
-替换异常值后的数据、每体积 16 个参数、旋转后的 b 向量、异常值与壳层对齐结果、迭代
-记录和 QA。`--no-repol` 和 `--no-rigid-shell-alignment` 可关闭对应步骤；优化实现
-失败时不会自动切换到其他实现。
+## 预处理 DWI 和拟合张量
 
-`run-pipeline` 收到四维反向相位编码图像时，会调整存储方向，按上游顺序执行刚体配准
-和时间平均，再估计 TOPUP；它用 TOPUP 第一幅校正 b0 和上游 BET 参数生成 EDDY 掩膜，
-并将完整 TOPUP 输出交给 EDDY。由于 TOPUP 的限制，此组合流程仅接受 x/y 方向。
+向 `fit-dti` 提供的数据应已完成采集所需的运动和畸变校正，梯度应包含相应运动旋转。整个预处理中，DWI、梯度和掩膜应保持对应。
 
-没有反向相位编码输入时，`run-pipeline --preprocessing-mode eddy` 在流程内用精确
-b0 生成方向标准化、配准后的 nodif 和 BET `f=0.2` 掩膜。也可明确提供
-`--dwi-brain-mask`；其来源会记入阶段清单，不会在用户不知情时替换掩膜。
+`run-prefit-pipeline` 导入六分量张量，完成存储重定向和张量分解，再进入 T1 配准与 QA。若拟合器提供有效性掩膜，应一并保留。物理分量处理会在存储轴变化时保持张量方向。
 
-## 已预处理 DWI
+## 坐标和兼容选项
 
-DWI 应已完成该采集所需的运动、涡流和磁敏感/EPI 畸变校正，b 向量应随运动校正一致地
-旋转。DWI、脑掩膜、b 值和 b 向量必须相互对应，体积顺序一致。
+| 选项 | 默认值 | 对照行为 |
+| --- | --- | --- |
+| `--bvec-mode` | `corrected` | `compat46` 跳过运动引起的旋转 |
+| `--component-mode` | `physical` | `simnibs46-literal` 仅重排存储、不变换分量 |
+| `--jacobian-mode` | `physical` | `simnibs46-literal` 使用逐体素 PPD 导数 |
+| `--basis-mode` | `physical` | `simnibs46-literal` 使用上游仿射归一化 |
+| `--eigensystem-mode` | `stable` | `simnibs46-literal` 使用上游一般特征分解 |
 
-默认 DTI 拟合在确认精确 b0 加一个非零壳层后使用全部输入体积。多壳数据应通过
-`select-shell`、`fit-dti --shell` 或等效且可追溯的操作明确选壳。独立 `fit-dti` 还
-支持用 `--b0-threshold` 处理近零 b 值；这两个选项与 `strict-fsl`/`robust` 无关。
-完整原始 DWI 流程保留默认的精确 b0、单壳设置。程序不会自动选取 b1000，也不会
-将多个非零壳层直接用于单张量拟合。
+这些选项相互独立。默认有效性策略 `strict-fsl` 会在规定情况下对无效拟合或不安全非线性变换报错。可选 `robust` 排除无效拟合体素，对不安全非线性位置填零，并记录到 QA。两种策略均不会改变坐标选项。
 
-可选 `grad_dev` NIfTI 使用 HCP/FSL 九分量约定，空间形状与仿射矩阵须匹配 DWI。
+## T1 对齐
 
-## 扩散张量
+`register-t1` 从 `DTI_FA.nii.gz` 估计仿射并将 `DTI_tensor.nii.gz` 映射到 T1，需要 CHARM 的 `T1.nii.gz`、`segmentation/labeling.nii.gz`、`segmentation/T1_bias_corrected.nii.gz` 和 `final_tissues.nii.gz`。可选 `DTI_sse.nii.gz` 用于 SSE QA。默认仿射配准使用 12 自由度，并独立估计 6 自由度 QA 变换；刚体模式使用 6 自由度。
 
-张量 NIfTI 的形状为 `(X,Y,Z,6)`，末维依次为 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`，所有值必须
-有限。应保留拟合产生的有效性掩膜，或由外部张量生成工具提供该掩膜。
+`register-tensor` 应用外部提供的输入世界坐标到参考世界坐标的 4×4 仿射，不负责估计变换。只有外部处理已经建立共同世界坐标时才能使用 `--assume-aligned`；同一被试的图像不一定已经对齐。
 
-`run-prefit-pipeline` 接受符合上游格式的预拟合张量，执行存储轴重排和
-`fslmaths -tensor_decomp` 对应分解，随后进入与原始 DWI 相同的 T1 配准、输出发布和
-QA 步骤，无需原始 DWI。
-默认 `--component-mode physical` 同时转换张量分量以保持物理方向；
-`simnibs46-literal` 保留上游仅重排体素的行为。
+`register-t1-nonlinear` 执行固定 FNIRT 调度和 PPD 重定向。必须提供脑掩膜，并在 PPD 后应用。输出包含系数、形变、Jacobian、张量/FA/V1、有效性掩膜和 QA；折叠或近奇异位置按所选有效性策略处理。
 
-## 兼容模式
+FSL 采样使用头字段 `pixdim`，世界坐标使用有效仿射。仿射和稠密形变路径支持两者尺度不同；原始预处理以及 FNIRT 估计/系数展开要求尺度一致。使用这些路径前，应将不一致的输入重采样到明确网格。
 
-拟合和非线性 PPD 默认使用 `strict-fsl`，保留兼容 FSL 的输入处理；在 FSL 本身会
-终止，或有效区域中的折叠/奇异变换无法得到合法张量时，明确报错。可主动选择 `robust`
-来排除无效拟合体素，并将不安全的非线性位置填零。所选模式记入阶段参数，不会自动改变。
+物理 PPD 按目标体素尺寸计算毫米位移导数。两种 PPD 模式的折叠 QA 都使用物理 Jacobian。物理电导率基底分别归一化仿射列，并拒绝剪切。
 
-有效性策略与坐标、特征分解选项独立。对应命令的默认值为
-`--bvec-mode corrected`、`--component-mode physical`、`--jacobian-mode physical`、
-`--basis-mode physical` 和 `--eigensystem-mode stable`。显式对照旧版上游行为时，
-b 向量选择 `compat46`，其余四项选择 `simnibs46-literal`。所选模式均记录到 QA
-和阶段参数。
+## CHARM 输出和电导率
 
-## 配准到 T1
+T1 流程均要求 `final_tissues.nii.gz`，包括关闭 FEM 的运行。最终张量位于 T1 网格，写入 `m2m_<subject>/DTI_coregT1_tensor.nii.gz`。扩散脑掩膜采用 CHARM 标签区间 1–499。
 
-`register-t1 <dti_directory> <m2m_directory> <output_directory>` 自动执行 SimNIBS 4.6
-的线性 T1 配准步骤。默认 `--mode affine` 估计 12 自由度 FA→T1 变换，并单独生成
-6 自由度 QA 变换；`--mode rigid` 使用 6 自由度。输入需含 `DTI_tensor.nii.gz` 和
-`DTI_FA.nii.gz`，CHARM 目录需含 `T1.nii.gz`、`segmentation/labeling.nii.gz`、
-`segmentation/T1_bias_corrected.nii.gz` 和 `final_tissues.nii.gz`。可选
-`DTI_sse.nii.gz` 用于 SSE QA。配准失败时终止，不假定图像已对齐。
+FEM 还需要 EEG 帽文件和明确的头网格。当标准被试网格名不存在且目录中只有一份网格时，流程会将其显式传给 SimNIBS，见[SimNIBS 集成](SIMNIBS_INTEGRATION.md)。
 
-`register-tensor` 应用调用者提供的 4x4 仿射矩阵，将输入世界坐标映射到参考世界坐标，
-并执行有限应变张量重定向；它不估计配准矩阵。只有外部预处理已建立共同世界坐标时，
-才可使用 `--assume-aligned`。
-
-`register-t1-nonlinear <fa> <tensor> <reference> <affine_matrix> <output_directory>`
-运行固定的 FNIRT 子集和非线性 PPD。必须提供 `--brain-mask`，并按上游顺序在 PPD
-之后应用它。输出包括样条系数、稠密形变场、局部 Jacobian、配准后的张量/FA/V1、
-有效性掩膜和 QA。折叠或近奇异区域会明确记录；失败时不自动返回仿射结果。
-
-DWI 与 T1 来自同一被试并不代表已经对齐：运动、畸变、分辨率、方向和扫描仪坐标都
-可能不同，不能仅据此使用 `--assume-aligned`。
-
-仿射配准和稠密非线性张量入口使用 header `pixdim` 定义 FSL 采样，使用有效 affine
-定义世界坐标，支持合法的 sform 尺度与 `pixdim` 不一致文件。原始预处理及 FNIRT
-估计/系数展开目前要求两种尺度一致，不一致时明确报错；使用这些路径前，应将输入
-重采样到明确指定的网格。
-
-非线性张量命令默认 `--jacobian-mode physical`：位移梯度除以目标体素大小，PPD
-与折叠 QA 共用同一物理 Jacobian。`simnibs46-literal` 保留旧版按体素索引求导的
-PPD，包含其对分辨率的依赖，供显式对照。
-
-## CHARM 掩膜与最终输出
-
-脑掩膜使用 SimNIBS `dwi2cond` 的标签区间 1–499。最终张量位于 T1 网格，保存为
-`m2m_<subject>/DTI_coregT1_tensor.nii.gz`。
-
-即使不运行 FEM，每个 T1 流程也必须有 `final_tissues.nii.gz`。FEM 还要求目录名为
-`m2m_<subject>`，并含 EEG 10-10 电极帽和可确定的头网格。若标准 `<subject>.msh`
-不存在但目录中只有一个网格，则将该网格明确传入 `SESSION.fnamehead`，确保 dry-run
-与真实 SimNIBS 准备步骤使用同一文件。
-
-`tensor-to-mesh` 的 VN 转换默认拒绝非零奇异张量。显式选择
-`--vn-singular-policy regularize` 时，先按配置的各向异性比调整特征值，再执行常规
-安全修正，并在 QA JSON 的 `regularized_singular_tensors` 中记录修复数量。此选项
-只适用于 VN，若与 `dir` 或 `mc` 一起提供会报错。
-
-默认 `--eigensystem-mode stable` 用 `eigh` 获得正交的对称张量基底。显式
-`simnibs46-literal` 模式按 SimNIBS 4.6 的 `eig`、取实部、降序排序与重建方式运行，
-也保留重复特征值可能产生非正交基底的行为。QA 记录所选模式、最大正交误差和受影响
-基底数量。正式 FEM 和先导场流程同样默认使用稳定特征分解；通过当前 SimNIBS
-实例上的项目内电导率适配接入，仍调用已安装的 SESSION，不修改安装模块。
-
-默认 `--basis-mode physical` 分别归一化 affine 的三个空间列，倾斜、非等距体素
-不会因此增加尺度各向异性。此模式拒绝含剪切的 affine；`simnibs46-literal` 保留
-上游的归一化方式，供显式对照。
-
-形状、仿射矩阵、有限值、有效性掩膜和来源记录检查失败时均明确报错；各向异性流程
-不会自动改成标量 FEM。
+`tensor-to-mesh` 默认对非零奇异 VN 张量报错；`--vn-singular-policy regularize` 可显式修复其谱，再执行安全处理并记录数量。此选项只适用于 VN。各模式的策略和公式见[电导率模型](CONDUCTIVITY.md)。

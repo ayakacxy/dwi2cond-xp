@@ -4,18 +4,36 @@
 
 [文档目录](README.md) · [项目首页](../../README.zh-CN.md)
 
-欢迎提交范围明确的 issue 和 pull request。
+欢迎通过 issue 和 Pull Request 参与项目。较大的算法或接口修改，请先在 issue 中讨论实现方案。
 
-1. 不要提交人类 MRI、被试标识、凭据、私有绝对路径或生成的 FEM 结果。
-2. 保留纯 Python 参考实现。新增加速应可显式选择，请求的后端不能被自动替换。
-3. 不得通过降低分辨率、减少数据或迭代、删除科学检查来获得性能提升。
-4. 新增注释和 docstring 使用中文；命令行帮助与错误信息保留英文。
-5. 运行 `ruff check src tests tools scripts` 及相关测试；发布前或修改共用数值内核、
-   覆盖率行为时，运行 `python scripts/run_coverage.py`。
-6. 对比参考实现时，说明数值误差和计时所包含的步骤。
-7. 修改文档后运行 `python scripts/check_markdown_links.py`、
-   `python scripts/verify_version.py` 和 `git diff --check`。
-8. 用户可见的变化加入 `docs/CHANGELOG.md` 的 `Unreleased` 节，并同步中英文版本。
-   tag 的发布说明从该更新记录生成。
+## 开发环境
 
-较大改动请先在 issue 中说明要保留或改变的科学行为、可合法共享的输入和验证方法。
+按[复现说明](REPRODUCIBILITY.md)配置 Python 3.11 和所需依赖，再安装开发工具：
+
+```bash
+python -m pip install -e '.[test]'
+```
+
+SimNIBS 集成需要 4.6.0；FSL 仅用于可选的本地数值对照。
+
+## 修改约定
+
+每个 Pull Request 聚焦一个改动。英文和中文指南同步更新，`docs/` 下保留的完整兼容副本也要同步。公开源码注释、docstring、CLI 帮助和错误信息使用英文。
+
+数值修改应说明影响哪个处理阶段，使用相同输入、参数和求解器设置进行比较，报告坐标约定、张量差异及相关 QA 结果。性能报告需说明硬件、线程数、缓存状态和计时范围，具体方法见[算法说明](METHODS.md)和[性能记录](BENCHMARKS.md)。
+
+不要提交患者数据、凭据、缓存或生成的仿真结果。改编代码应保留来源与许可说明。
+
+## 检查方法
+
+按改动范围选择检查。文档修改运行：
+
+```bash
+python scripts/check_markdown_links.py
+python scripts/verify_version.py
+git diff --check
+```
+
+代码修改运行 Ruff 和相关测试；共享数值内核的修改还需要执行 `python scripts/run_coverage.py`。硬件相关修改应在对应设备上运行，无法执行的检查请在提交中注明。
+
+Pull Request 应说明问题、修改后的行为和检查方法，并在[更新记录](CHANGELOG.md)中补充用户可见的变化。

@@ -4,15 +4,14 @@
 
 [Documentation](README.md) · [Project home](../../README.md)
 
-Supported security fixes target the latest tagged release and the `main`
-branch. Report vulnerabilities privately through GitHub private vulnerability
-reporting when available. Do not open a public issue for an unpatched security
-problem.
+Security fixes target the latest release and the `main` branch.
 
-Never attach identifiable medical images, HCP controlled-access files, subject
-identifiers, tokens, environment files, or absolute paths that disclose private
-infrastructure. A minimal synthetic reproducer is preferred.
+## Reporting a vulnerability
 
-This research software is not a medical device and does not provide clinical
-advice. Scientific disagreements or unexpected simulation results are support
-issues, not security vulnerabilities, unless they arise from a security defect.
+Use [GitHub private vulnerability reporting](https://github.com/ayakacxy/dwi2cond-xp/security/advisories/new) for security defects. Include the affected version, reproduction steps, impact and any proposed mitigation. Avoid public disclosure of an unpatched vulnerability.
+
+Use synthetic inputs. Remove credentials, identifying information and controlled-access medical data from attachments.
+
+## Scope
+
+The package reads diffusion images, tensors, meshes and configuration files, and can invoke an installed SimNIBS solver. It does not upload input data or collect telemetry. Unexpected numerical results belong in a bug report unless they arise from a security defect. See [Support](SUPPORT.md).

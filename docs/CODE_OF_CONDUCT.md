@@ -4,15 +4,12 @@
 
 [Documentation](en/README.md) · [Project home](../README.md)
 
-We are committed to a respectful, inclusive, and harassment-free community.
-Participants should communicate constructively, respect privacy and data-use
-restrictions, state the evidence and limitations behind scientific claims, and accept good-faith
-technical review.
+Participants in issues, discussions and pull requests are expected to communicate respectfully.
 
-Harassment, discrimination, doxxing, threats, and the publication of private or
-controlled-access data are unacceptable. Maintainers may edit or remove content
-and restrict participation when needed to protect the community.
+- Discuss technical decisions without personal attacks.
+- Give constructive feedback and welcome contributors with different levels of experience.
+- Respect privacy, attribution and data-use restrictions.
 
-Report conduct concerns privately to the repository owner through GitHub. The
-maintainer will review reports fairly, preserve confidentiality where possible,
-and disclose conflicts of interest.
+Harassment, discrimination, threats, doxxing and repeated disruption are unacceptable. Maintainers may remove content, issue warnings or restrict participation according to the severity of the behavior.
+
+Report concerns privately to the repository owner through the contact information on their [GitHub profile](https://github.com/ayakacxy). Avoid posting personal details in a public issue. Reports will be handled as confidentially as practical.

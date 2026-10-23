@@ -4,14 +4,11 @@
 
 [Documentation](README.md) · [Project home](../../README.md)
 
-This document freezes the FSL reference boundary used by the final `v0.3.0`
-validation. FSL remains an optional validation dependency and is not imported,
-bundled, or called by the released runtime path.
+FSL 6.0.4 is the optional numerical reference for the fixed preprocessing and registration paths. It is installed separately and is not a runtime dependency of dwi2cond-xp.
 
 ## Source provenance
 
-The compatibility source is the copy installed with SimNIBS 4.6.0. The main
-script declares `dwi2cond` version `0.4`.
+The reference scripts come from SimNIBS 4.6.0; its main script identifies dwi2cond version `0.4`. The recorded FSL build is `6.0.4:ddd0a010`. These source hashes identify the reference used in the retained comparisons:
 
 | Script | SHA-256 |
 | --- | --- |
@@ -21,20 +18,11 @@ script declares `dwi2cond` version `0.4`.
 | `dwi2cond.t1reg.source.sh` | `539d1951621111495792c0957705494fc592579a9c0f3dc807dd6549a904205d` |
 | `dwi2cond.check.source.sh` | `29c3c907cd174bc628b3770feafb69831d4f4c76b41c91a97e1cfd938b655541` |
 
-These hashes identify the local validation source only. The files are not
-copied into this repository. The first real fixture must additionally record
-the exact FSL build used for its outputs; outputs from different FSL releases
-must not share one numerical baseline.
-
-The recorded release-reference installation was `/usr/local/fsl` and reported
-FSL `6.0.4:ddd0a010`. This absolute path is local configuration and must be
-replaced by an alias in public run manifests.
+Use a local installation of the matching build when repeating these comparisons. Outputs from another FSL version need their own reference record.
 
 ## Stage artifact map
 
-The harness records artifacts by the public aliases below. A private manifest
-may additionally contain file or voxel digests, but a public manifest must not
-contain absolute paths, subject identifiers, or voxel arrays.
+The harness uses the following aliases to identify inputs and results:
 
 | Stage | Required public aliases |
 | --- | --- |
@@ -45,59 +33,28 @@ contain absolute paths, subject identifiers, or voxel arrays.
 | T1 registration | `world_transform` or `warp`, `t1_tensor`, `registered_fa`, `registered_v1`, `registered_sse` |
 | final QA | `brain_rim`, `first_eigenvector_mesh`, `run_log` |
 
-Every NIfTI summary includes shape, dtype, affine, qform, sform, finite count,
-nonzero count, and finite range. A frozen compact manifest may replace repeated
-identical affine/qform/sform fields with a named `grid_ref`. Mask artifacts
-additionally include mask count. A completed command with a missing required
-artifact is a failed stage.
+NIfTI summaries record shape, dtype, affine, qform, sform, finite/nonzero counts and finite range. A named `grid_ref` can replace repeated identical geometry. Masks also record their voxel count.
 
 ## Execution semantics
 
-- Each reference command runs in an independent process and an explicit
-  working directory.
-- A missing executable produces a manifest with `status: skipped`; it is never
-  counted as a passing comparison.
-- Non-zero exit, timeout, missing required output, or an output escaping the
-  working directory produces `status: failed` and never selects another mode.
-- Manifests record reference version, script hashes, redacted command and log
-  summaries, environment variable names, thread count, wall time, child CPU
-  time, and peak child RSS where the platform exposes it.
-- Numerical thresholds are frozen in the fixture manifest before implementing
-  the corresponding Python algorithm.
-
-The initial public threshold file is
-`tests/fixtures/reference/synthetic_nomoco_manifest.json`. The threshold file
-alone is a set of required checks, not a completed comparison; its companion reference summary
-and the final configured real-FSL check provide the execution evidence.
+Each command runs in its own process and working directory. Missing tools produce `status: skipped`; nonzero exit, timeout or missing required output produces `status: failed`. Manifests record tool version, source hashes, redacted command, thread count, runtime and resource use. Numerical thresholds are fixed before evaluating candidate outputs.
 
 ## Frozen public evidence
 
-The public reference foundation is frozen in eleven JSON files under
-`tests/fixtures/reference/`:
+`tests/fixtures/reference/` contains synthetic definitions, thresholds and aggregate reference results:
 
-- `synthetic_nomoco_manifest.json` freezes comparison thresholds;
-- `synthetic_nomoco_reference.json` records the completed public reference;
-- `synthetic_legacy_reference.json` records the completed two-pass legacy
-  output, per-volume transform, interpolation, b-vector, and timing A/B;
-- `private_nomoco_reference.json` contains only the aggregate summary of the
-  completed private single-shell reference;
-- `synthetic_b0_motion_manifest.json` freezes rigid-motion truth and hashes;
-- `synthetic_preprocessing_manifest.json` freezes reverse-PE, fieldmap, affine,
-  and tensor fixture definitions and hashes;
-- `synthetic_fieldmap_reference.json` records the fixed GRE/FUGUE reference;
-- `synthetic_topup_reference.json` records the fixed TOPUP reference;
-- `synthetic_eddy_reference.json` records the fixed EDDY `--repol` reference;
-- `synthetic_eddy_interspersed_b0_reference.json` records the portable
-  interspersed-b0 EDDY fixture definition and same-platform reference provenance;
-- `synthetic_t1_registration_reference.json` records automatic T1 registration.
+- `synthetic_nomoco_manifest.json` and `synthetic_nomoco_reference.json`;
+- `synthetic_legacy_reference.json`;
+- `synthetic_b0_motion_manifest.json` and `synthetic_preprocessing_manifest.json`;
+- GRE, TOPUP and EDDY reference JSON files;
+- `synthetic_eddy_interspersed_b0_reference.json`;
+- `synthetic_t1_registration_reference.json`;
+- `private_nomoco_reference.json`, containing aggregate statistics only.
 
-The image fixtures are generated on demand and are not stored in the public
-reference directory. Audit all frozen evidence with:
+Image fixtures are generated when needed. Public records contain no raw voxel arrays, credentials or identifying subject data. The reference-asset checker can inspect a directory with:
 
 ```bash
-PYTHONPATH=src python tools/audit_reference_assets.py \
-  tests/fixtures/reference --forbid 100610 --forbid hcp --forbid cxy
+PYTHONPATH=src python tools/audit_reference_assets.py tests/fixtures/reference
 ```
 
-The audit rejects image files, absolute paths, direct identifier/credential
-keys, raw voxel arrays, and configured private terms.
+The measured agreement and current limitations are listed in [Validation](VALIDATION.md).

@@ -34,107 +34,37 @@ Cross-platform, FSL-free DTI-to-conductivity workflows for SimNIBS 4.6.
 - [Documentation and community](#-documentation-and-community)
 - [Citation and license](#-citation-and-license)
 
-`dwi2cond-xp` is a cross-platform Python pipeline that preprocesses supported
-raw or already-preprocessed single-shell diffusion MRI, generates conductivity
-tensors for SimNIBS 4.6, and orchestrates anisotropic finite-element simulations
-without requiring FSL at runtime.
+`dwi2cond-xp` converts single-shell diffusion MRI into conductivity tensors for SimNIBS 4.6 and provides anisotropic FEM and lead-field interfaces. It accepts raw DWI, preprocessed DWI or fitted tensors, without requiring FSL at runtime.
 
-This is an independent community project. It is not an official SimNIBS or FSL
-distribution.
-
-The `v0.1.0`--`v0.3.0` tags were republished on 2026-08-29 to correct and
-consolidate documentation and release metadata. `v0.3.0` was replaced again on
-2026-08-30 after a fourth independent source audit found correctness defects;
-the replacement algorithm baseline and the scope of its validation are recorded
-in the changelog.
-
-`v0.4.0` corrects gradient rotation, vector/tensor components during storage
-reordering, physical PPD derivatives, and tensor bases on oblique grids. It also
-reduces repeated computation and large-array overhead and adds optional FP64
-CUDA acceleration. CPU is the default and works without a GPU or CuPy.
-Release date: 2026-10-14.
-See the [v0.4.0 release notes](docs/en/RELEASE_NOTES_v0.4.0.md) for changes and
-migration from earlier coordinate conventions.
+CPU is the default. Optional CUDA accelerates nonlinear-registration Hessian assembly and PPD. Installation and the main workflow are shown below; the [usage guide](docs/en/USAGE.md) covers all commands.
 
 ## ⚡ Validation at a glance
 
-The `v0.4.0` implementation completed the following same-input end-to-end
-comparison with the published `v0.3.0` wheel and official FSL workflow:
+Measured complete runs on Linux with a Xeon Gold 6230, eight CPU cores and an RTX 2080 Ti:
 
-| Implementation | Complete wall time | Peak host RSS | Peak GPU allocation |
+| Backend | Wall time | Peak host RSS | Peak GPU allocation |
 | --- | ---: | ---: | ---: |
-| v0.4.0 CPU | **205.45 s** | **6.50 GiB** | none |
-| v0.4.0 GPU | **163.34 s** | **6.72 GiB** | **8.83 GiB** |
-| Published v0.3.0 CPU | 564.41 s | 25.47 GiB | none |
-| SimNIBS 4.6 / FSL 6.0.4 subscripts | 1290.07 s | 3.79 GiB | none |
+| CPU | **205.45 s** | **6.50 GiB** | — |
+| CUDA | **163.34 s** | **6.72 GiB** | **8.83 GiB** |
 
-CPU/GPU were **2.75× / 3.46× faster than v0.3.0** in this measurement. It used
-one HCP single-shell input with gradient-deviation correction, `nomoco` plus
-nonlinear registration, eight CPU cores and an RTX 2080 Ti on Linux,
-warm file/JIT caches, all project QA and m2m tensor publication, with FEM off.
-The default legacy preprocessing path was not timed in this comparison.
-The FSL output set and core use differ. These are observed timings, not memory
-minimums or speed guarantees; see [Benchmarks](docs/en/BENCHMARKS.md) for the
-complete boundaries and numerical comparisons.
+The input is one HCP single-shell dataset with gradient-deviation correction, `nomoco` preprocessing and nonlinear T1 registration. Timing includes startup, computation, QA and m2m tensor publication, with warm file/JIT caches and FEM disabled. Each row is one run. The default legacy preprocessing path was not timed here. Full settings, FSL comparisons and numerical results are in [Benchmarks](docs/en/BENCHMARKS.md).
 
-The local v0.4.0 release checks completed on 2026-10-14:
-
-| Check | Result | Conditions |
-| --- | ---: | --- |
-| v0.4.0 correctness checks | **960 passed · 0 skipped** | Linux, with configured real FSL/SimNIBS probes enabled |
-| Full-package coverage gate | **100.00% statement coverage** | 15,364/15,364 statements; cold Numba caches and synthetic TOPUP/EDDY/FNIRT CLI runs |
-
-Test groups and numerical checks are documented in [Validation](docs/en/VALIDATION.md).
-
-The following historical checks describe the released `v0.3.0` tag; its test
-count and coverage are not new `v0.4.0` measurements.
-
-| Check | Result | Conditions |
-| --- | ---: | --- |
-| SimNIBS 4.6 preprocessing subset | **Pure Python · no runtime FSL** | `nomoco`, legacy correction, fixed GRE/TOPUP/EDDY, linear/FNIRT registration, and PPD tensor reorientation |
-| Final-tag correctness checks | **666 passed · 0 skipped** | Fixed dependency versions with every configured real-FSL probe enabled |
-| Independent coverage check | **100.00% statement coverage** | 666 main + 12 montage tests, real synthetic TOPUP/EDDY/FNIRT CLI paths, and 13,663/13,663 executable statements |
-| Final-tag SimNIBS preparation | **`SESSION._prepare()` completed** | Real SimNIBS 4.6 preparation with the explicit mesh; the final remediation did not rerun the FEM solver |
-
-No anatomical image, subject identifier, voxel derivative, or machine-readable
-subject artifact is distributed. Methods and validation details are in
-[Validation](docs/en/VALIDATION.md) and [Benchmarks](docs/en/BENCHMARKS.md).
+The release validation completed **960 tests with no skips** and **100% statement coverage** across 15,364 statements. Cross-platform CI covers Linux, macOS and Windows. Test conditions and optional reference checks are listed in [Validation](docs/en/VALIDATION.md).
 
 ## 🧭 Scope
 
-The preprocessing and conductivity path is:
-
 ```text
-raw or preprocessed single-shell DWI, or a six-component diffusion tensor
-  -> selected SimNIBS 4.6 preprocessing branch and two-pass WLS DTI fitting
-  -> quality checks, output records, and cache validation
-  -> explicit tensor mapping/reorientation to the CHARM T1 grid
+raw or preprocessed single-shell DWI, or a fitted diffusion tensor
+  -> preprocessing and two-pass WLS fitting
+  -> T1 registration and tensor reorientation
+  -> QA and publication to the CHARM m2m directory
   -> scalar / vn / dir / mc conductivity
-  -> fixed-montage SimNIBS 4.6 FEM
-  -> vector E-field NIfTI and QA reports
+  -> SimNIBS FEM or lead field
 ```
 
-Version `0.3.0` implements the SimNIBS 4.6 legacy motion/eddy path, the fixed GRE
-fieldmap and TOPUP branches, and the fixed single-shell EDDY `--repol` subset
-with an optional TOPUP field. Automatic 6/12-DOF linear DTI-to-T1 registration
-and the fixed SimNIBS 4.6 FNIRT plus nonlinear PPD tensor branch are implemented.
-The workflow includes QA, atomically written step records, cache validation,
-and progress reporting. It also repairs the data flow, masking, fitting behavior,
-TOPUP-to-EDDY workflow, official defaults, pre-fitted tensor import, and m2m
-output-writing defects found by the v0.2.0 audit. FSL is retained only as an
-optional local numerical reference; it is not called by the released runtime.
-The final v0.3.0 corrections also address orientation, dependencies, caching,
-CHARM/FEM integration, and singular VN tensors. These checks do not establish
-bitwise equality for every FSL optimizer, and no new full-subject comparison
-against the official workflow was run. The numerical results and limitations
-are documented in the
-[v0.3.0 remediation report](docs/en/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md).
+Supported preprocessing includes `nomoco`, two-pass legacy correction, fixed GRE fieldmap correction, reverse-PE TOPUP and single-shell EDDY. T1 alignment supports affine registration and the fixed FNIRT/PPD nonlinear path.
 
-The pure-Python DTI and tensor-mapping core uses NumPy, SciPy, NiBabel, h5py,
-and tqdm. The validated nonlinear runtime is pinned to NumPy 2.3.0 and Numba
-0.64.0. Mesh conductivity, FEM, and lead-field workflows require exactly
-SimNIBS 4.6.0. Platform support for those workflows is limited to platforms on
-which SimNIBS 4.6.0 itself can be installed and validated.
+The tensor core uses Python, NumPy, SciPy, NiBabel, Numba and h5py. Mesh conductivity, FEM and lead fields require SimNIBS 4.6.0. FSL is used only for optional numerical comparisons. This is an independent community project.
 
 ## 🧩 Conductivity modes
 
@@ -281,9 +211,7 @@ the official [dwi2cond documentation](https://simnibs.github.io/simnibs/build/ht
 
 ## 🐍 Installation
 
-The complete workflow was validated with Python 3.11 and SimNIBS 4.6.0. Installing
-into an existing SimNIBS 4.6 environment is the primary path. If that environment
-is intentionally frozen, install the wheel without dependency resolution:
+Use Python 3.11. In an existing SimNIBS 4.6.0 environment, download the wheel from the [Release page](https://github.com/ayakacxy/dwi2cond-xp/releases/tag/v0.4.0) and install it while retaining that environment's dependencies:
 
 ```bash
 conda activate simnibs
@@ -292,98 +220,29 @@ python -m pip install --no-deps dwi2cond_xp-0.4.0-py3-none-any.whl
 dwi2cond-xp --help
 ```
 
-Download the v0.4.0 wheel from the [GitHub Release](https://github.com/ayakacxy/dwi2cond-xp/releases/tag/v0.4.0).
-For development from this checkout, replace the wheel command with
-`python -m pip install --no-deps -e .`. The release wheel has been installed as
-a temporary overlay on the existing reference environment and imported together
-with SimNIBS 4.6.0 without modifying that environment.
-
-To create a separate environment instead:
+For a separate full-workflow environment:
 
 ```bash
 conda env create -f environment.yml
 conda activate dwi2cond-xp-simnibs46
 python -m pip install -e .
-python -c "import simnibs; assert simnibs.__version__ == '4.6.0'"
-dwi2cond-xp --help
 ```
 
-For the pure-Python core only:
-
-```bash
-python -m venv .venv
-. .venv/bin/activate              # Windows PowerShell: .venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install .
-dwi2cond-xp --help
-```
-
-Developer installation in an environment whose dependencies may be updated:
-
-```bash
-python -m pip install -e '.[test,viz]'
-ruff check src tests tools scripts
-pytest -q tests/test_cli.py
-python scripts/check_markdown_links.py
-```
-
-Use focused tests during development. The complete release check is
-`python scripts/run_coverage.py`; it runs the unit suite and real synthetic
-TOPUP/EDDY/FNIRT E2E paths in isolated Numba caches and requires 100% statement
-coverage.
+For the tensor-processing core, install the base package in a Python 3.11 environment with `python -m pip install .`. SimNIBS is needed only for its integration workflows. CUDA dependencies are optional. Environment setup, GPU requirements and development installation are described in [Reproducibility](docs/en/REPRODUCIBILITY.md).
 
 ## 📥 Input files and coordinates
 
-`fit-dti` accepts a preprocessed 4-D NIfTI with matching b-values, b-vectors,
-and diffusion brain mask. `preprocess-nomoco` accepts a raw single-shell DWI and
-constructs the b0 reference and mask, but deliberately applies no motion,
-eddy-current, or susceptibility correction to the DWI volumes. Use it only
-when this SimNIBS 4.6 `nomoco` behavior is appropriate for the data. The DTI model
-uses b=0 volumes plus one nonzero shell; it does not silently combine all shells. Optional
-gradient-nonlinearity coefficients use the FSL/HCP nine-component `grad_dev`
-convention.
+- DWI, b-values and b-vectors must describe the same ordered volumes. The tensor model uses b=0 and one nonzero shell; select a shell explicitly for multishell data.
+- Masks and optional HCP/FSL nine-component `grad_dev` must match their image grids.
+- A fitted tensor is a finite `(X,Y,Z,6)` NIfTI ordered `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`.
+- The default gradient, storage-component, PPD and tensor-basis modes preserve physical directions. Comparison modes are explicit options.
+- T1 registration uses a complete CHARM directory and writes `DTI_coregT1_tensor.nii.gz` on its T1 grid. Shared subject identity does not imply image alignment.
 
-`preprocess-legacy` implements the SimNIBS 4.6 two-pass 6/12-DOF correction
-order and one final sinc resampling per volume. Its default `corrected` mode
-rotates b-vectors in the FSL basis with the final transforms; explicit
-`compat46` omits motion rotation. It still applies physical storage-basis
-changes; original-file copying requires literal components or unchanged axes.
-
-Storage-axis reordering defaults to `--component-mode physical`, transforming
-b-vectors, tensors, and `grad_dev` components with the image axes. Nonlinear
-PPD defaults to `--jacobian-mode physical`, using millimetre derivatives for
-both tensor rotation and fold QA. Explicit `simnibs46-literal` options retain
-the upstream behavior for comparison. Header sampling and grid restrictions
-are described in [Input files and coordinates](docs/en/INPUTS.md).
-
-A tensor input must be a 4-D NIfTI whose final dimension is ordered as
-`Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`. Use automatic `register-t1` or the complete pipeline.
-For the general `register-tensor` command, choose one of these options:
-
-- pass `--world-transform` with an externally estimated 4x4 input-world to
-  reference-world affine; or
-- pass `--assume-aligned` only when external preprocessing has already aligned
-  the diffusion and T1 world coordinates.
-
-The final SimNIBS tensor is stored at
-`m2m_<subject>/DTI_coregT1_tensor.nii.gz`, as expected by SimNIBS 4.6.
-Data from the same participant are not necessarily aligned. See
-[Input files and coordinates](docs/en/INPUTS.md) for coordinates, masks, and input
-checks.
-
-Estimate the SimNIBS 4.6 affine T1 registration and generate its tensor/QA
-artifacts automatically:
-
-```bash
-dwi2cond-xp register-t1 dti_outputs m2m_subject t1_registration_outputs \
-  --mode affine --workers 8
-```
+See [Input files and coordinates](docs/en/INPUTS.md) for phase-encoding axes, supported corrections, masks and coordinate conventions.
 
 ## 🚀 Minimal workflow
 
-Run the SimNIBS 4.6 default path (`legacy + nonlinear`) and write a validated
-tensor and its provenance together into the m2m directory. Recoverable output
-errors restore the previous valid pair:
+Run the default legacy correction and nonlinear T1 registration:
 
 ```bash
 dwi2cond-xp run-pipeline \
@@ -391,8 +250,7 @@ dwi2cond-xp run-pipeline \
   --workers 8
 ```
 
-For reverse-PE acquisition, use the complete TOPUP-to-EDDY workflow rather than
-manually joining standalone artifacts:
+For reverse-PE data, prepare TOPUP and EDDY through the same workflow:
 
 ```bash
 dwi2cond-xp run-pipeline \
@@ -402,115 +260,14 @@ dwi2cond-xp run-pipeline \
   --readout-seconds 0.05 --phase-encoding-direction y --workers 8
 ```
 
-A pre-fitted tensor in the official format enters the same T1 mapping, output,
-and QA workflow:
+A pre-fitted tensor can enter at the registration stage:
 
 ```bash
 dwi2cond-xp run-prefit-pipeline \
   DTI_tensor.nii.gz m2m_subject workflow_outputs --workers 8
 ```
 
-Run the FSL-free SimNIBS 4.6 `nomoco` raw-DWI path with eight workers:
-
-```bash
-dwi2cond-xp preprocess-nomoco \
-  raw_dwi.nii.gz bvals bvecs nomoco_outputs \
-  --workers 8
-```
-
-This writes `DTI_tensor.nii.gz`, `DTI_FA.nii.gz`, `DTI_sse.nii.gz`, the brain
-and validity masks, and `nomoco_qa.json`. It never creates motion, eddy, or
-field artifacts. An uncompressed `.nii` with float32, finite, nonnegative values
-and FSL-standard orientation is verified blockwise and used directly by mmap; `.nii.gz` is decoded once to a shared uncompressed
-intermediate. The selected strategy is recorded in QA.
-
-Run the legacy correction path while preserving SimNIBS 4.6 b-vector behavior:
-
-```bash
-dwi2cond-xp preprocess-legacy \
-  raw_dwi.nii.gz bvals bvecs legacy_outputs \
-  --workers 8 --bvec-mode corrected
-```
-
-This writes the corrected DWI and mean, every final volume transform, nodif and
-brain mask, tensor/FA/SSE and validity outputs, and `legacy_qa.json`. Use
-`--bvec-mode compat46 --component-mode simnibs46-literal` for explicit
-comparison with the 4.6 script's original b-vector handling.
-
-Prepare a fixed GRE/FUGUE correction from an already scaled rad/s fieldmap and
-compose its signed world-mm displacement into the legacy command:
-
-```bash
-dwi2cond-xp prepare-fieldmap \
-  magnitude.nii.gz field_rads.nii.gz nodif_brain.nii.gz fieldmap_out \
-  --dwell-ms 0.5 --phase-encoding-direction y- --workers 8
-dwi2cond-xp preprocess-legacy \
-  raw_dwi.nii.gz bvals bvecs legacy_outputs \
-  --fieldmap-displacement fieldmap_out/displacement_world_mm.nii.gz \
-  --fieldmap-corrected-mask fieldmap_out/corrected_mask.nii.gz --workers 8
-```
-
-The command writes the rad/s field, voxel shifts, signed NIfTI world-mm pull
-displacement, corrected b0/mask, and a manifest recording units. Raw wrapped
-Siemens phase still requires PRELUDE and is rejected by this fixed rad/s branch;
-this branch does not approximate phase unwrapping.
-
-Estimate the fixed reverse-PE TOPUP field without an FSL runtime dependency:
-
-```bash
-dwi2cond-xp prepare-topup \
-  forward_b0.nii.gz reverse_b0.nii.gz topup_out \
-  --readout-seconds 0.05 --phase-encoding-direction y --workers 8
-```
-
-The fixed nine-level SimNIBS 4.6 configuration writes the Hz field, spline
-coefficients, movement parameters, corrected pair, joint validity mask, and
-`topup_qa.json`. The legacy project names are
-retained, and `topup_fieldcoef.nii.gz` plus `topup_movpar.txt` form an
-FSL-readable `--topup=topup` bundle with the official cubic-spline intent
-metadata. Only the x/y single-axis subset accepted by FSL 6.0.4 TOPUP is
-supported; z phase encoding fails explicitly.
-
-Run the fixed single-shell EDDY path, optionally composing the TOPUP field:
-
-```bash
-dwi2cond-xp prepare-eddy \
-  raw_dwi.nii.gz bvals bvecs brain_mask.nii.gz eddy_out \
-  --readout-seconds 0.05 --phase-encoding-direction y --workers 8 \
-  --susceptibility-field topup_out/field_hz.nii.gz
-```
-
-The fixed five-iteration SimNIBS 4.6 single-shell EDDY procedure combines motion
-and quadratic eddy-current correction, a spherical Gaussian process, prediction-
-based `--repol`, b-vector rotation, and shell alignment. It writes corrected DWI,
-prediction-replaced scan-space data, 16 parameters per volume, rotated b-vectors,
-outlier map, shell alignment, iteration histories, and `eddy_qa.json`. Omitting `--susceptibility-field`
-selects the same fixed EDDY algorithm without a TOPUP field.
-
-Fit a preprocessed single-shell DWI:
-
-```bash
-dwi2cond-xp fit-dti \
-  preprocessed_dwi.nii.gz bvals bvecs brain_mask.nii.gz tensor_dwi.nii.gz \
-  --grad-dev grad_dev.nii.gz \
-  --workers 8 \
-  --valid-mask-out tensor_valid_mask.nii.gz \
-  --qa-json tensor_fit_qa.json
-```
-
-Map the tensor to the CHARM T1 grid. The example assumes alignment only because
-the alignment was established externally:
-
-```bash
-dwi2cond-xp register-tensor \
-  tensor_dwi.nii.gz m2m_subject/T1.nii.gz \
-  m2m_subject/DTI_coregT1_tensor.nii.gz \
-  --source-mask tensor_valid_mask.nii.gz \
-  --assume-aligned \
-  --qa-json tensor_registration_qa.json
-```
-
-Validate a C3-to-C4 anisotropic simulation without starting the solver:
+After QA passes, the workflow publishes the tensor and its provenance into m2m. Recoverable publication failures restore the accepted pair. To run a fixed C3-to-C4 simulation, first check the configuration:
 
 ```bash
 dwi2cond-xp simulate-tdcs m2m_subject simulation_outputs \
@@ -521,14 +278,7 @@ dwi2cond-xp simulate-tdcs m2m_subject simulation_outputs \
   --cpus 8 --dry-run
 ```
 
-Remove `--dry-run` to execute SimNIBS. Run `scalar`, `vn`, `dir`, and `mc`
-separately; each mode has its own output directory and manifest. An anisotropic
-mode never silently falls back to `scalar` when its tensor is missing.
-
-Each simulation exports one T1-grid vector E-field NIfTI with final axis
-`Ex,Ey,Ez`. Magnitude is computed as `sqrt(Ex^2 + Ey^2 + Ez^2)`. Subject-volume
-outputs are strictly masked to WM, GM, and CSF labels `1,2,3`; skull, scalp,
-electrodes, and extracranial tissues are excluded.
+Remove `--dry-run` to solve. Use separate directories for each conductivity mode. E-field output is a T1-grid vector NIfTI ordered `Ex,Ey,Ez`, masked to WM/GM/CSF labels 1, 2 and 3. Standalone preparation, fitting and registration commands are in [Usage](docs/en/USAGE.md).
 
 ## 🎨 Voxel-level comparison
 
@@ -540,103 +290,46 @@ dwi2cond-xp compare-fields \
   --view components --plane axial --mask-labels 1 2 3
 ```
 
-The component figure uses three rows (`Ex`, `Ey`, `Ez`) and four columns
-(`scalar`, `vn`, `dir`, `mc`) with one shared symmetric color scale. Slice
-selection is based only on maximum brain-mask area, not field intensity.
+Rows show `Ex/Ey/Ez`; columns show `scalar/vn/dir/mc` with a shared symmetric scale. Slice selection uses maximum brain-mask area.
 
 ![Four-mode electric-field components](docs/images/electric_field_xyz_3x4.png)
 
-The magnitude view uses the same four vector NIfTIs and a shared positive scale:
+The magnitude view uses the same vector fields and one positive scale:
 
 ![Four-mode electric-field magnitude](docs/images/electric_field_magnitude_2x2.png)
 
-These figures are carried-forward result illustrations. They are not evidence
-that the final `v0.3.0` tag reran the complete subject pipeline.
+These figures illustrate a completed four-mode simulation from the project's validation data.
 
 ## ⚡ Lead-field support
 
-`simulate-leadfield` builds SimNIBS 4.6 `TDCSLEADFIELD` configurations for all
-four conductivity modes. It keeps the original HDF5 provenance and can export a
-NumPy matrix shaped `(N_spatial * 3, N_electrode - 1)` plus JSON metadata. The
-first cap electrode is the reference; each remaining column is a 1 A basis.
-Pardiso is the default and failures are not silently rerouted to another solver.
+`simulate-leadfield` configures SimNIBS `TDCSLEADFIELD` for all four conductivity modes. Native HDF5 output can be exported as a NumPy matrix shaped `(N_spatial*3,N_electrode-1)` with a JSON description. The first cap electrode is the reference; each other electrode defines a 1 A basis.
 
-This interface and its HDF5/NPY formats are unit tested, but the current
-release evidence does not include a full-subject, all-electrode lead-field run.
-See [SimNIBS integration](docs/en/SIMNIBS_INTEGRATION.md).
+The interface and formats are tested. A full-subject, all-electrode lead-field benchmark is not part of the published results. See [SimNIBS integration](docs/en/SIMNIBS_INTEGRATION.md).
 
 ## 🧪 Validation evidence
 
-One private HCP subject was used during project validation. No source
-image, volumetric derivative, subject identifier, or machine-readable
-subject-level artifact is distributed. The two rendered field-comparison PNGs
-are included as historical result illustrations without a subject identifier.
-They must retain the HCP acknowledgment and are not a substitute for accepting the
-[WU-Minn HCP Open Access Data Use Terms](https://hcp-db.humanconnectome.org/study/hcp-young-adult/document/wu-minn-hcp-consortium-open-access-data-use-terms).
+Validation covers image orientation, gradient handling, WLS, fixed GRE/TOPUP/EDDY paths, affine/FNIRT registration, PPD, conductivity mappings and SimNIBS consumers. Synthetic cases include comparisons with real FSL 6.0.4 and SimNIBS 4.6.0.
 
-- The carried-forward b0+b1000 DTI run completed for 881,299 masked voxels; 881,194 were
-  valid and 105 invalid voxels were explicitly zeroed and recorded.
-- In that stage-level run, the FSL 6.0.4 WLS plus gradient-nonlinearity tensor comparison
-  had relative L2 error `4.18e-6`; mean and p99 absolute differences were
-  `4.78e-10` and `2.10e-9`.
-- On the same server with the same outputs, the 16-worker Python fit took 9.76 s
-  versus 108.23 s for FSL 6.0.4 (`11.09x`). This is a single-system DTI-fitting
-  result, not an end-to-end FEM speed claim.
-- A historical local synthetic-mesh comparison reported maximum absolute error
-  `0` for `vn` and `2.22e-16` for `dir`/`mc`; its machine-readable comparator
-  artifact was not retained, so the final-tag claim rests on current
-  discriminative conductivity tests rather than that exact summary alone.
-- Real `scalar`, `vn`, `dir`, and `mc` C3-to-C4 FEM runs completed with Pardiso
-  before the final remediation;
-  all vector E-field NIfTIs were finite and strictly excluded tissues outside
-  WM/GM/CSF.
-- The final tag separately completed real SimNIBS 4.6 `SESSION._prepare()` with
-  the resolved explicit mesh. It did not rerun the complete HCP raw-DWI-to-FEM
-  chain or the solver after the last composition and cache-identity changes.
-- The final v0.3.0 checks completed with `666 passed` and no skips when every real
-  FSL probe was configured. The clean coverage run repeated those `666` tests
-  in the main batch, `12 passed` in the montage batch, all real synthetic
-  TOPUP/EDDY/FNIRT CLI paths, and strict `100.00%` statement coverage over all
-  `13,663/13,663` executable statements.
-  Cross-platform CI enforces the same threshold; optional reference and
-  integration tests are skipped only when their external prerequisites are
-  unavailable.
+On the measured complete CPU/CUDA workflow, 61 of 64 numerical artifacts were byte-identical. Brain-tensor relative L2 was `1.8693e-9`; healthy V1 axial-angle P99 was `1.2074e-6` degrees. The [validation record](docs/en/VALIDATION.md) gives conditions, metrics and historical stage results.
 
-Methods, measured steps, and limitations are in
-[Validation](docs/en/VALIDATION.md), [Benchmarks](docs/en/BENCHMARKS.md), and
-[Reproducibility](docs/en/REPRODUCIBILITY.md).
+Real-data validation uses private HCP data. The repository distributes the two rendered comparison figures, but no source images or subject derivatives. Data access follows the [WU-Minn HCP terms](https://hcp-db.humanconnectome.org/study/hcp-young-adult/document/wu-minn-hcp-consortium-open-access-data-use-terms).
 
 ## 🛣️ Roadmap
 
-The v0.4.0 algorithm repairs, component optimizations and CPU/GPU end-to-end
-comparison are included in this stable release. Further memory
-optimization is paused in favor of the verified speed and numerical behavior.
-See [Project status](docs/en/ROADMAP.md), [v0.4.0 release notes](docs/en/RELEASE_NOTES_v0.4.0.md),
-and [Benchmarks](docs/en/BENCHMARKS.md).
+Maintenance focuses on correctness, platform compatibility and measured runtime improvements. The supported workflows and current priorities are in [Project status](docs/en/ROADMAP.md).
 
 ## 🗂️ Documentation and community
 
 - [Documentation index](docs/en/README.md)
-- [v0.4.0 release notes and migration](docs/en/RELEASE_NOTES_v0.4.0.md)
-- [Input files and coordinates](docs/en/INPUTS.md)
-- [Methods](docs/en/METHODS.md)
-- [Validation](docs/en/VALIDATION.md)
-- [Reproducibility](docs/en/REPRODUCIBILITY.md)
-- [Contributing](docs/en/CONTRIBUTING.md)
-- [Security and medical-data reporting](docs/en/SECURITY.md)
-- [Support](docs/en/SUPPORT.md)
-- [Code of conduct](docs/en/CODE_OF_CONDUCT.md)
-- [Changelog](docs/en/CHANGELOG.md)
+- [Commands](docs/en/USAGE.md) and [input requirements](docs/en/INPUTS.md)
+- [Methods](docs/en/METHODS.md) and [conductivity equations](docs/en/CONDUCTIVITY.md)
+- [Validation](docs/en/VALIDATION.md), [benchmarks](docs/en/BENCHMARKS.md) and [reproducibility](docs/en/REPRODUCIBILITY.md)
+- [Release notes](docs/en/RELEASE_NOTES_v0.4.0.md) and [changelog](docs/en/CHANGELOG.md)
+- [Contributing](docs/en/CONTRIBUTING.md), [support](docs/en/SUPPORT.md), [security](docs/en/SECURITY.md) and [code of conduct](docs/en/CODE_OF_CONDUCT.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## 🙏 Citation and license
 
-Please cite this software using [CITATION.cff](CITATION.cff), and cite SimNIBS
-and the diffusion-processing software used upstream. This project is released
-under [GPL-3.0-only](LICENSE). Third-party packages and optional reference tools
-remain under their own licenses.
+Please cite this software using [CITATION.cff](CITATION.cff), together with SimNIBS and the diffusion-processing software used in your workflow. The project is licensed under [GPL-3.0-only](LICENSE); dependencies retain their own licenses.
 
-The validation data were provided in part by the WU-Minn Human Connectome
-Project, led by David Van Essen and Kamil Ugurbil and supported by NIH Blueprint
-funding and the McDonnell Center for Systems Neuroscience at Washington
-University. See the official [HCP citation guidance](https://hcp-db.humanconnectome.org/study/hcp-young-adult/document/hcp-citations).
+Validation data were provided in part by the WU-Minn Human Connectome Project, led by David Van Essen and Kamil Ugurbil, supported by NIH Blueprint funding and the McDonnell Center for Systems Neuroscience at Washington University. See [HCP citation guidance](https://hcp-db.humanconnectome.org/study/hcp-young-adult/document/hcp-citations).

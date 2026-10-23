@@ -6,10 +6,12 @@
 
 | Mode | Meaning |
 | --- | --- |
-| `scalar` | Fixed scalar conductivity per tissue; does not use DTI. |
-| `vn` | Preserves tensor direction and anisotropy ratio, then normalizes the determinant locally to the tissue reference conductivity. This is the primary anisotropic mode. |
-| `dir` | Preserves direction, anisotropy ratio, and spatial intensity variation, followed by global intensity calibration. |
-| `mc` | DTI-driven spatially varying mean conductivity made locally isotropic; a control for intensity variation, not directional anisotropy. |
+| `scalar` | Fixed scalar conductivity per tissue |
+| `vn` | Local determinant normalization; retains tensor direction and anisotropy |
+| `dir` | One global scale across anisotropic tissues; retains local direction and intensity variation |
+| `mc` | Same global scale as `dir`, with locally isotropic tensors |
+
+The equations below use tissue reference conductivities and diffusion tensors sampled onto the target voxels or mesh elements.
 
 ## Implemented equations
 
@@ -88,44 +90,17 @@ It therefore preserves the DTI-driven spatial variation in geometric-mean
 conductivity while removing directional anisotropy. `mc` is a DTI-derived
 control mode, not an anisotropic tensor field [4].
 
-All three mappings apply the documented SimNIBS-compatible eigenvalue, maximum
-conductivity, and anisotropy-ratio rules for their supported inputs. Degenerate
-inputs follow mode-specific failure policies rather than one universal repair:
-nonzero rank-deficient `vn` tensors fail by default. With the default
-`correct_intensity=True`, an all-zero anisotropic `dir`/`mc` tissue is rejected
-because its global scale is undefined; explicit `--no-correct-intensity` uses
-the non-calibrated safety path and accepts that input. `vn` performs
-normalization, safety correction, renormalization, and a second safety
-correction; a bound-triggered final correction can therefore slightly perturb
-the ideal determinant equality above. Tissues not selected for anisotropy use
-$\boldsymbol\Sigma_i=\sigma_t\mathbf I$.
+## Safety and coordinate settings
 
-A nonzero rank-deficient tensor has no defined VN determinant normalization.
-The default policy therefore raises an explicit error instead of emitting NaN
-or silently substituting a scale. `tensor-to-mesh --vn-singular-policy
-regularize` is an opt-in numerical-stability extension: it projects the
-singular eigensystem to the configured anisotropy bound before the existing
-SimNIBS safety passes and records the repaired-element count in QA. This
-extension is explicit and is not presented as the literal SimNIBS 4.6
-rank-deficient branch.
+The mappings apply the configured eigenvalue, maximum-conductivity and anisotropy-ratio rules. Non-anisotropic tissues use the scalar reference conductivity. VN normalizes, applies safety correction, renormalizes and applies safety correction again; a bound-triggered final correction can slightly change the ideal determinant equality.
 
-The converter, formal FEM, and lead-field workflows use
-`--eigensystem-mode stable` by default. This
-selects the symmetric `eigh` solver and keeps repeated-eigenvalue tensors on an
-orthogonal, full-rank basis. `--eigensystem-mode simnibs46-literal` is an
-explicit compatibility mode that reproduces SimNIBS 4.6's general `eig`
-ordering, including its non-orthogonal repeated-eigenvalue edge output; the QA
-JSON records the selected mode and basis-orthogonality diagnostics. FEM
-workflow runs use the installed SimNIBS SESSION with a project-local
-conductivity hook on the selected instance. Installed modules are unchanged.
+A nonzero singular VN tensor has no defined determinant normalization and raises an error by default. `tensor-to-mesh --vn-singular-policy regularize` explicitly projects its spectrum to the configured anisotropy bound before the ordinary safety passes. QA records `regularized_singular_tensors`. This VN-only option is rejected for `dir` or `mc`.
 
-The default `--basis-mode physical` removes voxel sizes by normalizing the
-affine's spatial columns separately before transforming tensor directions.
-Oblique unequal-sized voxels therefore retain the tensor's eigenvalues and
-isotropy. Sheared affines are rejected in this mode. Explicit
-`--basis-mode simnibs46-literal` preserves the upstream normalization for
-comparison. These basis fixes are included in the `v0.4.0`
-implementation; the mapping equations above and historical release evidence are unchanged.
+With intensity calibration enabled, all-zero anisotropic `dir`/`mc` tissue raises an error because a global scale cannot be fitted. Explicit `--no-correct-intensity` uses the non-calibrated safety path.
+
+The default `--eigensystem-mode stable` uses symmetric `eigh`. `simnibs46-literal` uses general `eig`, including the upstream repeated-eigenvalue behavior; QA records basis orthogonality. The default `--basis-mode physical` normalizes each spatial affine column separately and rejects shear. Its literal option preserves the upstream normalization for comparison.
+
+Formal FEM and lead-field sessions use these selected settings through an instance-local adapter. The installed SimNIBS modules are unchanged. See [SimNIBS integration](en/SIMNIBS_INTEGRATION.md) for the consumer formats.
 
 References:
 

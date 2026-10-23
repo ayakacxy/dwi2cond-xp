@@ -4,100 +4,51 @@
 
 [Documentation](en/README.md) · [Project home](../README.md)
 
-Stable versions use annotated tags and GitHub Releases. Tags are immutable in
-normal development. A historical tag may be republished only for an explicitly
-authorized documentation or release-metadata correction that leaves algorithm
-source unchanged, preserves the original tag object and peeled commit IDs in a
-backup ref and the project ledger, and rebuilds every published asset. The
-`main` branch remains the current development line; an older release receives a
-temporary backport branch only when maintenance is required.
-
-An explicitly authorized same-version correctness replacement is a separate
-exception: it may change algorithm source only after source-level re-audit,
-discriminative numerical tests, the complete release check, exact tag/release
-rollback capture, and final remote CI/security verification. Its changelog and
-public notes must say that the release was replaced; it is never represented as
-a metadata-only correction.
+Release artifacts are published on GitHub under an annotated version tag. The title is the version itself, such as `v0.4.0`. The repository does not currently publish to PyPI.
 
 ## Prepare
 
-1. Move user-visible entries from `Unreleased` in [the changelog](en/CHANGELOG.md)
-   into a dated version section.
-2. Synchronize the version in `pyproject.toml`, `CITATION.cff`, package metadata,
-   README examples, and documentation.
-3. Install the release, test, and visualization extras in a clean Python 3.11
-   environment. Run focused tests during development, then run the release
-   checks:
+1. Finalize the version's entries in [the changelog](en/CHANGELOG.md) and synchronize version metadata.
+2. Update both languages and the full legacy-path document copies. Check examples, local links, figures and formulas.
+3. Run checks appropriate to the changes. Numerical changes require the complete release check; documentation-only corrections require unchanged-source verification and package checks.
+4. Build and inspect the distributions:
 
-   ```bash
-   python -m pip install -e '.[test,release,viz]'
-   ruff check src tests tools scripts
-   python scripts/run_coverage.py
-   python scripts/verify_version.py
-   python scripts/check_markdown_links.py
-   python scripts/verify_release.py --repository .
-   validate-pyproject pyproject.toml
-   check-manifest --verbose
-   python -m pip_audit . --skip-editable --progress-spinner=off
-   python -m build
-   python -m twine check dist/*
-   check-wheel-contents dist/*.whl
-   python scripts/build_release_metadata.py --dist dist
-   python scripts/verify_release.py --dist dist
-   ```
+```bash
+python scripts/verify_version.py
+python scripts/check_markdown_links.py
+python scripts/verify_release.py --repository .
+python -m build --outdir .work/package/dist
+python -m twine check .work/package/dist/*
+check-wheel-contents .work/package/dist/*.whl
+python scripts/build_release_metadata.py --dist .work/package/dist
+python scripts/verify_release.py --dist .work/package/dist
+```
 
-4. Confirm that no human MRI, subject derivative, local path, credential, FSL
-   binary, build output, or internal ledger is tracked or packaged.
-5. Require the final `main` commit to pass Linux, macOS arm64, Windows, package,
-   CodeQL, and OpenSSF workflows before tagging.
+For ordinary code releases, the final commit must pass the Linux, macOS, Windows, package and security checks. The full numerical check is `python scripts/run_coverage.py`. Environment and dependency-audit commands are described in [Reproducibility](en/REPRODUCIBILITY.md).
 
 ## Publish
 
-Create and push an annotated `vX.Y.Z` tag that resolves to the verified `main`
-commit. The tag workflow reruns the complete test and package checks, extracts
-the matching version section from the changelog, builds the wheel and sdist,
-creates a CycloneDX SBOM and `SHA256SUMS`, attests provenance and the SBOM, and
-publishes the GitHub Release. A tag without a matching nonempty changelog section
-fails before publication.
+Create the annotated tag from the verified commit. The release workflow builds the wheel and source archive, generates a CycloneDX SBOM and checksums, attests the distributions, and publishes the matching release notes. The changelog must contain a nonempty section for the tag.
 
-The workflow does not publish to PyPI. Adding another registry is a separate
-release change that requires its own trusted-publishing and installation audit.
+Use a coherent release body in one language, with a link to the full translation. Keep the release title to the version number. Publishing to another registry requires a separate setup.
 
 ## Correct a historical tag
 
-Before moving an existing tag, record its tag-object ID, peeled commit ID,
-Release ID, asset names, and asset hashes in the project ledger. Create a local
-backup ref outside `refs/tags/`, then make the smallest version-specific commit
-from the original peeled commit. Do not copy later algorithm or capability
-claims into an older release.
+Published tags normally remain fixed. An authorized correction starts by recording the old tag object, commit, Release ID and attachment hashes, and preserving a backup ref outside `refs/tags/`.
 
-Run the version, link, package, archive-privacy, and focused test checks for each
-corrected tree. Recreate the annotated tag, force-update only that exact remote
-tag, and let the tag workflow rebuild and attest the wheel, sdist, SBOM, and
-checksum file. If a GitHub Release already exists, the workflow replaces its
-named assets in place while preserving its curated notes unless a separate
-notes correction was explicitly approved. Finally, download the replacement
-assets and perform the same verification used for a new release. A correction
-is complete only after the new and rollback object IDs are both recorded.
+For a documentation correction, keep computational source, dependencies and tests unchanged. Build packages containing the corrected documentation and verify them before replacing assets. Update only the intended tag using its old object ID with `--force-with-lease`. Retain the original attachments and notes for rollback.
 
-For an authorized same-version correctness replacement, use the same exact
-backup and force-with-lease mechanics, but branch from current `main`, run the
-full cross-platform and scientific check for the changed source, update the
-version section with the corrected algorithms and retained evidence limits,
-and require the replacement tag to resolve to the new verified `main` commit.
+A same-version algorithm replacement needs source review, numerical regressions and full release checks. Its release notes must describe the changed behavior. It is not a documentation correction.
 
 ## Verify the public release
 
-Download every asset from the public Release into a fresh directory, then:
+Download the published wheel, source archive, SBOM and checksum file. Check that:
 
-- confirm that the tag dereferences to the intended commit and the Release is
-  neither draft nor prerelease;
-- run `sha256sum -c SHA256SUMS`;
-- run Twine, wheel-content, and archive-privacy checks on the downloaded files;
-- install the downloaded wheel into a clean environment and verify import,
-  package version, CLI help, and dependency consistency;
-- verify GitHub provenance for the wheel and sdist;
-- inspect the rendered release notes and documentation links.
+- the tag resolves to the intended commit and the release is public;
+- downloaded SHA-256 values match `SHA256SUMS` and the upload;
+- package source, README and documents match that commit;
+- installation, import, version and CLI help work;
+- available provenance refers to those distribution hashes and the intended workflow;
+- the page title and translated documentation links are correct.
 
-Record the workflow run, tag commit, asset hashes, and any intentionally skipped
-external integration in the project evidence ledger.
+Record the commit, attachment hashes, checks and rollback location in the project ledger. A rebuilt package needs new provenance; an attestation for an older hash does not verify its replacement.

@@ -4,9 +4,11 @@
 
 [Documentation](en/README.md) · [Project home](../README.md)
 
-Run the default path used by SimNIBS 4.6 (`legacy + nonlinear`) and publish a
-validated tensor/provenance pair into the m2m directory. Recoverable output publication
-failures restore the previous valid pair:
+Commands below assume installation is complete. Replace example file names with your inputs; output directories are created by the workflow. Input and coordinate requirements are described in [Inputs](en/INPUTS.md).
+
+## Complete raw-DWI workflow
+
+The default is legacy correction followed by nonlinear T1 registration. The tensor and its provenance are written to m2m after QA succeeds.
 
 ```bash
 dwi2cond-xp run-pipeline \
@@ -14,8 +16,9 @@ dwi2cond-xp run-pipeline \
   --workers 8
 ```
 
-For reverse-PE acquisition, use the complete TOPUP-to-EDDY workflow rather than
-manually joining standalone artifacts:
+## Reverse-phase-encoding data
+
+For a reverse-PE series, the pipeline prepares TOPUP and EDDY together. Readout time is in seconds; PE directions refer to the internal FSL axes.
 
 ```bash
 dwi2cond-xp run-pipeline \
@@ -25,14 +28,18 @@ dwi2cond-xp run-pipeline \
   --readout-seconds 0.05 --phase-encoding-direction y --workers 8
 ```
 
-An official-style pre-fitted tensor enters the same T1, output publication, and QA workflow:
+## Pre-fitted tensor
+
+Import a tensor ordered `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz` and run the same T1 mapping and QA stages.
 
 ```bash
 dwi2cond-xp run-prefit-pipeline \
   DTI_tensor.nii.gz m2m_subject workflow_outputs --workers 8
 ```
 
-Run the FSL-free SimNIBS 4.6 `nomoco` raw-DWI path with eight workers:
+## Nomoco preparation
+
+Use this path when motion, eddy-current and susceptibility correction are unnecessary or have already been handled externally.
 
 ```bash
 dwi2cond-xp preprocess-nomoco \
@@ -40,13 +47,11 @@ dwi2cond-xp preprocess-nomoco \
   --workers 8
 ```
 
-This writes `DTI_tensor.nii.gz`, `DTI_FA.nii.gz`, `DTI_sse.nii.gz`, the brain
-and validity masks, and `nomoco_qa.json`. It never creates motion, eddy, or
-field artifacts. A compatible uncompressed `.nii` is verified blockwise and
-used directly by mmap; `.nii.gz` is decoded once to a shared uncompressed
-intermediate. The selected strategy is recorded in QA.
+Outputs include tensor, FA, SSE, brain and validity masks, and `nomoco_qa.json`. The aligned b0 mean is used to build the reference; its transforms are not applied to diffusion volumes.
 
-Run the legacy correction path with motion-aware gradient rotation (the v0.4.0 default):
+## Legacy motion/eddy correction
+
+Run the two-pass correction with motion-aware gradient rotation:
 
 ```bash
 dwi2cond-xp preprocess-legacy \
@@ -54,15 +59,11 @@ dwi2cond-xp preprocess-legacy \
   --workers 8 --bvec-mode corrected
 ```
 
-This writes the corrected DWI and mean, every final volume transform, nodif and
-brain mask, tensor/FA/SSE and validity outputs, and `legacy_qa.json`.
-`--bvec-mode compat46` skips motion-induced gradient rotation for upstream
-comparison. The default physical component mode still transforms the gradients
-when storage axes change; add `--component-mode simnibs46-literal` to retain
-the old component behavior as well. See [v0.4.0 migration](en/RELEASE_NOTES_v0.4.0.md).
+Outputs include the corrected DWI, final volume transforms, nodif and mask, tensor maps and `legacy_qa.json`. `--bvec-mode compat46` omits motion rotation; add `--component-mode simnibs46-literal` only when comparing storage-component behavior with the upstream script.
 
-Prepare a fixed GRE/FUGUE correction from an already scaled rad/s fieldmap and
-compose its signed world-mm displacement into the legacy command:
+## GRE fieldmap
+
+Prepare an already unwrapped rad/s field and use its displacement with legacy correction:
 
 ```bash
 dwi2cond-xp prepare-fieldmap \
@@ -74,10 +75,11 @@ dwi2cond-xp preprocess-legacy \
   --fieldmap-corrected-mask fieldmap_out/corrected_mask.nii.gz --workers 8
 ```
 
-Raw wrapped Siemens phase still requires PRELUDE and is rejected by this fixed
-rad/s branch.
+Dwell time is in milliseconds. The output displacement uses signed world millimetres and accompanies its corrected mask. Wrapped phase needs external unwrapping first.
 
-Estimate the fixed reverse-PE TOPUP field without an FSL runtime dependency:
+## Standalone TOPUP
+
+Estimate the fixed reverse-PE field from matching b0 images:
 
 ```bash
 dwi2cond-xp prepare-topup \
@@ -85,14 +87,11 @@ dwi2cond-xp prepare-topup \
   --readout-seconds 0.05 --phase-encoding-direction y --workers 8
 ```
 
-This writes the field, spline coefficients, movement parameters, corrected
-pair, joint validity mask, and `topup_qa.json`. The legacy project names are
-retained, and `topup_fieldcoef.nii.gz` plus `topup_movpar.txt` form an
-FSL-readable `--topup=topup` bundle with the official cubic-spline intent
-metadata. Only the x/y single-axis subset accepted by FSL 6.0.4 TOPUP is
-supported; z phase encoding fails explicitly.
+The output contains a Hz field, spline coefficients, motion parameters, corrected images, mask and QA. `topup_fieldcoef.nii.gz` and `topup_movpar.txt` also form an FSL-readable prefix bundle. Supported PE axes are x and y, with either sign.
 
-Run the fixed single-shell EDDY path, optionally composing the TOPUP field:
+## Standalone EDDY
+
+Run the fixed single-shell path with an optional prepared TOPUP field:
 
 ```bash
 dwi2cond-xp prepare-eddy \
@@ -101,12 +100,11 @@ dwi2cond-xp prepare-eddy \
   --susceptibility-field topup_out/field_hz.nii.gz
 ```
 
-The command writes corrected DWI, prediction-replaced scan-space data, 16
-parameters per volume, rotated b-vectors, outlier map, shell alignment,
-iteration histories, and `eddy_qa.json`. Omitting `--susceptibility-field`
-selects the same fixed EDDY algorithm without a TOPUP field.
+Omit `--susceptibility-field` to run without TOPUP. Outputs include corrected and prediction-replaced DWI, 16 parameters per volume, rotated gradients, outlier/shell-alignment files, iteration histories and QA.
 
-Fit a preprocessed single-shell DWI:
+## Fit preprocessed DWI
+
+Use a same-grid mask and gradients corresponding to the processed volumes. The gradient-deviation option is optional.
 
 ```bash
 dwi2cond-xp fit-dti \
@@ -117,8 +115,11 @@ dwi2cond-xp fit-dti \
   --qa-json tensor_fit_qa.json
 ```
 
-Map the tensor to the CHARM T1 grid. The example assumes alignment only because
-the alignment was established externally:
+For multishell data, select one shell explicitly. Near-zero b-values can be included with `--b0-threshold`; see [Inputs](en/INPUTS.md).
+
+## Apply an existing alignment
+
+This example assumes an external process has already aligned DWI and T1 world coordinates:
 
 ```bash
 dwi2cond-xp register-tensor \
@@ -129,7 +130,20 @@ dwi2cond-xp register-tensor \
   --qa-json tensor_registration_qa.json
 ```
 
-Validate a C3-to-C4 anisotropic simulation without starting the solver:
+Otherwise supply the input-world-to-reference-world affine with `--world-transform`, or estimate registration using the next command.
+
+## Automatic affine registration
+
+Estimate FA-to-T1 alignment and produce registered tensors and QA:
+
+```bash
+dwi2cond-xp register-t1 dti_outputs m2m_subject t1_registration_outputs \
+  --mode affine --workers 8
+```
+
+## Fixed-montage FEM
+
+Prepare a C3-to-C4 simulation without starting the solver:
 
 ```bash
 dwi2cond-xp simulate-tdcs m2m_subject simulation_outputs \
@@ -140,27 +154,11 @@ dwi2cond-xp simulate-tdcs m2m_subject simulation_outputs \
   --cpus 8 --dry-run
 ```
 
-Remove `--dry-run` to execute SimNIBS. Run `scalar`, `vn`, `dir`, and `mc`
-separately; each mode has its own output directory and manifest. An anisotropic
-mode never silently falls back to `scalar` when its tensor is missing.
+Remove `--dry-run` to solve. Run `scalar`, `vn`, `dir` and `mc` in separate output directories. Each run exports a T1-grid vector NIfTI ordered `Ex,Ey,Ez`, masked to WM/GM/CSF labels 1, 2 and 3. Magnitude is `sqrt(Ex^2 + Ey^2 + Ez^2)`.
 
-Each simulation exports one T1-grid vector E-field NIfTI with final axis
-`Ex,Ey,Ez`. Magnitude is computed as `sqrt(Ex^2 + Ey^2 + Ez^2)`. Subject-volume
-outputs are strictly masked to WM, GM, and CSF labels `1,2,3`; skull, scalp,
-electrodes, and extracranial tissues are excluded.
+## Compare electric fields
 
-## Automatic affine registration
-
-Estimate the FA-to-T1 affine and create registered tensors and QA outputs:
-
-```bash
-dwi2cond-xp register-t1 dti_outputs m2m_subject t1_registration_outputs \
-  --mode affine --workers 8
-```
-
-## Comparing electric fields
-
-Use the four vector fields to draw a shared-scale component figure:
+Draw the four vector fields with a shared component scale:
 
 ```bash
 dwi2cond-xp compare-fields \
@@ -170,5 +168,14 @@ dwi2cond-xp compare-fields \
   --view components --plane axial --mask-labels 1 2 3
 ```
 
-Rows are `Ex/Ey/Ez`, columns are `scalar/vn/dir/mc`, and all panels use one
-symmetric color scale. The slice is selected by maximum brain-mask area.
+Rows are `Ex/Ey/Ez`, columns are `scalar/vn/dir/mc`. The selected slice has the largest brain-mask area. See [SimNIBS integration](en/SIMNIBS_INTEGRATION.md) for lead-field output conventions.
+
+## CPU and CUDA
+
+CPU is the default. To use both optional CUDA backends for nonlinear registration:
+
+```bash
+dwi2cond-xp run-pipeline raw_dwi.nii.gz bvals bvecs m2m_subject workflow_gpu --fnirt-device cuda --ppd-device cuda --workers 8
+```
+
+FNIRT needs Numba CUDA; PPD additionally needs CuPy. The same options apply to `register-t1-nonlinear` and `run-prefit-pipeline`. LM/PCG and file writing remain on CPU. See [Reproducibility](en/REPRODUCIBILITY.md) for dependencies.

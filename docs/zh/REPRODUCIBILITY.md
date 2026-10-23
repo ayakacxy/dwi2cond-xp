@@ -4,79 +4,86 @@
 
 [文档目录](README.md) · [项目首页](../../README.zh-CN.md)
 
-## 环境准备
+## 干净环境
 
-完整流程可安装到已经验证的 SimNIBS 4.6.0 环境中：
+使用 Python 3.11，数值栈固定为 NumPy 2.3.0 和 Numba 0.64.0。SimNIBS 集成流程要求 SimNIBS 4.6.0，张量处理核心可独立运行。
+
+在已有 SimNIBS 环境中，从[对应发布页面](https://github.com/ayakacxy/dwi2cond-xp/releases/tag/v0.4.0)下载 wheel，保留现有依赖安装：
 
 ```bash
 conda activate simnibs
 python -m pip install --no-deps dwi2cond_xp-0.4.0-py3-none-any.whl
 python -c "import simnibs, dwi2cond_xp; assert simnibs.__version__ == '4.6.0'"
+python -m pip check
 ```
 
-使用对应 GitHub Release 中的 v0.4.0 wheel。
-在该冻结环境中进行源码开发，可将 wheel 安装命令改为
-`python -m pip install --no-deps -e .`。该方式保留既有依赖版本，请确认其与已验证版本一致。
-
-也可创建独立环境：
+`--no-deps` 假设环境已具备所需依赖版本。新建完整流程环境时使用仓库提供的环境文件：
 
 ```bash
 conda env create -f environment.yml
 conda activate dwi2cond-xp-simnibs46
-python -m pip install -e '.[test,release,viz]'
-python -m pip check
-ruff check src tests tools scripts
-pytest -q tests/test_tensor_fit.py
-python scripts/check_markdown_links.py
-python scripts/verify_version.py
-python -m build
-```
-
-开发中优先运行与修改有关的测试。发布前，或修改共用数值计算内核后，运行包含 Numba
-代码覆盖率的完整检查：
-
-```bash
-python scripts/run_coverage.py
-```
-
-该命令在隔离的 Numba 缓存中运行单元测试和真实合成 TOPUP/EDDY/FNIRT 完整流程，合并
-覆盖率并要求达到 100%，因此比局部测试耗时更长。
-
-将 wheel 安装到全新的 Python 3.11 环境后检查：
-
-```bash
+python -m pip install -e .
 dwi2cond-xp --help
-dwi2cond-xp fit-dti --help
-dwi2cond-xp register-tensor --help
-dwi2cond-xp simulate-tdcs --help
 ```
 
-核验发布文件时，从同一 GitHub Release 下载 wheel、源码包、SBOM 和 `SHA256SUMS`
-到新目录。运行 `sha256sum -c SHA256SUMS`，在新环境安装下载的 wheel，并检查导入与
-命令行。tag 工作流还检查 Twine、wheel 内容、归档中的隐私数据、依赖、构建来源和 SBOM。
+仅使用核心时，可以创建 Python 3.11 虚拟环境并安装基础包：
+
+```bash
+python -m venv .venv
+```
+
+Linux/macOS 使用 `source .venv/bin/activate` 激活，Windows PowerShell 使用 `.venv\Scripts\Activate.ps1`，然后执行 `python -m pip install .`。
+
+### 开发与构建
+
+开发及发布工具通过 `.[test,release,viz]` 安装。开发时运行 Ruff 和受影响模块的测试；文档修改检查链接、版本与示例。完整数值检查为 `python scripts/run_coverage.py`，包含单元测试及合成 TOPUP/EDDY/FNIRT CLI 流程，并要求 100% 语句覆盖率。
+
+构建 wheel 和源码包：
+
+```bash
+python -m build --outdir .work/package/dist
+python -m twine check .work/package/dist/*
+python scripts/build_release_metadata.py --dist .work/package/dist
+python scripts/verify_release.py --dist .work/package/dist
+```
+
+构建或性能测试可使用项目内的临时目录和缓存。Linux/macOS 设置示例：
+
+```bash
+mkdir -p .work/package/tmp .work/package/cache
+export TMPDIR="$PWD/.work/package/tmp" TMP="$PWD/.work/package/tmp" TEMP="$PWD/.work/package/tmp"
+export XDG_CACHE_HOME="$PWD/.work/package/cache"
+export PIP_CACHE_DIR="$XDG_CACHE_HOME/pip"
+export NUMBA_CACHE_DIR="$XDG_CACHE_HOME/numba"
+export MPLCONFIGDIR="$XDG_CACHE_HOME/matplotlib"
+```
+
+Windows PowerShell：
+
+```powershell
+$workDir = Join-Path (Get-Location) ".work/package"
+New-Item -ItemType Directory -Force "$workDir/tmp", "$workDir/cache" | Out-Null
+$env:TMPDIR = $env:TMP = $env:TEMP = "$workDir/tmp"
+$env:XDG_CACHE_HOME = "$workDir/cache"
+$env:PIP_CACHE_DIR = "$workDir/cache/pip"
+$env:NUMBA_CACHE_DIR = "$workDir/cache/numba"
+$env:MPLCONFIGDIR = "$workDir/cache/matplotlib"
+```
+
+发布附件包含 wheel、源码包、CycloneDX SBOM 和 `SHA256SUMS`。下载后核对摘要，在独立环境中安装 wheel，检查导入与 CLI 帮助。发布步骤见[发布流程](RELEASE_PROCESS.md)。
 
 ## CPU 与可选 CUDA
 
-FNIRT Hessian 组装和 PPD 均默认使用 CPU，不需要 CuPy 或 CUDA 设备。
-非线性配准及 pipeline 命令提供两个独立选项：`--fnirt-device cuda` 和
-`--ppd-device cuda`。前者使用 Numba CUDA，后者还需要兼容的 CuPy。
-CPU wheel 和环境文件不会安装这些 GPU 依赖。
+FNIRT Hessian 装配和 PPD 默认使用 CPU，不需要 CuPy 或 CUDA 设备。`--fnirt-device cuda` 需要 Numba CUDA、可用 NVIDIA 驱动和兼容的 CUDA 工具包；`--ppd-device cuda` 还需要兼容的 CuPy。这些依赖不随基础包安装。
 
-实际验证环境为 Linux、RTX 2080 Ti、CUDA 12.8、Numba 0.64.0 和 CuPy 14.2.0。
-这是已测运行环境，不是干净环境安装步骤或 macOS/Windows GPU 认证。
-显式 CUDA 执行失败会终止；无 GPU 时选择 `cpu`。细节见[方法](METHODS.md)和
-[v0.4.0 发布说明](RELEASE_NOTES_v0.4.0.md)。
+已有 CUDA 测量环境为 Linux、RTX 2080 Ti、CUDA 12.8、Numba 0.64.0 和 CuPy 14.2.0。这些信息用于标明测试环境；CPU 平台检查与 GPU 测量分别列在[验证记录](VALIDATION.md)和[性能报告](BENCHMARKS.md)。
 
 ## 参考工具
 
-CI 不下载 FSL。可选 FSL 数值比较要求调用者配置本地 FSL 6.0.4；缺失时必须明确报告
-跳过。SimNIBS 集成测试要求版本精确为 4.6.0。
+可选数值对照使用本地安装的 FSL 6.0.4 和 SimNIBS 4.6.0。CI 不下载 FSL，运行流程也不调用 FSL。外部工具不可用时，参考测试会报告跳过。源码摘要和对照产物见[FSL 参考说明](FSL_REFERENCE.md)。
 
 ## 真实数据
 
-复现真实数据结果需按原数据条款获得扩散与解剖影像，选择受支持的预处理方式，并用
-SimNIBS 4.6 CHARM 生成头模型。固定子集以外的输入（如需 PRELUDE 的缠绕相位）应先
-用合适的外部工具处理。不要向 issue 上传可识别个人身份或受控访问的医学影像。
+按原始条款获取扩散与结构数据，准备所选流程需要的 CHARM 头模型。记录输入摘要、形状、壳层选择、掩膜、梯度、坐标选项、求解器、线程数、软件版本、命令及 QA 输出。
 
-每次科学复现应记录软件版本、DWI 形状与壳层、掩膜、张量顺序、世界坐标变换、插值阶数、
-电导率模式、求解器、CPU 数、输出哈希和 QA JSON。
+性能对照应使用相同输入，并说明是否计入进程启动、JIT 编译、缓存、QA、发布和 FEM。重复运行与首次调用分别报告，不同配置的数据和输出分别保存。既有测量见[性能报告](BENCHMARKS.md)。

@@ -4,12 +4,10 @@
 
 [Documentation](README.md) · [Project home](../../README.md)
 
-Use GitHub Discussions for usage questions and the issue templates for
-reproducible bugs, performance reports, or feature requests. Include the package
-version, Python and SimNIBS versions, operating system, preprocessing and
-registration modes, worker count, command, synthetic input description,
-traceback, and QA manifest when safe.
+Use [GitHub Discussions](https://github.com/ayakacxy/dwi2cond-xp/discussions) for installation and usage questions. Use the repository's [issue templates](https://github.com/ayakacxy/dwi2cond-xp/issues/new/choose) for bugs, performance problems and feature requests.
 
-Do not upload human MRI data, subject identifiers, credentials, or private
-absolute paths. This community project is independent of the SimNIBS and FSL
-teams; questions about those upstream tools should use their support channels.
+Include the package version, operating system, Python and SimNIBS versions, selected preprocessing and registration modes, worker count, exact command and complete error text. A small synthetic example is the easiest way to reproduce a problem. For performance reports, also give image dimensions, cache state and the steps included in the timer.
+
+Remove patient data, credentials and private paths before sharing logs or QA files. English and Chinese reports are both welcome. Security concerns should follow [the security policy](SECURITY.md).
+
+For behavior of SimNIBS or FSL outside this package, contact the relevant upstream project.

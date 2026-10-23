@@ -1,23 +1,15 @@
-## Summary / 修改说明
+## Summary
 
-Describe the user-visible and scientific change. / 说明对使用方式和科学计算的影响。
+Describe the problem and the resulting behavior. Link related issues.
 
-## Validation / 验证
+## Checks
 
-- [ ] `ruff check src tests tools scripts`
-- [ ] `python scripts/run_coverage.py`
-- [ ] Numerical reference comparison added or updated when applicable / 按需补充数值参考比较
-- [ ] Timing boundary and hardware recorded for performance claims / 性能结论附计时范围和硬件
-- [ ] Paired English/Chinese guides and local links checked / 已同步中英文文档并检查链接
+List the checks relevant to this change. Documentation changes need link and example review; numerical changes need same-input comparisons and the affected tests. Performance claims should include hardware, cache state and timing scope.
 
-## Data and privacy / 数据与隐私
+For scientific changes, describe any effect on coordinates, tensor ordering, resolution, iterations, stopping rules, precision or failure handling.
 
-- [ ] No human MRI, subject identifier, credential, private path, or generated subject output is included / 未包含人类 MRI、被试标识、凭据、私有路径或被试衍生结果
-- [ ] Third-party origin and license are documented for copied or derived material / 引用或衍生材料已说明第三方来源与许可
+## Documentation and data
 
-## Scientific behavior / 科学计算变化
-
-State whether resolution, iterations, stopping conditions, tensor ordering,
-coordinate transforms, floating-point behavior, or failure semantics change.
-
-说明分辨率、迭代次数、停止条件、张量顺序、坐标变换、浮点计算或失败处理是否改变。
+- English and Chinese guides are synchronized.
+- Added material has the required attribution and license notices.
+- Attachments and commits contain no patient data, credentials or generated subject results.

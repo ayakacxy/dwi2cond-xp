@@ -6,19 +6,13 @@
 
 ## SimNIBS
 
-[SimNIBS 4.6.0](https://github.com/simnibs/simnibs/releases/tag/v4.6.0) 是已验证的头模型、
-电导率、FEM 和先导场集成版本，声明许可证为 GPL-3.0-only。本仓库不分发 SimNIBS
-二进制文件、资源、图谱或源码；用户需按环境说明另行安装。
+[SimNIBS 4.6.0](https://github.com/simnibs/simnibs/releases/tag/v4.6.0) 是本项目的电导率、FEM 和先导场集成版本，采用 GPL-3.0-only。项目的电导率转换与集成实现依据其公开行为和数值方法，使用 GPL-3.0-only 许可。
 
-本项目的电导率转换和集成代码旨在复现 SimNIBS 4.6.0 文档所述的行为与数值方法，
-因此项目使用 GPL-3.0-only 许可证。
+SimNIBS 由用户另行安装，本软件包不分发其二进制、资源、图谱或源码。
 
 ## FSL
 
-[FSL 6.0.4](https://fsl.fmrib.ox.ac.uk/fsl/docs/) 仅作为可选的本地数值参考，用于
-SimNIBS 4.6 固定预处理子集的 DTI 拟合、图像操作、运动/涡流校正、GRE/TOPUP/EDDY、
-线性/FNIRT 配准、Jacobian 和 PPD 张量重定向。FSL 不是运行依赖，仓库不包含其源码、
-二进制文件、模型、模板或其他分发材料。FSL 有独立的许可条款及限制，用户应自行查阅。
+[FSL 6.0.4](https://fsl.fmrib.ox.ac.uk/fsl/docs/) 用于可选的本地数值对照，覆盖固定的 DTI 拟合、预处理、配准和 PPD 配置。它不是运行依赖，本软件包不分发 FSL 源码、二进制、模型或模板。FSL 的独立许可条款适用于用户自行安装的参考工具。
 
 ## Human Connectome Project 数据
 
@@ -34,5 +28,4 @@ Neuroscience 支持。另见[HCP 官方引用说明](https://hcp-db.humanconnect
 
 ## Python 依赖
 
-NumPy、SciPy、NiBabel、Numba、threadpoolctl、h5py、Matplotlib、tqdm 和可选 MNE
-均为外部依赖，保留各自许可证。源码和许可文本可从上游项目及包元数据获取。
+NumPy、SciPy、NiBabel、Numba、threadpoolctl、h5py、Matplotlib、tqdm 和可选 MNE 均作为外部依赖安装，保留各自许可。源码和许可文本可从上游项目及各包元数据获取。

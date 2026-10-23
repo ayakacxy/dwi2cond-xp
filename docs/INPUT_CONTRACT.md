@@ -4,230 +4,87 @@
 
 [Documentation](en/README.md) · [Project home](../README.md)
 
-The defaults below describe the `v0.4.0` implementation.
-See [v0.4.0 migration](en/RELEASE_NOTES_v0.4.0.md) for changes from the earlier
-coordinate conventions. The released `v0.3.0` validation remains a separate historical record.
+The pipeline accepts raw single-shell DWI, preprocessed DWI, or a fitted six-component tensor. Use the input path that matches the processing already performed on your data.
+
+## Required files
+
+| Input | Requirements |
+| --- | --- |
+| DWI | Finite 4-D NIfTI, with b-values and b-vectors in the same volume order |
+| Gradients | One b-value and one vector per volume; b-vectors may be `3×N` or `N×3` |
+| Brain mask | Same spatial shape and affine as the image it masks |
+| Gradient deviation | Optional HCP/FSL nine-component `grad_dev` image on the original DWI grid |
+| Fitted tensor | Finite `(X,Y,Z,6)` NIfTI ordered `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz` |
+| Head model | SimNIBS 4.6 CHARM `m2m_<subject>` directory with T1 and segmentation outputs |
+
+The tensor model fits exact b=0 volumes plus one nonzero shell. For multishell data, select a shell explicitly with `select-shell` or `fit-dti --shell`. Standalone `fit-dti --b0-threshold` can include near-zero b-values; raw-DWI pipeline commands use exact b=0 selection. These choices are independent of `strict-fsl` and `robust` fitting policies.
 
 ## Raw DWI without correction
 
-`preprocess-nomoco` implements the SimNIBS 4.6 `nomoco` path. It reorients the
-NIfTI storage with the FSL/NewNifti float32 Gram-Schmidt, signed-permutation,
-and strict tie-breaking rules, registers only the exact `b=0` volumes to construct their mean
-and brain mask, applies the official nonnegative threshold only at the final
-fit boundary, and then runs WLS fitting. It does not apply the estimated b0 transforms to the DWI and
-does not estimate motion, eddy-current, or susceptibility fields.
+`preprocess-nomoco` constructs an aligned b0 mean and brain mask, then fits the DWI. It does not apply the b0 transforms to the diffusion volumes or correct their motion, eddy currents or susceptibility distortion. Choose this path only when that behavior is appropriate for the acquisition.
 
-The DWI, b-values, and b-vectors must describe the same ordered volumes. The
-strict single-tensor model accepts every volume only after validating one
-nonzero shell; multishell data is never selected or fitted silently. Optional `grad_dev` must match the original DWI grid
-and is storage-reoriented with the DWI before fitting. With the default
-`--component-mode physical`, b-vectors and column-major HCP/FSL `grad_dev`
-components are transformed into the reoriented image's FSL basis as well.
+Storage reorientation follows the FSL/NewNifti float32 Gram–Schmidt and signed-permutation rules. Physical component handling also transforms b-vectors and column-major `grad_dev` matrices into the reoriented FSL basis. The nonnegative signal threshold is applied at the final fitting boundary.
 
-An uncompressed `.nii` is used directly only after blockwise verification that
-it is float32, in the required FSL storage orientation, finite, and nonnegative.
-Otherwise, including for every `.nii.gz` input, normalization performs one
-decode and writes one uncompressed `DWIforfit.nii` for process-shared mmap. The
-chosen strategy and whether an intermediate was materialized are recorded in
-`nomoco_qa.json`.
+A canonical, uncompressed float32 `.nii` with finite, nonnegative values can be read directly by mmap after blockwise verification. Other inputs, including `.nii.gz`, are normalized once to `DWIforfit.nii`. The chosen strategy is recorded in `nomoco_qa.json`.
 
-## Raw DWI with SimNIBS legacy correction
+## Motion and distortion correction
 
-`preprocess-legacy` accepts the same ordered DWI, b-values, b-vectors, optional
-gradient-deviation image, and explicit single-shell fitting parameters. For
-SimNIBS 4.6 compatibility, b0 selection and `b>0` means use exact zero and
-strictly positive b-values rather than a configurable near-zero threshold.
+### Legacy correction
 
-The pipeline runs the two MCFLIRT-compatible 6/12-DOF passes, registers the
-corrected diffusion mean to nodif, replaces b0 transforms with direct 6-DOF
-registrations, composes all transforms, and performs one final sinc resampling
-per original volume. Temporary resampling used to construct the two reference
-means is not reused as final output. Failure aborts the legacy mode and never
-falls back to `nomoco`.
+`preprocess-legacy` uses two 6/12-DOF correction passes, aligns the corrected diffusion mean to nodif, and substitutes direct 6-DOF b0 registrations. It composes the final transforms and performs one final sinc interpolation per original volume.
 
-`--bvec-mode corrected` is the default. It rotates nonzero-shell vectors in
-the FSL scaled-mm basis with the finite-strain rotation of each final affine
-and restores unit length. Storage-axis changes are handled before this motion
-rotation. Explicit `--bvec-mode compat46` omits motion rotation; with physical
-components it still transforms vectors for storage-axis changes. The original
-file is byte-copied only with `--component-mode simnibs46-literal` or an
-identity storage transform.
+The default `--bvec-mode corrected` applies the finite-strain rotation of each final motion affine in the FSL scaled-mm basis, then normalizes the nonzero-shell vectors. `compat46` omits motion rotation. Storage-axis changes still transform vectors unless `--component-mode simnibs46-literal` is selected or the storage transform is the identity.
 
-An optional prepared `--fieldmap-displacement` must be an `(X,Y,Z,3)` finite displacement
-on the DWI grid, expressed in moving-world millimetres. It is composed with the
-affine pull coordinates before the single final interpolation and must be paired
-with its corrected brain mask. The complete workflow can instead accept the
-magnitude, already-unwrapped radians-per-second field, dwell, and PE direction
-as one raw GRE bundle and prepare both artifacts in the same cached workflow.
+### GRE fieldmap
 
-`prepare-fieldmap <magnitude> <field_radians_per_second> <b0_brain>
-<output_directory>` implements the SimNIBS 4.6 GRE/FUGUE branch for an already
-scaled rad/s fieldmap. `--dwell-ms` and
-`--phase-encoding-direction {x,x-,y,y-,z,z-}` are mandatory. Optional magnitude
-and b0 masks must match their respective grids. The voxel-shift output is in
-voxels; `displacement_world_mm.nii.gz` is the signed NIfTI-world pull field for
-`preprocess-legacy --fieldmap-displacement`. Raw wrapped Siemens phase is not
-accepted because PRELUDE unwrapping is outside this fixed branch.
+`prepare-fieldmap` accepts a magnitude image, an already unwrapped field in radians per second and a b0 brain image. Supply `--dwell-ms` and the phase-encoding direction. Optional masks must match their respective image grids. Wrapped Siemens phase requires external unwrapping before this command.
 
-Phase-encoding `x/y/z` flags name the FSL internal axes after storage
-reorientation; original NIfTI/BIDS `i/j/k` axes are not remapped automatically.
+The prepared displacement has shape `(X,Y,Z,3)`, uses signed NIfTI-world millimetres and must match the DWI grid. Pass it to `preprocess-legacy --fieldmap-displacement` together with its corrected mask. The complete pipeline can prepare both outputs from the GRE bundle.
 
-`prepare-topup <forward_b0> <reverse_b0> <output_directory>` implements the
-fixed SimNIBS 4.6 `b02b0_nosubsamp.cnf` path. Both inputs must be finite 3-D
-NIfTIs with identical shape and affine. `--readout-seconds` must be positive,
-and `--phase-encoding-direction` is limited to `x`, `x-`, `y`, or `y-` because
-FSL 6.0.4 TOPUP rejects z phase encoding. The command writes the Hz field,
-float32 spline coefficients, six movement parameters per scan, corrected pair,
-joint mask, and QA JSON. It preserves `field_coefficients.nii.gz` and
-`movement_parameters.txt`, and also writes the FSL prefix bundle
-`topup_fieldcoef.nii.gz`/`topup_movpar.txt`. The coefficient NIfTI uses cubic
-TOPUP intent code 2016 with the source voxel sizes in `intent_p1..p3`; the
-bundle was exercised through the real FSL 6.0.4 `applytopup` reader. Any
-failure aborts; no alternative field estimator is selected silently.
+### Reverse-PE TOPUP and EDDY
 
-`prepare-eddy <dwi> <bvals> <bvecs> <brain_mask> <output_directory>` implements
-the fixed SimNIBS 4.6 single-shell EDDY path. The DWI and mask must share shape
-and affine; b-values and either 3xN or Nx3 b-vectors must match the ordered volumes. The
-nonzero b-values must form one shell, `--readout-seconds` must be positive, and
-phase encoding may be `x`, `x-`, `y`, `y-`, `z`, or `z-`. An optional
-`--susceptibility-field` is a finite Hz NIfTI on the DWI grid. The command uses
-prediction-based slice replacement by default, records the deterministic random
-seed, writes corrected and outlier-free DWI, 16 parameters per volume, rotated
-b-vectors, outlier and shell-alignment artifacts, iteration histories, and QA.
-`--no-repol` and `--no-rigid-shell-alignment` are explicit fixed-path controls;
-no failed optimized path silently falls back.
+`prepare-topup` takes two finite 3-D b0 images with identical shape and affine. Readout time must be positive. Supported PE directions are `x`, `x-`, `y` and `y-`, matching the fixed FSL 6.0.4 TOPUP subset.
 
-When `run-pipeline` receives a reverse-PE 4-D image, it storage-reorients the
-series, performs the official rigid alignment and temporal mean, estimates
-TOPUP, creates the EDDY mask from TOPUP's first corrected b0 with the official
-BET fraction, and passes the complete TOPUP products into EDDY. Because FSL
-6.0.4 TOPUP rejects z phase encoding, this combined branch remains limited to
-x/y directions even though no-TOPUP EDDY accepts z.
+`prepare-eddy` takes a DWI, matching gradients and a same-grid brain mask. It accepts one nonzero shell and positive readout time. Without TOPUP, EDDY also accepts `z` and `z-`. An optional susceptibility field must be finite, measured in Hz and on the DWI grid.
 
-Without reverse PE, `run-pipeline --preprocessing-mode eddy` constructs the
-canonical exact-b0 aligned nodif and BET `f=0.2` mask inside the raw-DWI workflow.
-An explicitly supplied `--dwi-brain-mask` remains an extension and its source
-is recorded in the stage manifest; it is never silently substituted.
+For a reverse-PE 4-D series, `run-pipeline` performs storage reorientation, rigid alignment and averaging, estimates TOPUP, creates the EDDY mask from the first corrected b0, and passes the TOPUP products into EDDY. This combined path supports x/y PE directions. Without reverse PE, the pipeline constructs an exact-b0 mean and BET `f=0.2` mask. An explicit `--dwi-brain-mask` overrides that mask and is recorded in the stage manifest.
 
-## Preprocessed DWI
+PE flags name FSL internal axes after storage reorientation. Original NIfTI/BIDS `i/j/k` directions are not converted automatically. See [command examples](en/USAGE.md).
 
-The DWI must already have motion, eddy-current, and susceptibility/EPI
-distortion corrections appropriate for its acquisition. The b-vectors must have
-been rotated consistently with motion correction. The DWI, brain mask, b-values,
-and b-vectors must describe the same ordered volumes.
+## Preprocessed DWI and fitted tensors
 
-By default, DTI fitting validates exact b0 plus one nonzero shell and uses all
-supplied volumes. For multishell data, select a shell explicitly with
-`select-shell`, `fit-dti --shell`, or an equivalent recorded step. Standalone
-`fit-dti` also accepts `--b0-threshold` for near-zero b-values; both options are
-independent of `strict-fsl`/`robust`. The complete raw-DWI pipeline retains the
-default exact-b0, single-shell settings. No command silently chooses b1000 or
-fits one tensor to multiple nonzero shells.
+For `fit-dti`, supply data with the motion and distortion corrections needed for its acquisition. Its gradients must include the corresponding motion rotations. Keep the DWI, gradients and mask aligned throughout preprocessing.
 
-The optional `grad_dev` NIfTI uses the HCP/FSL nine-component convention and
-must match the DWI spatial shape and affine.
+`run-prefit-pipeline` imports the six-component tensor, performs storage reorientation and tensor decomposition, and joins the T1 registration and QA workflow. A fitting validity mask should accompany the tensor when available. Physical component handling preserves tensor directions during storage changes.
 
-## Diffusion tensor
+## Coordinates and compatibility options
 
-Tensor NIfTIs have shape `(X,Y,Z,6)` with final-axis ordering
-`Dxx,Dxy,Dxz,Dyy,Dyz,Dzz`. Values must be finite. A validity mask should be
-carried forward from fitting or supplied by the external producer.
+| Option | Default | Comparison behavior |
+| --- | --- | --- |
+| `--bvec-mode` | `corrected` | `compat46` omits motion-induced rotation |
+| `--component-mode` | `physical` | `simnibs46-literal` keeps storage-only component handling |
+| `--jacobian-mode` | `physical` | `simnibs46-literal` uses per-voxel PPD derivatives |
+| `--basis-mode` | `physical` | `simnibs46-literal` uses the upstream affine normalization |
+| `--eigensystem-mode` | `stable` | `simnibs46-literal` uses the upstream general eigensolver |
 
-`run-prefit-pipeline` accepts an official-style pre-fitted tensor, performs the
-storage reorientation and `fslmaths -tensor_decomp` semantics, then joins
-the same T1 registration, output publication, and QA workflow without requiring raw DWI.
-The default `--component-mode physical` also transforms tensor components to
-preserve their physical direction; `simnibs46-literal` preserves the upstream
-storage-only behavior.
-
-## Compatibility modes
-
-`strict-fsl` is the default for fitting and nonlinear PPD. It preserves the
-FSL-compatible input handling and fails explicitly where FSL itself aborts or
-where a fold/singular active-support transform has no valid tensor result.
-`robust` is a separate opt-in policy that excludes invalid fit voxels and
-zero-fills unsafe nonlinear locations. The selected mode is recorded in stage
-parameters and is never changed through silent fallback.
-
-These validity policies are independent of the coordinate and decomposition
-options. Commands exposing these options default to `--bvec-mode corrected`, `--component-mode physical`,
-`--jacobian-mode physical`, `--basis-mode physical`, and
-`--eigensystem-mode stable`. To compare the old upstream behavior explicitly,
-select `compat46` for b-vectors and `simnibs46-literal` for the other four modes.
-The selected modes are recorded in QA and stage parameters.
+These options are independent. `strict-fsl`, the default validity policy, reports invalid fits and unsafe nonlinear transforms as errors where required. Opt-in `robust` excludes invalid fit voxels and zero-fills unsafe nonlinear locations, recording them in QA. Neither policy changes the coordinate options.
 
 ## T1 alignment
 
-`register-t1 <dti_directory> <m2m_directory> <output_directory>` automatically
-reproduces the SimNIBS 4.6 linear T1-registration steps. `--mode affine`
-(default) estimates the 12-DOF FA-to-T1 transform and a separate 6-DOF QA
-transform; `--mode rigid` uses 6 DOF. The command requires `DTI_tensor.nii.gz`
-and `DTI_FA.nii.gz`, plus CHARM `T1.nii.gz`, `segmentation/labeling.nii.gz`,
-`segmentation/T1_bias_corrected.nii.gz`, and `final_tissues.nii.gz`. Optional
-`DTI_sse.nii.gz` adds SSE QA. Registration failure aborts and never implies
-alignment or falls back to `--assume-aligned`.
+`register-t1` estimates an affine from `DTI_FA.nii.gz` and maps `DTI_tensor.nii.gz` to T1. It requires CHARM `T1.nii.gz`, `segmentation/labeling.nii.gz`, `segmentation/T1_bias_corrected.nii.gz` and `final_tissues.nii.gz`. Optional `DTI_sse.nii.gz` adds SSE QA. Default affine registration uses 12 DOF and an independent 6-DOF QA transform; rigid mode uses 6 DOF.
 
-`register-tensor` applies a caller-supplied input-world to reference-world 4x4
-affine and finite-strain tensor reorientation. It does not estimate that affine.
-If external preprocessing already established a shared world coordinate system,
-the caller may explicitly pass `--assume-aligned`.
+`register-tensor` applies a supplied input-world-to-reference-world 4×4 affine; it does not estimate one. Use `--assume-aligned` only after external processing has established shared world coordinates. Images from the same subject are not necessarily aligned.
 
-`register-t1-nonlinear <fa> <tensor> <reference> <affine_matrix>
-<output_directory>` runs the fixed SimNIBS 4.6 FNIRT subset and nonlinear PPD
-tensor reorientation. `--brain-mask` is mandatory and is applied after PPD,
-matching the official T1 masking behavior. The command writes the spline coefficients, dense deformation,
-local Jacobians, registered tensor/FA/V1, validity mask, and QA. Folded or
-near-singular regions are reported explicitly, and failure never falls back to
-an affine result. Do not use `--assume-aligned` merely because DWI and T1 belong
-to the same participant;
-same-subject acquisitions can still differ by motion, distortion, resolution,
-orientation, and scanner coordinates.
+`register-t1-nonlinear` runs the fixed FNIRT schedule and PPD reorientation. A brain mask is required and applied after PPD. It writes coefficients, deformation, Jacobians, tensor/FA/V1, validity mask and QA. Folded or near-singular locations are handled by the selected validity policy.
 
-Affine registration and dense nonlinear tensor inputs use header `pixdim` for
-FSL sampling and the active affine for world coordinates. They support valid
-files whose sform scaling differs from `pixdim`. Raw preprocessing and FNIRT
-estimation/coefficient expansion currently require these scales to agree and
-reject a mismatch explicitly; resample such inputs onto an explicitly defined
-grid before using those paths.
+FSL sampling uses header `pixdim`; world coordinates use the active affine. Affine and dense-warp paths support different scales in these fields. Raw preprocessing and FNIRT estimation/coefficient expansion require the scales to agree. Resample mismatched inputs to an explicit grid before using those paths.
 
-Nonlinear tensor commands default to `--jacobian-mode physical`: displacement
-gradients are divided by the target voxel sizes, and PPD and fold QA use the
-same physical Jacobian. `simnibs46-literal` retains the old per-voxel PPD
-derivative for comparison, including its resolution dependence.
+Physical PPD uses millimetre displacement derivatives with target voxel sizes. Fold QA uses the physical Jacobian in both PPD modes. The physical conductivity basis normalizes affine columns separately and rejects shear.
 
-## CHARM mask and output
+## CHARM outputs and conductivity
 
-The compatible brain mask follows the SimNIBS `dwi2cond` labeling interval
-1 through 499. The final tensor is written to the T1 grid and placed at
-`m2m_<subject>/DTI_coregT1_tensor.nii.gz` for SimNIBS integration.
+T1 workflows require `final_tissues.nii.gz`, including runs with FEM disabled. The final tensor uses the T1 grid and is written to `m2m_<subject>/DTI_coregT1_tensor.nii.gz`. The diffusion brain mask follows the CHARM labeling interval 1–499.
 
-Every T1 workflow requires `final_tissues.nii.gz`, even when FEM execution is
-disabled, matching the official CHARM sentinel. FEM additionally requires a
-directory named `m2m_<subject>`, an EEG 10-10 cap, and a resolved head mesh.
-When the standard `<subject>.msh` name is unavailable and exactly one mesh is
-present, that resolved mesh is passed explicitly as `SESSION.fnamehead`; dry-run
-validation and the real SimNIBS preparation path therefore consume the same
-mesh.
+FEM additionally needs an EEG cap and a resolved head mesh. If the standard subject mesh name is absent and exactly one mesh is present, the workflow passes that mesh explicitly to SimNIBS. See [SimNIBS integration](en/SIMNIBS_INTEGRATION.md).
 
-For public `tensor-to-mesh` VN conversion, a nonzero singular tensor is rejected
-by default. `--vn-singular-policy regularize` explicitly projects its
-eigenvalues to the configured anisotropy ratio before the ordinary safety
-passes and records `regularized_singular_tensors` in the QA JSON. Supplying this
-VN-only option with `dir` or `mc` is rejected as an unused-input error.
-
-`tensor-to-mesh` defaults to `--eigensystem-mode stable`, using `eigh` for an
-orthogonal symmetric-tensor basis. The explicit `simnibs46-literal` mode uses
-the same `eig`, real-part conversion, descending sort, and reconstruction basis
-as SimNIBS 4.6, including repeated-eigenvalue non-orthogonality. The QA JSON
-records the selected mode, maximum orthogonality error, and affected basis
-count. Formal FEM and lead-field workflows also default to the stable
-eigensystem. They use the installed SimNIBS SESSION with a project-local
-conductivity hook on that instance; no installed module is edited.
-
-`--basis-mode physical` normalizes the affine's spatial columns separately
-when converting tensor directions, supporting oblique, unequal-sized voxels
-without adding scale anisotropy. A sheared affine is rejected in this mode;
-`simnibs46-literal` retains the upstream normalization for explicit comparison.
-
-Shape, affine, finite-value, valid-mask, and provenance failures are reported
-explicitly. An anisotropic workflow never falls back silently to scalar FEM.
+For `tensor-to-mesh`, nonzero singular VN tensors raise an error by default. `--vn-singular-policy regularize` explicitly repairs their spectrum before the safety passes and records the count. This option applies only to VN. Conductivity policies and equations are described in [Conductivity models](en/CONDUCTIVITY.md).

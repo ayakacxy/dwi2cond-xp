@@ -4,7 +4,11 @@
 
 [文档目录](README.md) · [项目首页](../../README.zh-CN.md)
 
-运行 SimNIBS 4.6 默认的 `legacy + nonlinear` 路径，将通过验证的张量及其来源记录一起写入 m2m 目录。若输出发布过程中发生可恢复的错误，会还原上一组有效文件：
+以下命令假设已完成安装。将示例文件名替换为实际输入，流程会创建输出目录。文件与坐标要求见[输入说明](INPUTS.md)。
+
+## 原始 DWI 完整流程
+
+默认执行 legacy 校正和非线性 T1 配准，QA 通过后将张量及来源记录写入 m2m。
 
 ```bash
 dwi2cond-xp run-pipeline \
@@ -12,7 +16,9 @@ dwi2cond-xp run-pipeline \
   --workers 8
 ```
 
-具有反向相位编码采集时，使用完整的 TOPUP→EDDY 工作流，避免手动拼接各独立命令的产物：
+## 反向相位编码数据
+
+有反向相位编码序列时，流程会一起准备 TOPUP 和 EDDY。读出时间单位为秒，PE 方向指 FSL 内部轴。
 
 ```bash
 dwi2cond-xp run-pipeline \
@@ -22,14 +28,18 @@ dwi2cond-xp run-pipeline \
   --readout-seconds 0.05 --phase-encoding-direction y --workers 8
 ```
 
-符合官方格式的预拟合张量也可进入相同的 T1 映射、输出发布和质量检查流程：
+## 已拟合张量
+
+导入分量顺序为 `Dxx,Dxy,Dxz,Dyy,Dyz,Dzz` 的张量，进入相同的 T1 映射和 QA 阶段。
 
 ```bash
 dwi2cond-xp run-prefit-pipeline \
   DTI_tensor.nii.gz m2m_subject workflow_outputs --workers 8
 ```
 
-使用八个 worker 运行无需 FSL 的 SimNIBS 4.6 `nomoco` 原始 DWI 路径：
+## Nomoco 准备
+
+仅在不需要运动、涡流和磁敏感校正，或已由外部处理完成这些校正时使用。
 
 ```bash
 dwi2cond-xp preprocess-nomoco \
@@ -37,9 +47,11 @@ dwi2cond-xp preprocess-nomoco \
   --workers 8
 ```
 
-该命令输出 `DTI_tensor.nii.gz`、`DTI_FA.nii.gz`、`DTI_sse.nii.gz`、脑掩膜、有效掩膜及 `nomoco_qa.json`，不生成运动、涡流或场校正产物。对于兼容的未压缩 `.nii`，程序逐块验证后直接使用 mmap 读取；`.nii.gz` 则只解压一次，生成共享的未压缩中间文件。实际读取方式会记录在 QA 中。
+输出包括张量、FA、SSE、脑掩膜、有效性掩膜和 `nomoco_qa.json`。对齐后的 b0 均值用于生成参考，其变换不会应用到扩散体积。
 
-运行 legacy 校正路径，并旋转梯度以跟随运动校正（v0.4.0 默认）：
+## Legacy 运动与涡流校正
+
+运行两轮校正并按运动旋转梯度：
 
 ```bash
 dwi2cond-xp preprocess-legacy \
@@ -47,12 +59,11 @@ dwi2cond-xp preprocess-legacy \
   --workers 8 --bvec-mode corrected
 ```
 
-该命令输出校正后的 DWI 及均值图、每个体积的最终变换、nodif 与脑掩膜、张量/FA/SSE 和有效性输出，以及 `legacy_qa.json`。
-`--bvec-mode compat46` 为上游对照跳过运动引起的梯度旋转；默认的 physical 分量模式
-仍会在存储轴改变时转换梯度。若同时需要保留旧分量行为，添加
-`--component-mode simnibs46-literal`。迁移细节见[v0.4.0 发布说明](RELEASE_NOTES_v0.4.0.md)。
+输出包括校正 DWI、最终逐体积变换、nodif 和掩膜、张量图及 `legacy_qa.json`。`--bvec-mode compat46` 跳过运动旋转；仅在对照上游脚本的存储分量行为时，再添加 `--component-mode simnibs46-literal`。
 
-使用已转换为 rad/s 的场图准备固定的 GRE/FUGUE 校正，并将其带方向符号的世界坐标毫米位移组合到旧版命令中：
+## GRE 场图
+
+准备已解缠的 rad/s 场图，并将位移传给 legacy 校正：
 
 ```bash
 dwi2cond-xp prepare-fieldmap \
@@ -64,9 +75,11 @@ dwi2cond-xp preprocess-legacy \
   --fieldmap-corrected-mask fieldmap_out/corrected_mask.nii.gz --workers 8
 ```
 
-原始 Siemens 缠绕相位仍需 PRELUDE 处理，这一固定 rad/s 路径会拒绝该类输入。
+Dwell 时间单位为毫秒。输出位移使用带符号的世界坐标毫米，并配有校正掩膜。包裹相位需先在外部解缠。
 
-在无需 FSL 运行时依赖的情况下，估计固定反向相位编码 TOPUP 场：
+## 独立 TOPUP
+
+从网格一致的 b0 图像估计固定反向相位编码场：
 
 ```bash
 dwi2cond-xp prepare-topup \
@@ -74,9 +87,11 @@ dwi2cond-xp prepare-topup \
   --readout-seconds 0.05 --phase-encoding-direction y --workers 8
 ```
 
-该命令输出场图、样条系数、运动参数、校正后的成对影像、联合有效掩膜及 `topup_qa.json`。项目原有文件名保持不变；`topup_fieldcoef.nii.gz` 与 `topup_movpar.txt` 组成 FSL 可读取的 `--topup=topup` 文件组，包含官方三次样条 intent 元数据。仅支持 FSL 6.0.4 TOPUP 接受的 x/y 单轴子集；z 方向相位编码会明确报错。
+输出包含 Hz 场、样条系数、运动参数、校正图像、掩膜和 QA。`topup_fieldcoef.nii.gz` 与 `topup_movpar.txt` 还组成 FSL 可读取的前缀文件组。支持 x、y 两个 PE 轴及其正负方向。
 
-运行固定单壳 EDDY 路径，可选合入 TOPUP 场：
+## 独立 EDDY
+
+使用可选的已准备 TOPUP 场运行固定单壳层流程：
 
 ```bash
 dwi2cond-xp prepare-eddy \
@@ -85,9 +100,11 @@ dwi2cond-xp prepare-eddy \
   --susceptibility-field topup_out/field_hz.nii.gz
 ```
 
-该命令输出校正后的 DWI、用预测值替换后的扫描空间数据、每个体积的 16 个参数、旋转后的 b 向量、异常值图、壳层对齐结果、迭代历史及 `eddy_qa.json`。省略 `--susceptibility-field` 时，仍运行相同的固定 EDDY 算法，只是不使用 TOPUP 场。
+不使用 TOPUP 时省略 `--susceptibility-field`。输出包括校正及预测替换后的 DWI、每体积 16 个参数、旋转梯度、异常切片与壳层对齐文件、迭代记录和 QA。
 
-拟合已预处理的单壳 DWI：
+## 拟合预处理 DWI
+
+提供同网格掩膜及与处理后体积对应的梯度，梯度偏差选项为可选项。
 
 ```bash
 dwi2cond-xp fit-dti \
@@ -98,7 +115,11 @@ dwi2cond-xp fit-dti \
   --qa-json tensor_fit_qa.json
 ```
 
-将张量映射到 CHARM T1 网格。下面示例使用 `--assume-aligned` 的前提是外部流程已经完成对齐：
+多壳层数据需显式选择一个壳层；近零 b 值可通过 `--b0-threshold` 纳入，见[输入说明](INPUTS.md)。
+
+## 应用已有对齐
+
+此示例假设外部处理已经对齐 DWI 和 T1 世界坐标：
 
 ```bash
 dwi2cond-xp register-tensor \
@@ -109,7 +130,20 @@ dwi2cond-xp register-tensor \
   --qa-json tensor_registration_qa.json
 ```
 
-检查 C3→C4 各向异性仿真配置，暂不启动求解器：
+否则请通过 `--world-transform` 提供输入世界坐标到参考世界坐标的仿射，或使用下一条命令估计配准。
+
+## 自动仿射配准
+
+估计 FA 到 T1 的对齐，并生成配准张量和 QA：
+
+```bash
+dwi2cond-xp register-t1 dti_outputs m2m_subject t1_registration_outputs \
+  --mode affine --workers 8
+```
+
+## 固定电极配置 FEM
+
+准备 C3 到 C4 仿真，此命令不启动求解器：
 
 ```bash
 dwi2cond-xp simulate-tdcs m2m_subject simulation_outputs \
@@ -120,22 +154,11 @@ dwi2cond-xp simulate-tdcs m2m_subject simulation_outputs \
   --cpus 8 --dry-run
 ```
 
-移除 `--dry-run` 后执行 SimNIBS。分别运行 `scalar`、`vn`、`dir`、`mc`，每种模式使用独立输出目录和清单。各向异性模式缺少张量时会报错，不会自动改用 `scalar`。
-
-每次仿真在 T1 网格上输出一个向量电场 NIfTI，最后一维为 `Ex,Ey,Ez`，模长通过 `sqrt(Ex^2 + Ey^2 + Ez^2)` 计算。体数据严格限于白质、灰质和脑脊液标签 `1,2,3`，排除颅骨、头皮、电极及颅外组织。
-
-## 自动仿射配准
-
-估计 FA→T1 仿射矩阵，并生成配准后的张量与 QA 输出：
-
-```bash
-dwi2cond-xp register-t1 dti_outputs m2m_subject t1_registration_outputs \
-  --mode affine --workers 8
-```
+移除 `--dry-run` 后执行求解。`scalar`、`vn`、`dir` 和 `mc` 分别使用独立输出目录。每次运行导出 T1 网格的 `Ex,Ey,Ez` 向量 NIfTI，掩膜限定为 WM/GM/CSF 标签 1、2、3。幅值为 `sqrt(Ex^2 + Ey^2 + Ez^2)`。
 
 ## 比较电场
 
-用四种模式的向量场绘制共用色标的分量图：
+以共同的分量色阶绘制四份向量场：
 
 ```bash
 dwi2cond-xp compare-fields \
@@ -145,5 +168,14 @@ dwi2cond-xp compare-fields \
   --view components --plane axial --mask-labels 1 2 3
 ```
 
-三行对应 `Ex/Ey/Ez`，四列对应 `scalar/vn/dir/mc`，所有面板共用对称色标；切片按脑
-掩膜最大面积选择。
+行对应 `Ex/Ey/Ez`，列对应 `scalar/vn/dir/mc`，切片按脑掩膜面积最大的位置选择。先导场输出约定见[SimNIBS 集成](SIMNIBS_INTEGRATION.md)。
+
+## CPU 和 CUDA
+
+默认使用 CPU。非线性配准启用两个可选 CUDA 后端的示例：
+
+```bash
+dwi2cond-xp run-pipeline raw_dwi.nii.gz bvals bvecs m2m_subject workflow_gpu --fnirt-device cuda --ppd-device cuda --workers 8
+```
+
+FNIRT 需要 Numba CUDA，PPD 还需要 CuPy。相同选项适用于 `register-t1-nonlinear` 和 `run-prefit-pipeline`；LM/PCG 和文件写出仍在 CPU 执行。依赖说明见[复现指南](REPRODUCIBILITY.md)。

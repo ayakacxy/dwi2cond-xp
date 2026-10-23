@@ -4,158 +4,59 @@
 
 [Documentation](en/README.md) · [Project home](../README.md)
 
+The results below identify the release, configuration and processing stage that were tested. Benchmark timings are reported separately in [Benchmarks](en/BENCHMARKS.md).
+
 ## v0.4.0 validation — 2026-10-14
 
-Linux release checks passed **960 unique tests with no skips**: 948 in the
-main batch and 12 montage tests. Configured real FSL and SimNIBS probes were
-enabled. The main batch reported 12 fixture-related SimNIBS `UserWarning`
-messages.
+| Check | Result | Configuration |
+| --- | --- | --- |
+| Linux release suite | 948 main + 12 montage tests passed; no skips | Configured real FSL and SimNIBS probes enabled |
+| Statement coverage | 15,364/15,364 statements, 100% | Isolated cold Numba caches and synthetic TOPUP/EDDY/FNIRT CLI runs |
+| Linux/macOS/Windows CI | 902 main + 12 montage tests passed per platform | 46 optional FSL/SimNIBS probes skipped without those installations |
+| Conductivity consumer adapter | 30 passed with SimNIBS; 18 passed and 12 skipped without it | Includes four independent mathematical reference cases |
+| CUDA backend mathematics and errors | 36 device-free tests passed | Separate from the actual GPU run below |
 
-`python scripts/run_coverage.py` covered **15,364/15,364 executable statements
-(100.00%)** using isolated cold Numba caches with `NUMBA_JIT_COVERAGE=1` and
-three real synthetic TOPUP, EDDY and FNIRT CLI end-to-end runs.
+The release also passed package construction, installation, source/version checks, CodeQL and dependency checks. The published wheel and source archive were downloaded and checked against their source and SHA-256 values. Statement coverage measures executed statements, not all possible input behavior.
 
-The tensor-consumption adapter passed 18 tests without SimNIBS, with 12
-optional reference probes skipped and 100% adapter statement coverage. With
-SimNIBS installed, all 30 passed without skips. These checks include four
-independent conductivity reference cases. The CUDA backends also passed 36
-device-free tests of their mathematics and error handling.
+## CPU and CUDA comparison
 
-Statement coverage records executed code; it does not establish complete
-branch coverage or correctness for arbitrary inputs. Real CPU/GPU end-to-end
-evidence uses the Linux/RTX 2080 Ti input documented in [Benchmarks](en/BENCHMARKS.md).
-This suite adds no other-platform GPU or complete real-subject FEM validation.
-The unconstrained WLS fit can still produce negative eigenvalues and FA>1.
+The complete Linux/RTX 2080 Ti run used one HCP single-shell input, `nomoco`, gradient-deviation correction, nonlinear registration, QA and m2m publication, with FEM off. The CPU run completed with optional GPU imports blocked.
 
-Ruff, version synchronization, Markdown links and source-manifest checks passed.
-The runtime dependency audit inspected 19 packages and found no known
-vulnerabilities in the audit database on this date.
+Of 64 numerical artifacts, 61 were byte-identical between CPU and CUDA. Masks, FNIRT coefficients, dense fields and recorded LM results agreed. Brain-tensor relative L2 was `1.8693e-9`; final FA maximum absolute difference was `8.7172e-7`.
 
-## Historical v0.3.0 validation
+Healthy V1 axial-angle P99 was `1.2074e-6` degrees, ignoring eigenvector sign. This metric requires FA>0.1 in both outputs and relative principal-eigenvalue gap>1e-5; all healthy voxels were covered. Details and timing scope are in [Benchmarks](en/BENCHMARKS.md).
 
-The full record below retains the v0.3.0 results and their earlier experimental
-boundaries; those counts and numerical values are not new v0.4.0 measurements.
+## Numerical reference cases
 
-The revised `v0.3.0` release was validated against algorithm baseline commit
-`ae5a6a73f9f475cb51355af085f7832771cf8d77`. A tagged documentation or
-release-metadata descendant does not change that scientific baseline. With
-every configured real-FSL probe enabled, the clean main batch completed with
-`666 passed` and no skips. The independent coverage check repeated those `666`
-tests, completed `12 passed` in the montage batch, exercised all three real
-synthetic TOPUP/EDDY/FNIRT CLI paths, and covered `13,663/13,663` executable
-statements (`100.00%`).
+The fixed preprocessing and registration paths have synthetic comparisons with real FSL 6.0.4. The following retained results describe their stated fixtures:
 
-### Evidence levels
+| Case | Recorded result |
+| --- | --- |
+| Storage orientation | High-obliquity counterexample and all 48 signed permutations match the FSL discrete orientation decision |
+| WLS with gradient nonlinearity | Synthetic tensor max/mean absolute differences `1.16e-10 / 8.26e-12` |
+| GRE transform composition | Nonidentity 90° premat plus one-voxel shift is array-exact on the `9×9×3` trilinear fixture |
+| TOPUP | Field and corrected-pair relative L2 `0.00430 / 0.00161` |
+| EDDY | All four injected bad slices detected, no additional outliers; interior DWI/tensor relative L2 `0.0035352 / 0.0060714` |
+| FNIRT | Corrected-image/field relative L2 `0.001298916 / 0.175488519`; maximum field-component difference `0.994548967 mm` |
 
-The project uses three evidence levels so a valid older experiment is not
-mistaken for a release rerun:
+The FNIRT result retains a nonzero field difference from the independent FSL optimizer. Coordinate regressions additionally cover storage permutations, both handednesses, non-1-mm PPD, header/affine sampling mismatch, conductivity consumers and failed publication. The unconstrained WLS model permits negative eigenvalues and FA>1.
 
-- **Release evidence** is produced by, or explicitly repeated against, the
-  final `v0.3.0` source and frozen dependency stack.
-- **Earlier experimental evidence** is a real or synthetic result from
-  an earlier implementation. It remains useful for the named stage, but is not a
-  release end-to-end acceptance result.
-- **Historical performance evidence** records an earlier implementation and
-  machine boundary. It supports engineering history, not a current release-wide
-  speed claim.
+## FEM and lead-field checks
 
-### Method-to-evidence map
+An earlier private-subject study completed CHARM and real C3-to-C4, 1 mA Pardiso solves for `scalar`, `vn`, `dir` and `mc`. Vector fields were finite and masked to WM/GM/CSF. Scalar Pardiso/Hypre differences on the common mapping were max-absolute `2.98e-8 V/m` and relative L2 `6.28e-9`.
 
-| Method | Strongest evidence | Result supported | Important boundary |
-| --- | --- | --- | --- |
-| FSL/NewNifti storage orientation | Release real-FSL probes and discriminative tests | The high-obliquity counterexample and all 48 signed permutations match `fslreorient2std` data and geometry. | This validates the implemented discrete orientation decision, not arbitrary downstream optimizer equality. |
-| Two-pass WLS DTI and gradient nonlinearity | Release source/tests plus real-FSL synthetic probes; earlier HCP stage A/B | The fitting equations, tensor layout, derivatives, strict/robust policies, and tested FSL edge semantics are supported. | The HCP `4.18e-6` tensor relative-L2 result predates the final tag and is not a final raw-DWI pipeline rerun. |
-| GRE, TOPUP, and EDDY fixed subsets | Release tests and configured real-FSL synthetic CLI probes | The documented fixed schedules, artifact lineage, masks, and failure semantics pass the release checks. | Results apply to the fixed SimNIBS 4.6 subsets and frozen fixtures, not arbitrary FSL configurations. |
-| Linear registration, FNIRT, and PPD | Release source/tests and synthetic FSL checks; earlier whole-head A/B | The fixed schedules, transforms, tensor reorientation, masks, and no-fallback behavior are supported. | Independent optimizer trajectories retain nonzero residuals; the whole-head nonlinear numbers below are from an earlier implementation. |
-| `vn`, `dir`, and `mc` conductivity | Release implementation and discriminative tests, including zero, singular, weighted, and multi-tissue cases; earlier local SimNIBS sphere A/B | The equations and current failure policies are supported. | The historical `0` to `2.22e-16` sphere summary has no retained machine-readable comparator artifact and is not presented as a release rerun. |
-| Fixed-montage FEM composition | Release construction tests and real SimNIBS 4.6 `SESSION._prepare()`; earlier four-mode solve | Explicit mesh, m2m, solver, cache identity, output, and strict-mask behavior are supported. | The final remediation did not rerun the complete HCP raw-DWI-to-FEM chain or the solver. |
-| Lead-field interface | Release unit and interface tests | HDF5 axes, reference-electrode convention, NumPy export, and manifest fields are supported. | No completed full-subject all-electrode run is claimed. |
+Subsequent FEM composition fixes were checked with real SimNIBS 4.6 `SESSION._prepare()` and construction, adapter and publication tests. The complete subject solve was not repeated after those changes. Lead-field checks cover configuration, reference-electrode and HDF5/NumPy conventions; a complete all-electrode subject benchmark is not included.
 
-### Automated and release checks
+## Historical records
 
-Tests cover gradient conventions, weighted fitting, invalid-input policies, the
-fixed legacy/GRE/TOPUP/EDDY branches, linear and nonlinear registration, tensor
-reorientation, conductivity modes, SimNIBS object construction, strict tissue
-masking, lead-field axes, plotting, QA, manifests, and cache validation. The
-coverage runner executes real synthetic TOPUP/EDDY/FNIRT end-to-end paths in
-isolated Numba caches.
+The v0.3.0 scientific baseline `ae5a6a7` completed 666 main tests, 12 montage tests and synthetic TOPUP/EDDY/FNIRT CLI paths with 13,663/13,663 statements covered. These counts belong to that source snapshot.
 
-The final tagged source also passed package construction and installation,
-Markdown and version checks, CodeQL, OpenSSF Scorecard, tracked-file and archive
-privacy audits, wheel/sdist metadata checks, and dependency auditing. The
-published wheel, sdist, CycloneDX SBOM, and checksum file were downloaded again;
-their SHA-256 values, isolated wheel import/CLI, and GitHub build provenance were
-verified independently.
+Earlier HCP WLS validation used 881,299 masked voxels: 881,194 valid and 105 zeroed as invalid. Tensor relative L2 was `4.18e-6`; max/mean/P99 absolute differences were `2.43e-6 / 4.78e-10 / 2.10e-9` over 5,287,164 valid values.
 
-### Current numerical references
+The 2026-08-23 nonlinear study recorded field-vector mean/P99/max errors `0.0130 / 0.0626 / 0.1828 mm`, tensor relative L2 `0.00631`, support Dice `0.99962` and V1 mean/P99 angles `0.343 / 3.104°`. Using the same FSL warp reduced PPD tensor relative L2 to `1.51e-6`, localizing most differences to the independently optimized warp.
 
-The [v0.2.0 algorithm audit](en/V0.2.0_ALGORITHM_AUDIT_REPORT_2026-08-25.md)
-records the workflow and numerical defects that motivated the correctness
-release. The
-[fourth independent v0.3.0 re-audit](en/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-30.md)
-and [its remediation report](en/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REMEDIATION_2026-08-30.md)
-record the current matrix, BET, conductivity eigensystem, FEM-cache, and TOPUP
-corrections. The earlier
-[third re-audit](en/V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-29.md)
-remains the evidence for orientation, dependency, CHARM/FEM composition, and VN
-singular-tensor findings that were not superseded.
+The dated [v0.2 audit](en/V0.2.0_ALGORITHM_AUDIT_REPORT_2026-08-25.md), [third v0.3 review](en/V0.3.0_THIRD_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-29.md) and [fourth review](en/V0.3.0_FOURTH_FRESH_INDEPENDENT_ALGORITHM_REAUDIT_REPORT_2026-08-30.md), together with their remediation records, preserve finding-level evidence. They describe their reviewed source snapshots.
 
-The final dependency stack retains a nonzero FNIRT residual against FSL 6.0.4:
-corrected-image relative L2 `0.001298916`, dense-field relative L2 `0.175488519`,
-and maximum field-component error `0.994548967 mm`. These values are release
-checks, not bitwise-equivalence claims. They also explain why the documentation
-states that the fixed FNIRT subset is validated on discriminative fixtures while
-arbitrary-input optimizer identity remains out of scope.
+## Scope
 
-A non-identity 90-degree premat plus one-voxel GRE shift was compared with real
-FSL `convertwarp` and `applywarp`; the corrected Python trilinear result is
-array-exact on the `9x9x3` fixture. A synthetic DTI fixture compared with FSL
-6.0.4 `dtifit --wls --gradnonlin` had tensor maximum and mean absolute
-differences `1.16e-10` and `8.26e-12`.
-
-For the public fixed-path fixtures, TOPUP field and corrected-pair relative L2
-errors were `0.00430` and `0.00161`. EDDY detected all four injected bad slices
-and no others; mask-interior corrected-DWI and downstream-tensor relative L2
-errors were `0.0035352` and `0.0060714`. These fixture results support the fixed
-branches exercised by the final check.
-
-### Earlier real-data evidence
-
-Earlier validation used one private HCP subject. Of 881,299 masked voxels,
-881,194 were valid; 105 invalid voxels were zeroed and recorded. On the selected b0+b1000 DTI
-stage, the comparison over 5,287,164 valid values had maximum, mean, and p99
-absolute tensor differences `2.43e-6`, `4.78e-10`, and `2.10e-9`, with relative
-L2 `4.18e-6`. This remains useful evidence for the WLS stage, but it is not a
-release raw-preprocessing rerun.
-
-The 2026-08-23 whole-head nonlinear comparison was produced by an implementation
-then reporting version `0.1.0`. Deformation-vector error had mean/P99/maximum
-`0.0130/0.0626/0.1828 mm`, tensor relative L2 was `0.00631`, support Dice was
-`0.99962`, and V1 axial-angle mean/P99 was `0.343/3.104` degrees. Applying the
-same FSL warp reduced Python PPD tensor relative L2 to `1.51e-6`, which localized
-most of the difference to the independently optimized FNIRT endpoint. These are
-historical localization results, not final-`v0.3.0` acceptance values.
-
-The same subject also completed a T1/T2 CHARM head model and real C3-to-C4 1 mA
-Pardiso FEM for `scalar`, `vn`, `dir`, and `mc`. All vector E-field NIfTIs
-were finite, every WM/GM/CSF voxel was populated, and voxels outside those labels
-were zero after the strict mask. The scalar Pardiso/Hypre comparison on the
-common original mapping had maximum absolute difference `2.98e-8 V/m` and
-relative L2 `6.28e-9`. This establishes that the four-mode workflow has completed
-on a real subject; it does not assert that the final tag reran the solver after
-the last FEM composition and cache-identity changes.
-
-### Scope of the evidence
-
-No HCP data or subject derivative is public. Real-data evidence is dominated by
-one private subject, so population-level generalization is not claimed. The
-final remediation did not repeat a complete HCP raw-DWI-to-TOPUP/EDDY-to-FNIRT-
-to-FEM run; release evidence for the last FEM changes stops at real
-`SESSION._prepare()` plus discriminative construction and transaction tests.
-
-The project implements only the fixed FSL behavior required by SimNIBS 4.6
-`dwi2cond`; it is not a general FSL command replacement. Wrapped phase requiring
-PRELUDE, arbitrary TOPUP/EDDY/FNIRT configurations, and silent multishell
-single-tensor fitting remain outside the supported scope. Stage timings and
-earlier experiments do not establish a universal full-workflow speed or
-equivalence claim.
+Real-data results are dominated by one private subject. The fixed SimNIBS 4.6 subsets, rather than arbitrary FSL command configurations, were tested. No source images or subject derivatives are distributed. Current input restrictions and coordinate choices are listed in [Inputs](en/INPUTS.md).

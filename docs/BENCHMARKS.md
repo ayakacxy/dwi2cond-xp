@@ -4,32 +4,15 @@
 
 [Documentation](en/README.md) · [Project home](../README.md)
 
-The historical stage-level sections below preserve measurements collected
-while the `v0.1.0`--`v0.3.0` implementation was being developed. Most timings
-predate the final `v0.3.0` correctness remediation and release rebuild. They were not
-rerun from the final `v0.3.0` tag or release wheel, so they describe the timed
-implementation snapshots, fixtures, and hosts in those sections rather than
-current-tag performance.
+This page records the complete CPU/CUDA workflow measurement first, followed by historical stage measurements. Each table identifies its input, timing boundary and reference. Results from different sections should not be added together.
 
-No benchmark was rerun when those historical sections were documented. Two
-later `v0.4.0` planning samples were collected while server load was unstable
-and are excluded from the historical tables and comparisons. The dated end-to-end
-comparison below reports a separate set of completed runs.
+## Reading the measurements
 
-Unless stated otherwise in the historical sections, the reference was the
-SimNIBS 4.6 workflow with FSL 6.0.4 on the same host and input. Ratios compare
-only the paired rows in one table. The fixtures, process boundaries, worker
-counts, warm-cache state, and
-output sets differ between sections, so timings must not be added across
-stages or treated as an end-to-end pipeline result.
+Complete process time includes startup and I/O; internal stage timers cover less work. First compilation, warm caches and cached stage outputs are different conditions. Host RSS and GPU allocation are reported separately. Ratios against FSL include differences in output sets, scheduling and implementation, as detailed below.
 
 ## 2026-10-14: v0.4.0 end-to-end comparison
 
-v0.4.0 includes the algorithm fixes and performance changes
-described in the [release notes](en/RELEASE_NOTES_v0.4.0.md).
-The measured scientific source is retained in v0.4.0; release metadata and
-tests were updated afterwards. These completed runs
-used one private HCP input on the same Linux server.
+The CPU, CUDA, published-release and FSL comparisons used the same private HCP input on one Linux server. The measured computational source is included in v0.4.0. Algorithm and device changes are described in the [release notes](en/RELEASE_NOTES_v0.4.0.md).
 
 The input was `145x174x145x108` float32 DWI at 1.25 mm, with 18 exact b=0
 volumes, 90 b≈1000 volumes, identical gradients and gradient-nonlinearity data,
@@ -117,8 +100,11 @@ preprocessing and 957 s for T1 affine/FNIRT/PPD/native QA together. That run
 has no separately measured stage times matching the finer Python rows.
 
 Evidence is retained in the local `benchmark-v040-comparison-20261014` archive.
-This is one private input, one host and one sample per configuration; it does
-not establish cold-start, other-acquisition, other-platform or FEM performance.
+Each configuration has one warm-cache sample. Cold-start, other acquisitions, other platforms and FEM were not measured in this comparison.
+
+## Historical stage measurements
+
+The following results were collected during v0.1.0–v0.3.0 development. They retain their original fixtures and runtime settings. They are stage measurements, not new measurements of the current release.
 
 ## Raw-DWI preprocessing
 
@@ -135,7 +121,7 @@ used the unmodified SimNIBS 4.6 `--prepro --nomoco --keepstuff` path.
 | dwi2cond-xp, `.nii.gz` single decode | 8 workers | 52.92 s | 170% | 4,791,436 KiB |
 | SimNIBS 4.6 / FSL 6.0.4 | 1 process | 257.30 s | 99% | 3,167,907,840 bytes |
 
-The observed wall-time ratios were `13.67x` for the validated uncompressed
+The wall-time ratios were `13.67x` for the validated uncompressed
 input and `4.86x` for gzip input. The uncompressed path required a canonical,
 finite, nonnegative float32 NIfTI and scanned it in z-blocks before mmap use.
 The gzip path decoded once to an uncompressed fitting image and then shared
@@ -255,7 +241,7 @@ b-vectors, shell alignment, and structured outputs.
 | dwi2cond-xp `prepare-eddy` | 7.76 s | 39.68 s | 238,076 KiB |
 | FSL 6.0.4 `eddy_openmp` | 9.77 s | 37.93 s | 36,680 KiB |
 
-The observed complete-process ratio was `1.26x`; Python's recorded algorithm
+The complete-process ratio was `1.26x`; Python's recorded algorithm
 boundary was `6.896 s`. All four injected outliers, at volume/slice pairs
 `(5,8)`, `(11,9)`, `(18,7)`, and `(23,10)`, matched exactly. Repeated Python
 runs produced byte-identical parameter and outlier-map files.

@@ -6,25 +6,13 @@
 
 ## SimNIBS
 
-[SimNIBS 4.6.0](https://github.com/simnibs/simnibs/releases/tag/v4.6.0) is the
-validated head-model, conductivity, FEM, and lead-field integration target.
-SimNIBS 4.6.0 identifies its license as GPL-3.0-only. This repository does not
-redistribute SimNIBS binaries, resources, atlases, or source code. Users install
-SimNIBS separately through the documented environment.
+[SimNIBS 4.6.0](https://github.com/simnibs/simnibs/releases/tag/v4.6.0) is the conductivity, FEM and lead-field integration target. It is licensed under GPL-3.0-only. This project's conductivity conversion and integration follow its public behavior and numerical methods and are distributed under GPL-3.0-only.
 
-The conductivity conversion and integration code in this project was developed
-to reproduce the documented behavior and numerical methods of SimNIBS 4.6.0.
-The project is therefore distributed under GPL-3.0-only.
+Users install SimNIBS separately. This package does not redistribute its binaries, resources, atlases or source.
 
 ## FSL
 
-[FSL 6.0.4](https://fsl.fmrib.ox.ac.uk/fsl/docs/) was used only as an optional,
-local numerical reference for the fixed SimNIBS 4.6 preprocessing subset: DTI
-fitting, image operations, motion/eddy correction, GRE/TOPUP/EDDY paths,
-linear/FNIRT registration, Jacobians, and PPD tensor reorientation. FSL is not
-a runtime dependency and no FSL source code, binary, model, template, or other
-redistributable artifact is included. FSL has separate license terms, including
-restrictions that users must review independently.
+[FSL 6.0.4](https://fsl.fmrib.ox.ac.uk/fsl/docs/) is used for optional local numerical comparisons of the fixed DTI, preprocessing, registration and PPD paths. It is not a runtime dependency. No FSL source, binary, model or template is distributed in this package. FSL's own license terms apply to the user's reference installation.
 
 ## Human Connectome Project data
 
@@ -43,7 +31,4 @@ University. See the official [HCP citation guidance](https://hcp-db.humanconnect
 
 ## Python dependencies
 
-NumPy, SciPy, NiBabel, Numba, threadpoolctl, h5py, Matplotlib, tqdm, and optional
-MNE are external dependencies and remain under their respective licenses. Their
-source code and license texts are available from their upstream projects and
-package metadata.
+NumPy, SciPy, NiBabel, Numba, threadpoolctl, h5py, Matplotlib, tqdm and optional MNE are installed as external dependencies and retain their respective licenses. Their source and license texts are available from the upstream projects and package metadata.
